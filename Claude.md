@@ -7,5 +7,8 @@ this is planet image/video processing tool to achieve crisp results from the ear
 ## Technical decisions
 
 - Main language rust
+- Try to use constants from std for inline numbers
+  - if constants aren't available in the std try checking libraries for corresponding constants
+  - if there are no libraries, create constants so it is easier to understand the meaning (when it applicable)
 
 ## Claude workstream
