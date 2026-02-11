@@ -145,17 +145,18 @@ fn convolve_cols(data: &Array2<f32>, kernel: &[f32; 5], step: usize) -> Array2<f
 }
 
 /// Mirror boundary handling: reflect index into [0, size).
+/// Even function (f(-k) = f(k)) with period 2*size, ping-ponging within [0, size).
 pub fn mirror_index(idx: isize, size: usize) -> usize {
-    if idx < 0 {
-        (-idx) as usize % size
-    } else if idx >= size as isize {
-        let overflow = idx as usize - size;
-        if overflow < size {
-            size - 1 - overflow
-        } else {
-            0 // fallback for extreme cases
-        }
+    if size <= 1 {
+        return 0;
+    }
+    let period = 2 * size;
+    let abs_idx = idx.unsigned_abs();
+    let m = abs_idx % period;
+
+    if m < size {
+        m
     } else {
-        idx as usize
+        2 * size - 1 - m
     }
 }

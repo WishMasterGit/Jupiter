@@ -43,10 +43,13 @@ impl SerHeader {
 
     /// Total bytes per frame.
     pub fn frame_byte_size(&self) -> usize {
-        self.width as usize
-            * self.height as usize
-            * self.bytes_per_pixel_plane()
-            * self.planes_per_pixel()
+        let pixels = (self.width as usize)
+            .checked_mul(self.height as usize)
+            .expect("Image dimensions too large");
+        let bytes_per_pixel = self.bytes_per_pixel_plane() * self.planes_per_pixel();
+        pixels
+            .checked_mul(bytes_per_pixel)
+            .expect("Frame size calculation overflow")
     }
 
     pub fn color_mode(&self) -> ColorMode {

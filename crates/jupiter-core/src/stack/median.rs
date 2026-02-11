@@ -30,16 +30,10 @@ pub fn median_stack(frames: &[Frame]) -> Result<Frame> {
                 *pixel_values.select_nth_unstable_by(mid, |a, b| a.partial_cmp(b).unwrap()).1
             } else {
                 let mid = n / 2;
-                let (_, upper, _) =
-                    pixel_values.select_nth_unstable_by(mid, |a, b| a.partial_cmp(b).unwrap());
-                let upper_val = *upper;
                 // For even count, average the two middle values
-                let lower_val = pixel_values[..mid]
-                    .iter()
-                    .copied()
-                    .max_by(|a, b| a.partial_cmp(b).unwrap())
-                    .unwrap();
-                (lower_val + upper_val) / 2.0
+                pixel_values.select_nth_unstable_by(mid, |a, b| a.partial_cmp(b).unwrap());
+                pixel_values[..mid].select_nth_unstable_by(mid - 1, |a, b| a.partial_cmp(b).unwrap());
+                (pixel_values[mid - 1] + pixel_values[mid]) / 2.0
             };
         }
     }
