@@ -11,17 +11,12 @@ use crate::quality::gradient::gradient_score_array;
 use crate::quality::laplacian::laplacian_variance_array;
 
 /// Local stacking method for per-AP patches.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub enum LocalStackMethod {
+    #[default]
     Mean,
     Median,
     SigmaClip { sigma: f32, iterations: usize },
-}
-
-impl Default for LocalStackMethod {
-    fn default() -> Self {
-        Self::Mean
-    }
 }
 
 /// Configuration for multi-alignment-point stacking.
@@ -168,7 +163,8 @@ pub fn score_all_aps(
         let frame = reader.read_frame(frame_idx)?;
 
         for ap in &grid.points {
-            let region = extract_region_shifted(&frame.data, ap.cy, ap.cx, half, &offsets[frame_idx]);
+            let region =
+                extract_region_shifted(&frame.data, ap.cy, ap.cx, half, &offsets[frame_idx]);
 
             let score = match config.quality_metric {
                 QualityMetric::Laplacian => laplacian_variance_array(&region),
@@ -186,11 +182,8 @@ pub fn score_all_aps(
 
     let mut result = Vec::with_capacity(num_aps);
     for ap_scores in &quality_matrix {
-        let mut indexed: Vec<(usize, f64)> = ap_scores
-            .iter()
-            .enumerate()
-            .map(|(i, &s)| (i, s))
-            .collect();
+        let mut indexed: Vec<(usize, f64)> =
+            ap_scores.iter().enumerate().map(|(i, &s)| (i, s)).collect();
         indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
         indexed.truncate(keep_count);
         result.push(indexed);
@@ -317,7 +310,9 @@ fn median_stack_arrays(patches: &[Array2<f32>]) -> Array2<f32> {
                 vals[0]
             } else if n % 2 == 1 {
                 let mid = n / 2;
-                *vals.select_nth_unstable_by(mid, |a, b| a.partial_cmp(b).unwrap()).1
+                *vals
+                    .select_nth_unstable_by(mid, |a, b| a.partial_cmp(b).unwrap())
+                    .1
             } else {
                 let mid = n / 2;
                 let (_, upper, _) =
@@ -506,7 +501,10 @@ where
     let (h, w) = reference.data.dim();
 
     // Step 1: Global alignment — compute offsets only
-    info!("Computing global alignment offsets for {} frames", total_frames);
+    info!(
+        "Computing global alignment offsets for {} frames",
+        total_frames
+    );
     let mut global_offsets = Vec::with_capacity(total_frames);
     global_offsets.push(AlignmentOffset::default()); // frame 0 has zero offset
 
@@ -530,7 +528,11 @@ where
     }
 
     // Step 3: Per-AP quality scoring (frame-major)
-    info!("Scoring {} APs across {} frames", grid.points.len(), total_frames);
+    info!(
+        "Scoring {} APs across {} frames",
+        grid.points.len(),
+        total_frames
+    );
     let ap_selections = score_all_aps(reader, &grid, &global_offsets, config)?;
     on_progress(0.4);
 

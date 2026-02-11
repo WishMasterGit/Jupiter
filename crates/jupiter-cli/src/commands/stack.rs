@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use anyhow::Result;
 use clap::{Args, ValueEnum};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -12,6 +10,7 @@ use jupiter_core::stack::mean::mean_stack;
 use jupiter_core::stack::median::median_stack;
 use jupiter_core::stack::multi_point::{multi_point_stack, MultiPointConfig};
 use jupiter_core::stack::sigma_clip::{sigma_clip_stack, SigmaClipParams};
+use std::path::PathBuf;
 
 #[derive(Clone, ValueEnum)]
 pub enum StackMethodArg {
@@ -57,40 +56,49 @@ pub struct StackArgs {
 
 pub fn run(args: &StackArgs) -> Result<()> {
     let reader = SerReader::open(&args.file)?;
-    let total = reader.frame_count();
     let percentage = (args.select as f32 / 100.0).clamp(0.01, 1.0);
 
-    if matches!(args.method, StackMethodArg::MultiPoint) {
-        println!(
-            "Multi-point stacking {} frames (ap_size={}, search_radius={})",
-            total, args.ap_size, args.search_radius
-        );
-
-        let mp_config = MultiPointConfig {
-            ap_size: args.ap_size,
-            search_radius: args.search_radius,
-            select_percentage: percentage,
-            min_brightness: args.min_brightness,
-            quality_metric: QualityMetric::Laplacian,
-            ..Default::default()
-        };
-
-        let pb = ProgressBar::new(100);
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .template("Multi-point [{bar:40}] {pos}%")?
-                .progress_chars("=> "),
-        );
-
-        let result = multi_point_stack(&reader, &mp_config, |progress| {
-            pb.set_position((progress * 100.0) as u64);
-        })?;
-        pb.finish();
-
-        save_image(&result, &args.output)?;
-        println!("Saved to {}", args.output.display());
-        return Ok(());
+    match args.method {
+        StackMethodArg::MultiPoint => run_multi_point(&reader, args, percentage),
+        _ => run_standard(&reader, args, percentage),
     }
+}
+
+fn run_multi_point(reader: &SerReader, args: &StackArgs, percentage: f32) -> Result<()> {
+    let total = reader.frame_count();
+    println!(
+        "Multi-point stacking {} frames (ap_size={}, search_radius={})",
+        total, args.ap_size, args.search_radius
+    );
+
+    let mp_config = MultiPointConfig {
+        ap_size: args.ap_size,
+        search_radius: args.search_radius,
+        select_percentage: percentage,
+        min_brightness: args.min_brightness,
+        quality_metric: QualityMetric::Laplacian,
+        ..Default::default()
+    };
+
+    let pb = ProgressBar::new(100);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("Multi-point [{bar:40}] {pos}%")?
+            .progress_chars("=> "),
+    );
+
+    let result = multi_point_stack(reader, &mp_config, |progress| {
+        pb.set_position((progress * 100.0) as u64);
+    })?;
+    pb.finish();
+
+    save_image(&result, &args.output)?;
+    println!("Saved to {}", args.output.display());
+    Ok(())
+}
+
+fn run_standard(reader: &SerReader, args: &StackArgs, percentage: f32) -> Result<()> {
+    let total = reader.frame_count();
 
     println!("Reading {} frames...", total);
     let frames: Vec<_> = reader.frames().collect::<std::result::Result<_, _>>()?;
@@ -128,7 +136,7 @@ pub fn run(args: &StackArgs) -> Result<()> {
         StackMethodArg::Mean => "mean",
         StackMethodArg::Median => "median",
         StackMethodArg::SigmaClip => "sigma-clip",
-        StackMethodArg::MultiPoint => unreachable!(),
+        _ => unreachable!(),
     };
     println!("Stacking ({})...", method_name);
 
@@ -142,11 +150,10 @@ pub fn run(args: &StackArgs) -> Result<()> {
             };
             sigma_clip_stack(&aligned, &params)?
         }
-        StackMethodArg::MultiPoint => unreachable!(),
+        _ => unreachable!(),
     };
 
     save_image(&result, &args.output)?;
     println!("Saved to {}", args.output.display());
-
     Ok(())
 }

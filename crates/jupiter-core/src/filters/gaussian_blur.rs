@@ -22,10 +22,10 @@ fn make_gaussian_kernel(sigma: f32) -> Vec<f32> {
     let s2 = 2.0 * sigma * sigma;
     let mut sum = 0.0f32;
 
-    for i in 0..size {
+    for (i, k) in kernel.iter_mut().enumerate() {
         let x = i as f32 - radius as f32;
-        kernel[i] = (-x * x / s2).exp();
-        sum += kernel[i];
+        *k = (-x * x / s2).exp();
+        sum += *k;
     }
 
     for v in &mut kernel {

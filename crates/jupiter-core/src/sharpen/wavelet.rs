@@ -70,9 +70,9 @@ pub fn reconstruct(
                     w.signum() * (abs_w - threshold)
                 }
             });
-            result = result + &(denoised * coeff);
+            result += &(denoised * coeff);
         } else {
-            result = result + &(layer * coeff);
+            result += &(layer * coeff);
         }
     }
 

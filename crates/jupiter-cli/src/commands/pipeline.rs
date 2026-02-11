@@ -27,7 +27,7 @@ pub struct RunArgs {
     pub select: u32,
 
     /// Stacking method
-    #[arg(long, value_enum, default_value = "mean")]
+    #[arg(long, value_enum, default_value = "multi-point")]
     pub method: StackMethodArg,
 
     /// Sigma threshold for sigma-clip stacking

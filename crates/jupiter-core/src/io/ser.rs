@@ -267,6 +267,7 @@ fn decode_mono_plane(
     Ok(data)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn decode_plane_from_interleaved(
     raw: &[u8],
     height: usize,
