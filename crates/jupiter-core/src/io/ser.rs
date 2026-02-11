@@ -1,0 +1,466 @@
+use std::fs::File;
+use std::path::Path;
+
+use byteorder::{LittleEndian, ReadBytesExt};
+use memmap2::Mmap;
+use ndarray::Array2;
+
+use crate::error::{JupiterError, Result};
+use crate::frame::{ColorMode, Frame, FrameMetadata, SourceInfo};
+
+const SER_HEADER_SIZE: usize = 178;
+const SER_MAGIC: &[u8; 14] = b"LUCAM-RECORDER";
+
+/// SER file header (178 bytes).
+#[derive(Clone, Debug)]
+pub struct SerHeader {
+    pub color_id: i32,
+    pub little_endian: bool,
+    pub width: u32,
+    pub height: u32,
+    pub pixel_depth: u32,
+    pub frame_count: u32,
+    pub observer: String,
+    pub instrument: String,
+    pub telescope: String,
+    pub date_time: u64,
+    pub date_time_utc: u64,
+}
+
+impl SerHeader {
+    /// Bytes per pixel plane (1 for 8-bit, 2 for 9-16 bit).
+    pub fn bytes_per_pixel_plane(&self) -> usize {
+        if self.pixel_depth <= 8 { 1 } else { 2 }
+    }
+
+    /// Number of planes per pixel (1 for mono/bayer, 3 for RGB/BGR).
+    pub fn planes_per_pixel(&self) -> usize {
+        match self.color_id {
+            100 | 101 => 3,
+            _ => 1,
+        }
+    }
+
+    /// Total bytes per frame.
+    pub fn frame_byte_size(&self) -> usize {
+        self.width as usize
+            * self.height as usize
+            * self.bytes_per_pixel_plane()
+            * self.planes_per_pixel()
+    }
+
+    pub fn color_mode(&self) -> ColorMode {
+        match self.color_id {
+            0 => ColorMode::Mono,
+            8 => ColorMode::BayerRGGB,
+            9 => ColorMode::BayerGRBG,
+            10 => ColorMode::BayerGBRG,
+            11 => ColorMode::BayerBGGR,
+            100 => ColorMode::RGB,
+            101 => ColorMode::BGR,
+            _ => ColorMode::Mono,
+        }
+    }
+}
+
+/// Memory-mapped SER file reader.
+pub struct SerReader {
+    mmap: Mmap,
+    pub header: SerHeader,
+}
+
+impl SerReader {
+    /// Open a SER file and parse its header.
+    pub fn open(path: &Path) -> Result<Self> {
+        let file = File::open(path)?;
+        let mmap = unsafe { Mmap::map(&file)? };
+
+        if mmap.len() < SER_HEADER_SIZE {
+            return Err(JupiterError::InvalidSer(
+                "File too small for SER header".into(),
+            ));
+        }
+
+        if &mmap[0..14] != SER_MAGIC {
+            return Err(JupiterError::InvalidSer(
+                "Missing LUCAM-RECORDER magic".into(),
+            ));
+        }
+
+        let header = parse_header(&mmap[..SER_HEADER_SIZE])?;
+
+        let expected_data_size =
+            SER_HEADER_SIZE + header.frame_byte_size() * header.frame_count as usize;
+        if mmap.len() < expected_data_size {
+            return Err(JupiterError::InvalidSer(format!(
+                "File truncated: expected at least {} bytes, got {}",
+                expected_data_size,
+                mmap.len()
+            )));
+        }
+
+        Ok(Self { mmap, header })
+    }
+
+    pub fn frame_count(&self) -> usize {
+        self.header.frame_count as usize
+    }
+
+    /// Get the raw bytes for a single frame (zero-copy from mmap).
+    pub fn frame_raw(&self, index: usize) -> Result<&[u8]> {
+        let count = self.frame_count();
+        if index >= count {
+            return Err(JupiterError::FrameIndexOutOfRange {
+                index,
+                total: count,
+            });
+        }
+        let offset = SER_HEADER_SIZE + index * self.header.frame_byte_size();
+        let end = offset + self.header.frame_byte_size();
+        Ok(&self.mmap[offset..end])
+    }
+
+    /// Read a single frame, converting to f32 in [0.0, 1.0].
+    pub fn read_frame(&self, index: usize) -> Result<Frame> {
+        let raw = self.frame_raw(index)?;
+        let h = self.header.height as usize;
+        let w = self.header.width as usize;
+        let bpp = self.header.bytes_per_pixel_plane();
+        let planes = self.header.planes_per_pixel();
+
+        // For mono/bayer: single plane. For RGB/BGR: average to luminance for now.
+        let data = if planes == 1 {
+            decode_mono_plane(raw, h, w, bpp, self.header.pixel_depth, self.header.little_endian)?
+        } else {
+            // RGB/BGR: extract green channel as luminance approximation
+            decode_plane_from_interleaved(
+                raw, h, w, bpp, planes, 1, // green channel index
+                self.header.pixel_depth, self.header.little_endian,
+            )?
+        };
+
+        let mut frame = Frame::new(data, bpp as u8 * 8);
+        frame.metadata = FrameMetadata {
+            frame_index: index,
+            quality_score: None,
+            timestamp_us: self.read_timestamp(index),
+        };
+        Ok(frame)
+    }
+
+    /// Read per-frame timestamp from the optional trailer.
+    fn read_timestamp(&self, index: usize) -> Option<u64> {
+        let trailer_offset =
+            SER_HEADER_SIZE + self.header.frame_byte_size() * self.header.frame_count as usize;
+        let ts_offset = trailer_offset + index * 8;
+        if ts_offset + 8 <= self.mmap.len() {
+            let bytes = &self.mmap[ts_offset..ts_offset + 8];
+            Some(u64::from_le_bytes(bytes.try_into().ok()?))
+        } else {
+            None
+        }
+    }
+
+    /// Build SourceInfo from the header.
+    pub fn source_info(&self, path: &Path) -> SourceInfo {
+        SourceInfo {
+            filename: path.to_path_buf(),
+            total_frames: self.frame_count(),
+            width: self.header.width,
+            height: self.header.height,
+            bit_depth: self.header.pixel_depth as u8,
+            color_mode: self.header.color_mode(),
+            observer: non_empty(&self.header.observer),
+            telescope: non_empty(&self.header.telescope),
+            instrument: non_empty(&self.header.instrument),
+        }
+    }
+
+    /// Iterator over all frames.
+    pub fn frames(&self) -> impl Iterator<Item = Result<Frame>> + '_ {
+        (0..self.frame_count()).map(move |i| self.read_frame(i))
+    }
+}
+
+fn parse_header(buf: &[u8]) -> Result<SerHeader> {
+    let mut cursor = std::io::Cursor::new(&buf[14..]); // skip magic
+
+    let _lu_id = cursor.read_i32::<LittleEndian>()?;
+    let color_id = cursor.read_i32::<LittleEndian>()?;
+    let le_flag = cursor.read_i32::<LittleEndian>()?;
+    let width = cursor.read_i32::<LittleEndian>()? as u32;
+    let height = cursor.read_i32::<LittleEndian>()? as u32;
+    let pixel_depth = cursor.read_i32::<LittleEndian>()? as u32;
+    let frame_count = cursor.read_i32::<LittleEndian>()? as u32;
+
+    let observer = read_fixed_string(&buf[42..82]);
+    let instrument = read_fixed_string(&buf[82..122]);
+    let telescope = read_fixed_string(&buf[122..162]);
+
+    let mut cursor = std::io::Cursor::new(&buf[162..]);
+    let date_time = cursor.read_u64::<LittleEndian>()?;
+    let date_time_utc = cursor.read_u64::<LittleEndian>()?;
+
+    if width == 0 || height == 0 {
+        return Err(JupiterError::InvalidDimensions { width, height });
+    }
+
+    // SER spec: LittleEndian field = 0 means big-endian pixel data,
+    // but many writers (including FireCapture) use 0 for little-endian.
+    // Follow Siril's convention: treat 0 as little-endian.
+    let little_endian = le_flag != 1;
+
+    Ok(SerHeader {
+        color_id,
+        little_endian,
+        width,
+        height,
+        pixel_depth,
+        frame_count,
+        observer,
+        instrument,
+        telescope,
+        date_time,
+        date_time_utc,
+    })
+}
+
+fn read_fixed_string(buf: &[u8]) -> String {
+    String::from_utf8_lossy(buf)
+        .trim_end_matches('\0')
+        .trim()
+        .to_string()
+}
+
+fn non_empty(s: &str) -> Option<String> {
+    if s.is_empty() { None } else { Some(s.to_string()) }
+}
+
+fn decode_mono_plane(
+    raw: &[u8],
+    height: usize,
+    width: usize,
+    bytes_per_sample: usize,
+    bit_depth: u32,
+    little_endian: bool,
+) -> Result<Array2<f32>> {
+    let max_val = ((1u32 << bit_depth) - 1) as f32;
+    let mut data = Array2::<f32>::zeros((height, width));
+
+    for row in 0..height {
+        for col in 0..width {
+            let idx = (row * width + col) * bytes_per_sample;
+            let val = if bytes_per_sample == 1 {
+                raw[idx] as f32
+            } else {
+                let pair = [raw[idx], raw[idx + 1]];
+                if little_endian {
+                    u16::from_le_bytes(pair) as f32
+                } else {
+                    u16::from_be_bytes(pair) as f32
+                }
+            };
+            data[[row, col]] = val / max_val;
+        }
+    }
+
+    Ok(data)
+}
+
+fn decode_plane_from_interleaved(
+    raw: &[u8],
+    height: usize,
+    width: usize,
+    bytes_per_sample: usize,
+    planes: usize,
+    plane_index: usize,
+    bit_depth: u32,
+    little_endian: bool,
+) -> Result<Array2<f32>> {
+    let max_val = ((1u32 << bit_depth) - 1) as f32;
+    let mut data = Array2::<f32>::zeros((height, width));
+
+    for row in 0..height {
+        for col in 0..width {
+            let pixel_offset = (row * width + col) * planes * bytes_per_sample;
+            let idx = pixel_offset + plane_index * bytes_per_sample;
+            let val = if bytes_per_sample == 1 {
+                raw[idx] as f32
+            } else {
+                let pair = [raw[idx], raw[idx + 1]];
+                if little_endian {
+                    u16::from_le_bytes(pair) as f32
+                } else {
+                    u16::from_be_bytes(pair) as f32
+                }
+            };
+            data[[row, col]] = val / max_val;
+        }
+    }
+
+    Ok(data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    /// Build a minimal synthetic SER file in memory.
+    fn build_synthetic_ser(
+        width: u32,
+        height: u32,
+        bit_depth: u32,
+        frames: &[Vec<u8>],
+    ) -> Vec<u8> {
+        let mut buf = Vec::new();
+
+        // Magic (14 bytes)
+        buf.extend_from_slice(b"LUCAM-RECORDER");
+        // LuID (4 bytes)
+        buf.extend_from_slice(&0i32.to_le_bytes());
+        // ColorID = MONO (4 bytes)
+        buf.extend_from_slice(&0i32.to_le_bytes());
+        // LittleEndian = 0 (little-endian per Siril convention)
+        buf.extend_from_slice(&0i32.to_le_bytes());
+        // Width
+        buf.extend_from_slice(&(width as i32).to_le_bytes());
+        // Height
+        buf.extend_from_slice(&(height as i32).to_le_bytes());
+        // PixelDepth
+        buf.extend_from_slice(&(bit_depth as i32).to_le_bytes());
+        // FrameCount
+        buf.extend_from_slice(&(frames.len() as i32).to_le_bytes());
+        // Observer (40 bytes)
+        let mut observer = [0u8; 40];
+        observer[..4].copy_from_slice(b"Test");
+        buf.extend_from_slice(&observer);
+        // Instrument (40 bytes)
+        buf.extend_from_slice(&[0u8; 40]);
+        // Telescope (40 bytes)
+        let mut telescope = [0u8; 40];
+        telescope[..7].copy_from_slice(b"MyScope");
+        buf.extend_from_slice(&telescope);
+        // DateTime (8 bytes)
+        buf.extend_from_slice(&0u64.to_le_bytes());
+        // DateTimeUTC (8 bytes)
+        buf.extend_from_slice(&0u64.to_le_bytes());
+
+        assert_eq!(buf.len(), SER_HEADER_SIZE);
+
+        // Frame data
+        for frame in frames {
+            buf.extend_from_slice(frame);
+        }
+
+        buf
+    }
+
+    #[test]
+    fn test_parse_8bit_mono() {
+        let w = 4u32;
+        let h = 3u32;
+        // 4x3 = 12 pixels, 8-bit: values 0..11
+        let frame_data: Vec<u8> = (0u8..12).collect();
+        let ser_data = build_synthetic_ser(w, h, 8, &[frame_data]);
+
+        let mut tmpfile = NamedTempFile::new().unwrap();
+        tmpfile.write_all(&ser_data).unwrap();
+
+        let reader = SerReader::open(tmpfile.path()).unwrap();
+        assert_eq!(reader.frame_count(), 1);
+        assert_eq!(reader.header.width, 4);
+        assert_eq!(reader.header.height, 3);
+        assert_eq!(reader.header.pixel_depth, 8);
+        assert_eq!(reader.header.color_mode(), ColorMode::Mono);
+        assert_eq!(reader.header.observer, "Test");
+
+        let frame = reader.read_frame(0).unwrap();
+        assert_eq!(frame.width(), 4);
+        assert_eq!(frame.height(), 3);
+        // pixel (0,0) = 0/255 = 0.0
+        assert!((frame.data[[0, 0]] - 0.0).abs() < 1e-6);
+        // pixel (0,1) = 1/255
+        assert!((frame.data[[0, 1]] - 1.0 / 255.0).abs() < 1e-4);
+        // pixel (2,3) = 11/255
+        assert!((frame.data[[2, 3]] - 11.0 / 255.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_parse_16bit_mono() {
+        let w = 2u32;
+        let h = 2u32;
+        // 4 pixels, 16-bit LE
+        let values: [u16; 4] = [0, 1000, 32767, 65535];
+        let mut frame_data = Vec::new();
+        for v in &values {
+            frame_data.extend_from_slice(&v.to_le_bytes());
+        }
+        let ser_data = build_synthetic_ser(w, h, 16, &[frame_data]);
+
+        let mut tmpfile = NamedTempFile::new().unwrap();
+        tmpfile.write_all(&ser_data).unwrap();
+
+        let reader = SerReader::open(tmpfile.path()).unwrap();
+        let frame = reader.read_frame(0).unwrap();
+
+        assert!((frame.data[[0, 0]] - 0.0).abs() < 1e-6);
+        assert!((frame.data[[0, 1]] - 1000.0 / 65535.0).abs() < 1e-4);
+        assert!((frame.data[[1, 1]] - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_multiple_frames() {
+        let w = 2u32;
+        let h = 2u32;
+        let frame1: Vec<u8> = vec![0, 50, 100, 200];
+        let frame2: Vec<u8> = vec![255, 200, 100, 50];
+        let ser_data = build_synthetic_ser(w, h, 8, &[frame1, frame2]);
+
+        let mut tmpfile = NamedTempFile::new().unwrap();
+        tmpfile.write_all(&ser_data).unwrap();
+
+        let reader = SerReader::open(tmpfile.path()).unwrap();
+        assert_eq!(reader.frame_count(), 2);
+
+        let f0 = reader.read_frame(0).unwrap();
+        let f1 = reader.read_frame(1).unwrap();
+
+        assert!((f0.data[[0, 0]] - 0.0).abs() < 1e-6);
+        assert!((f1.data[[0, 0]] - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_out_of_range() {
+        let w = 2u32;
+        let h = 2u32;
+        let frame_data: Vec<u8> = vec![0, 0, 0, 0];
+        let ser_data = build_synthetic_ser(w, h, 8, &[frame_data]);
+
+        let mut tmpfile = NamedTempFile::new().unwrap();
+        tmpfile.write_all(&ser_data).unwrap();
+
+        let reader = SerReader::open(tmpfile.path()).unwrap();
+        assert!(reader.read_frame(1).is_err());
+    }
+
+    #[test]
+    fn test_frames_iterator() {
+        let w = 2u32;
+        let h = 2u32;
+        let frame1: Vec<u8> = vec![10, 20, 30, 40];
+        let frame2: Vec<u8> = vec![50, 60, 70, 80];
+        let frame3: Vec<u8> = vec![90, 100, 110, 120];
+        let ser_data = build_synthetic_ser(w, h, 8, &[frame1, frame2, frame3]);
+
+        let mut tmpfile = NamedTempFile::new().unwrap();
+        tmpfile.write_all(&ser_data).unwrap();
+
+        let reader = SerReader::open(tmpfile.path()).unwrap();
+        let frames: Vec<_> = reader.frames().collect::<std::result::Result<_, _>>().unwrap();
+        assert_eq!(frames.len(), 3);
+        assert_eq!(frames[0].metadata.frame_index, 0);
+        assert_eq!(frames[2].metadata.frame_index, 2);
+    }
+}

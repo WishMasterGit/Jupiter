@@ -1,0 +1,22 @@
+[package]
+name = "jupiter-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ndarray = { workspace = true }
+rayon = { workspace = true }
+rustfft = { workspace = true }
+num-complex = { workspace = true }
+num-traits = { workspace = true }
+image = { workspace = true }
+byteorder = { workspace = true }
+memmap2 = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+approx = "0.5"
+tempfile = "3"

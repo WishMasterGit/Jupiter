@@ -1,0 +1,20 @@
+[package]
+name = "jupiter-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "jupiter"
+path = "src/main.rs"
+
+[dependencies]
+jupiter-core = { path = "../jupiter-core" }
+clap = { workspace = true }
+indicatif = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }
+rayon = { workspace = true }
