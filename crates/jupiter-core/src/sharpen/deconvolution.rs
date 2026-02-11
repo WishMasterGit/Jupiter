@@ -176,7 +176,7 @@ pub fn bessel_j1(x: f64) -> f64 {
         let q0 = 0.04687499995
             + y * (-0.2002690873e-3
                 + y * (0.8449199096e-5 + y * (-0.88228987e-6 + y * (0.105787412e-6))));
-        let ans = (0.636619772 / ax).sqrt() * (xx.cos() * p0 - z * xx.sin() * q0);
+        let ans = (std::f64::consts::FRAC_2_PI / ax).sqrt() * (xx.cos() * p0 - z * xx.sin() * q0);
         if x < 0.0 {
             -ans
         } else {
