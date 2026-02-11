@@ -1,4 +1,5 @@
 mod commands;
+mod summary;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -30,6 +31,8 @@ enum Commands {
     Filter(commands::filter::FilterArgs),
     /// Run the full processing pipeline
     Run(commands::pipeline::RunArgs),
+    /// Print a default pipeline config as TOML
+    Config,
 }
 
 fn main() -> Result<()> {
@@ -49,5 +52,6 @@ fn main() -> Result<()> {
         Commands::Sharpen(args) => commands::sharpen::run(args),
         Commands::Filter(args) => commands::filter::run(args),
         Commands::Run(args) => commands::pipeline::run(args),
+        Commands::Config => commands::config::run(),
     }
 }

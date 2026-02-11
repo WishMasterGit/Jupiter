@@ -13,6 +13,7 @@ use crate::io::image_io::save_image;
 use crate::io::ser::SerReader;
 use crate::quality::gradient::rank_frames_gradient;
 use crate::quality::laplacian::rank_frames;
+use crate::sharpen::deconvolution::deconvolve;
 use crate::sharpen::wavelet;
 use crate::stack::mean::mean_stack;
 use crate::stack::median::median_stack;
@@ -134,11 +135,16 @@ where
         result
     };
 
-    // 6. Sharpening
+    // 6. Sharpening (deconvolution first, then wavelet)
     let mut result = if let Some(ref sharpening_config) = config.sharpening {
         on_progress(PipelineStage::Sharpening, 0.0);
-        let sharpened = wavelet::sharpen(&stacked, &sharpening_config.wavelet);
-        info!("Sharpening complete");
+        let mut sharpened = stacked;
+        if let Some(ref deconv_config) = sharpening_config.deconvolution {
+            sharpened = deconvolve(&sharpened, deconv_config);
+            info!("Deconvolution complete");
+        }
+        sharpened = wavelet::sharpen(&sharpened, &sharpening_config.wavelet);
+        info!("Wavelet sharpening complete");
         on_progress(PipelineStage::Sharpening, 1.0);
         sharpened
     } else {

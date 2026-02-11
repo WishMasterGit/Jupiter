@@ -26,6 +26,7 @@ anyhow = "1"
 
 # CLI
 clap = { version = "4", features = ["derive"] }
+console = "0.16"
 indicatif = "0.18.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }

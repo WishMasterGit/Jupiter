@@ -4,7 +4,8 @@ use anyhow::{Context, Result};
 use clap::Args;
 use indicatif::{ProgressBar, ProgressStyle};
 use jupiter_core::pipeline::config::{
-    FilterStep, FrameSelectionConfig, PipelineConfig, SharpeningConfig, StackMethod, StackingConfig,
+    DeconvolutionConfig, DeconvolutionMethod, FilterStep, FrameSelectionConfig, PipelineConfig,
+    PsfModel, SharpeningConfig, StackMethod, StackingConfig,
 };
 use jupiter_core::pipeline::run_pipeline;
 use jupiter_core::sharpen::wavelet::WaveletParams;
@@ -16,7 +17,8 @@ use super::stack::StackMethodArg;
 #[derive(Args)]
 pub struct RunArgs {
     /// Input SER file
-    pub file: PathBuf,
+    #[arg(required_unless_present = "config")]
+    pub file: Option<PathBuf>,
 
     /// Pipeline config file (TOML)
     #[arg(long)]
@@ -27,7 +29,7 @@ pub struct RunArgs {
     pub select: u32,
 
     /// Stacking method
-    #[arg(long, value_enum, default_value = "multi-point")]
+    #[arg(long, value_enum, default_value = "mean")]
     pub method: StackMethodArg,
 
     /// Sigma threshold for sigma-clip stacking
@@ -54,6 +56,34 @@ pub struct RunArgs {
     #[arg(long, default_value = "0.05")]
     pub min_brightness: f32,
 
+    /// Deconvolution method (rl or wiener)
+    #[arg(long)]
+    pub deconv: Option<String>,
+
+    /// PSF model (gaussian, kolmogorov, airy)
+    #[arg(long, default_value = "gaussian")]
+    pub psf: String,
+
+    /// Gaussian PSF sigma in pixels
+    #[arg(long, default_value = "2.0")]
+    pub psf_sigma: f32,
+
+    /// Kolmogorov seeing FWHM in pixels
+    #[arg(long, default_value = "3.0")]
+    pub seeing: f32,
+
+    /// Airy first dark ring radius in pixels
+    #[arg(long, default_value = "2.5")]
+    pub airy_radius: f32,
+
+    /// Richardson-Lucy iteration count
+    #[arg(long, default_value = "20")]
+    pub rl_iterations: usize,
+
+    /// Wiener noise-to-signal ratio
+    #[arg(long, default_value = "0.001")]
+    pub noise_ratio: f32,
+
     /// Disable sharpening
     #[arg(long)]
     pub no_sharpen: bool,
@@ -67,12 +97,12 @@ pub struct RunArgs {
     pub gamma: Option<f32>,
 
     /// Output file path
-    #[arg(short, long, default_value = "result.tiff")]
-    pub output: PathBuf,
+    #[arg(short, long)]
+    pub output: Option<PathBuf>,
 }
 
 pub fn run(args: &RunArgs) -> Result<()> {
-    let config = if let Some(ref config_path) = args.config {
+    let mut config: PipelineConfig = if let Some(ref config_path) = args.config {
         let contents = std::fs::read_to_string(config_path)
             .with_context(|| format!("Failed to read config {}", config_path.display()))?;
         toml::from_str(&contents).context("Invalid pipeline config")?
@@ -80,26 +110,17 @@ pub fn run(args: &RunArgs) -> Result<()> {
         build_config_from_args(args)
     };
 
-    println!("Jupiter Pipeline");
-    println!("  Input:    {}", config.input.display());
-    println!("  Output:   {}", config.output.display());
-    println!(
-        "  Select:   {:.0}%",
-        config.frame_selection.select_percentage * 100.0
-    );
-    println!("  Stack:    {:?}", config.stacking.method);
-    if let Some(ref sharp) = config.sharpening {
-        println!("  Sharpen:  {:?}", sharp.wavelet.coefficients);
-        if !sharp.wavelet.denoise.is_empty() {
-            println!("  Denoise:  {:?}", sharp.wavelet.denoise);
-        }
-    } else {
-        println!("  Sharpen:  disabled");
+    // CLI overrides TOML
+    if let Some(ref file) = args.file {
+        config.input = file.clone();
     }
-    if !config.filters.is_empty() {
-        println!("  Filters:  {} step(s)", config.filters.len());
+    if let Some(ref out) = args.output {
+        config.output = out.clone();
+    } else if config.output.as_os_str().is_empty() {
+        config.output = PathBuf::from("result.tiff");
     }
-    println!();
+
+    crate::summary::print_pipeline_summary(&config);
 
     let pb = ProgressBar::new(100);
     pb.set_style(
@@ -145,7 +166,11 @@ fn build_config_from_args(args: &RunArgs) -> PipelineConfig {
             }
             params
         };
-        Some(SharpeningConfig { wavelet })
+        let deconvolution = build_deconv_config(args);
+        Some(SharpeningConfig {
+            wavelet,
+            deconvolution,
+        })
     };
 
     let stacking_method = match args.method {
@@ -175,9 +200,13 @@ fn build_config_from_args(args: &RunArgs) -> PipelineConfig {
         filters.push(FilterStep::Gamma(gamma));
     }
 
+    // file is always Some when --config is absent (required_unless_present)
+    let input = args.file.clone().unwrap_or_default();
+    let output = args.output.clone().unwrap_or_else(|| PathBuf::from("result.tiff"));
+
     PipelineConfig {
-        input: args.file.clone(),
-        output: args.output.clone(),
+        input,
+        output,
         frame_selection: FrameSelectionConfig {
             select_percentage: args.select as f32 / 100.0,
             ..Default::default()
@@ -188,4 +217,41 @@ fn build_config_from_args(args: &RunArgs) -> PipelineConfig {
         sharpening,
         filters,
     }
+}
+
+fn build_deconv_config(args: &RunArgs) -> Option<DeconvolutionConfig> {
+    let method_str = args.deconv.as_deref()?;
+
+    let method = match method_str {
+        "rl" => DeconvolutionMethod::RichardsonLucy {
+            iterations: args.rl_iterations,
+        },
+        "wiener" => DeconvolutionMethod::Wiener {
+            noise_ratio: args.noise_ratio,
+        },
+        _ => {
+            eprintln!("Unknown deconv method '{}', skipping", method_str);
+            return None;
+        }
+    };
+
+    let psf = match args.psf.as_str() {
+        "gaussian" => PsfModel::Gaussian {
+            sigma: args.psf_sigma,
+        },
+        "kolmogorov" => PsfModel::Kolmogorov {
+            seeing: args.seeing,
+        },
+        "airy" => PsfModel::Airy {
+            radius: args.airy_radius,
+        },
+        _ => {
+            eprintln!("Unknown PSF model '{}', using Gaussian", args.psf);
+            PsfModel::Gaussian {
+                sigma: args.psf_sigma,
+            }
+        }
+    };
+
+    Some(DeconvolutionConfig { method, psf })
 }

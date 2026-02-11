@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 jupiter-core = { path = "../jupiter-core" }
 clap = { workspace = true }
+console = { workspace = true }
 indicatif = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
