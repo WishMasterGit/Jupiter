@@ -472,7 +472,7 @@ fn hann_weight(pos: usize, half_size: usize) -> f32 {
         return 1.0;
     }
     let t = pos as f32 / size as f32;
-    0.5 * (1.0 - (2.0 * std::f32::consts::PI * t).cos())
+    0.5 * (1.0 - (std::f32::consts::TAU * t).cos())
 }
 
 /// Top-level orchestrator for multi-alignment-point stacking.

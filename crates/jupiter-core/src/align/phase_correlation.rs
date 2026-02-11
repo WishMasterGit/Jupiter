@@ -108,9 +108,9 @@ fn apply_hann(data: &Array2<f32>) -> Array2<f32> {
     let mut result = Array2::<f32>::zeros((h, w));
 
     for row in 0..h {
-        let wy = 0.5 * (1.0 - (2.0 * std::f64::consts::PI * row as f64 / h as f64).cos());
+        let wy = 0.5 * (1.0 - (std::f64::consts::TAU * row as f64 / h as f64).cos());
         for col in 0..w {
-            let wx = 0.5 * (1.0 - (2.0 * std::f64::consts::PI * col as f64 / w as f64).cos());
+            let wx = 0.5 * (1.0 - (std::f64::consts::TAU * col as f64 / w as f64).cos());
             result[[row, col]] = data[[row, col]] * (wy * wx) as f32;
         }
     }

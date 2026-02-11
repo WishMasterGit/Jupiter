@@ -169,7 +169,9 @@ pub fn bessel_j1(x: f64) -> f64 {
     } else {
         let z = 8.0 / ax;
         let y = z * z;
-        let xx = ax - 2.356194491; // ax - 3*PI/4
+        // Phase shift for Bessel J1 large-argument approximation (3π/4)
+        const FRAC_3PI_4: f64 = 3.0 * std::f64::consts::FRAC_PI_4;
+        let xx = ax - FRAC_3PI_4;
         let p0 = 1.0
             + y * (0.183105e-2
                 + y * (-0.3516396496e-4 + y * (0.2457520174e-5 + y * (-0.240337019e-6))));
