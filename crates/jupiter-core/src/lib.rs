@@ -5,4 +5,6 @@ pub mod quality;
 pub mod align;
 pub mod stack;
 pub mod sharpen;
+pub mod filters;
+pub mod color;
 pub mod pipeline;

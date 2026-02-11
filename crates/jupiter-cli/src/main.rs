@@ -26,6 +26,8 @@ enum Commands {
     Stack(commands::stack::StackArgs),
     /// Apply wavelet sharpening to an image
     Sharpen(commands::sharpen::SharpenArgs),
+    /// Apply post-processing filters to an image
+    Filter(commands::filter::FilterArgs),
     /// Run the full processing pipeline
     Run(commands::pipeline::RunArgs),
 }
@@ -45,6 +47,7 @@ fn main() -> Result<()> {
         Commands::Quality(args) => commands::quality::run(args),
         Commands::Stack(args) => commands::stack::run(args),
         Commands::Sharpen(args) => commands::sharpen::run(args),
+        Commands::Filter(args) => commands::filter::run(args),
         Commands::Run(args) => commands::pipeline::run(args),
     }
 }

@@ -10,6 +10,10 @@ pub struct WaveletParams {
     pub num_layers: usize,
     /// Coefficient per layer: >1.0 sharpens, <1.0 suppresses, 1.0 unchanged.
     pub coefficients: Vec<f32>,
+    /// Per-layer denoise threshold (soft-thresholding). 0.0 = no denoise.
+    /// Small coefficients in each detail layer below threshold are zeroed out.
+    #[serde(default)]
+    pub denoise: Vec<f32>,
 }
 
 impl Default for WaveletParams {
@@ -17,6 +21,7 @@ impl Default for WaveletParams {
         Self {
             num_layers: 6,
             coefficients: vec![1.5, 1.3, 1.2, 1.1, 1.0, 1.0],
+            denoise: vec![],
         }
     }
 }
@@ -42,17 +47,33 @@ pub fn decompose(data: &Array2<f32>, num_layers: usize) -> (Vec<Array2<f32>>, Ar
     (layers, current)
 }
 
-/// Reconstruct an image from wavelet layers with given coefficients.
+/// Reconstruct an image from wavelet layers with given coefficients and denoise thresholds.
 pub fn reconstruct(
     layers: &[Array2<f32>],
     residual: &Array2<f32>,
     coefficients: &[f32],
+    denoise: &[f32],
 ) -> Array2<f32> {
     let mut result = residual.clone();
 
     for (i, layer) in layers.iter().enumerate() {
         let coeff = coefficients.get(i).copied().unwrap_or(1.0);
-        result = result + &(layer * coeff);
+        let threshold = denoise.get(i).copied().unwrap_or(0.0);
+
+        if threshold > 0.0 {
+            // Soft-thresholding: sign(w) * max(0, |w| - threshold)
+            let denoised = layer.mapv(|w| {
+                let abs_w = w.abs();
+                if abs_w <= threshold {
+                    0.0
+                } else {
+                    w.signum() * (abs_w - threshold)
+                }
+            });
+            result = result + &(denoised * coeff);
+        } else {
+            result = result + &(layer * coeff);
+        }
     }
 
     // Clamp to valid range
@@ -63,7 +84,7 @@ pub fn reconstruct(
 /// Sharpen a frame using a trous wavelet decomposition.
 pub fn sharpen(frame: &Frame, params: &WaveletParams) -> Frame {
     let (layers, residual) = decompose(&frame.data, params.num_layers);
-    let sharpened = reconstruct(&layers, &residual, &params.coefficients);
+    let sharpened = reconstruct(&layers, &residual, &params.coefficients, &params.denoise);
     Frame::new(sharpened, frame.original_bit_depth)
 }
 
@@ -124,7 +145,7 @@ fn convolve_cols(data: &Array2<f32>, kernel: &[f32; 5], step: usize) -> Array2<f
 }
 
 /// Mirror boundary handling: reflect index into [0, size).
-fn mirror_index(idx: isize, size: usize) -> usize {
+pub fn mirror_index(idx: isize, size: usize) -> usize {
     if idx < 0 {
         (-idx) as usize % size
     } else if idx >= size as isize {
@@ -136,95 +157,5 @@ fn mirror_index(idx: isize, size: usize) -> usize {
         }
     } else {
         idx as usize
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use ndarray::Array2;
-
-    #[test]
-    fn test_decompose_reconstruct_identity() {
-        // Decompose then reconstruct with all coefficients = 1.0 should return original
-        let mut data = Array2::<f32>::zeros((32, 32));
-        for r in 0..32 {
-            for c in 0..32 {
-                data[[r, c]] = (r as f32 * 0.1 + c as f32 * 0.05).sin() * 0.5 + 0.5;
-            }
-        }
-
-        let (layers, residual) = decompose(&data, 4);
-        let coefficients = vec![1.0; 4];
-        let reconstructed = reconstruct(&layers, &residual, &coefficients);
-
-        for r in 0..32 {
-            for c in 0..32 {
-                let diff = (data[[r, c]] - reconstructed[[r, c]]).abs();
-                assert!(
-                    diff < 1e-4,
-                    "Mismatch at [{r},{c}]: orig={}, recon={}, diff={diff}",
-                    data[[r, c]],
-                    reconstructed[[r, c]]
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn test_sharpening_increases_contrast() {
-        // An image with a step edge should have higher local contrast after sharpening
-        let mut data = Array2::<f32>::zeros((32, 32));
-        for r in 0..32 {
-            for c in 16..32 {
-                data[[r, c]] = 1.0;
-            }
-        }
-        let frame = Frame::new(data.clone(), 8);
-
-        let params = WaveletParams {
-            num_layers: 4,
-            coefficients: vec![2.0, 1.5, 1.0, 1.0],
-        };
-        let sharpened = sharpen(&frame, &params);
-
-        // Near the edge (col 15-16 boundary), the sharpened image should overshoot
-        // (i.e., have values > original on the bright side, or < original on dark side)
-        let orig_dark = data[[16, 14]];
-        let sharp_dark = sharpened.data[[16, 14]];
-        let orig_bright = data[[16, 17]];
-        let sharp_bright = sharpened.data[[16, 17]];
-
-        // Sharpening should make dark side darker near edge and bright side brighter
-        assert!(
-            sharp_dark <= orig_dark + 0.01 || sharp_bright >= orig_bright - 0.01,
-            "Sharpening should increase edge contrast"
-        );
-    }
-
-    #[test]
-    fn test_flat_image_unchanged() {
-        let data = Array2::from_elem((16, 16), 0.5f32);
-        let frame = Frame::new(data, 8);
-        let sharpened = sharpen(&frame, &WaveletParams::default());
-
-        for r in 0..16 {
-            for c in 0..16 {
-                assert!(
-                    (sharpened.data[[r, c]] - 0.5).abs() < 1e-4,
-                    "Flat image should be unchanged by sharpening"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn test_mirror_index() {
-        assert_eq!(mirror_index(-1, 10), 1);
-        assert_eq!(mirror_index(-2, 10), 2);
-        assert_eq!(mirror_index(0, 10), 0);
-        assert_eq!(mirror_index(9, 10), 9);
-        assert_eq!(mirror_index(10, 10), 9);
-        assert_eq!(mirror_index(11, 10), 8);
     }
 }

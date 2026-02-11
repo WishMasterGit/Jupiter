@@ -1,4 +1,4 @@
 /target
-*.ser
+#*.ser
 *.avi
 test-data/

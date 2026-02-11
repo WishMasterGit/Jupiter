@@ -18,6 +18,10 @@ pub struct SharpenArgs {
     #[arg(long)]
     pub coefficients: Option<String>,
 
+    /// Comma-separated denoise thresholds per layer (e.g. 3.0,2.0,1.0,0,0,0)
+    #[arg(long)]
+    pub denoise: Option<String>,
+
     /// Output file path
     #[arg(short, long, default_value = "sharpened.tiff")]
     pub output: PathBuf,
@@ -43,15 +47,29 @@ pub fn run(args: &SharpenArgs) -> Result<()> {
         WaveletParams::default().coefficients[..args.layers.min(6)].to_vec()
     };
 
+    let denoise = if let Some(ref denoise_str) = args.denoise {
+        denoise_str
+            .split(',')
+            .map(|s| s.trim().parse::<f32>())
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .context("Invalid denoise format")?
+    } else {
+        vec![]
+    };
+
     let params = WaveletParams {
         num_layers: args.layers,
         coefficients,
+        denoise: denoise.clone(),
     };
 
     println!(
         "Applying {}-layer wavelet sharpening with coefficients {:?}",
         params.num_layers, params.coefficients
     );
+    if !denoise.is_empty() {
+        println!("  Denoise thresholds: {:?}", denoise);
+    }
 
     let sharpened = wavelet::sharpen(&frame, &params);
 
