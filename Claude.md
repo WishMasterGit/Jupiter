@@ -16,3 +16,4 @@ this is planet image/video processing tool to achieve crisp results from the ear
 ## Claude workstream
 
 - make sure to build with features gpu and normally while testing
+- place tests in separate files in "tests" folder

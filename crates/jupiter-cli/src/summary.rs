@@ -235,6 +235,28 @@ fn print_stack_sub_params(s: &Styles, method: &StackMethod) {
                 s.method.apply_to(local_stack_method)
             );
         }
+        StackMethod::Drizzle(cfg) => {
+            println!(
+                "    {:<12}{}",
+                s.label.apply_to("Scale"),
+                s.value.apply_to(format!("{}x", cfg.scale))
+            );
+            println!(
+                "    {:<12}{}",
+                s.label.apply_to("Pixfrac"),
+                s.value.apply_to(cfg.pixfrac)
+            );
+            println!(
+                "    {:<12}{}",
+                s.label.apply_to("Kernel"),
+                s.value.apply_to(&cfg.kernel)
+            );
+            println!(
+                "    {:<12}{}",
+                s.label.apply_to("Weighted"),
+                s.value.apply_to(if cfg.quality_weighted { "yes" } else { "no" })
+            );
+        }
         _ => {}
     }
 }

@@ -1,11 +1,12 @@
 use anyhow::Result;
 use clap::{Args, ValueEnum};
 use indicatif::{ProgressBar, ProgressStyle};
-use jupiter_core::align::phase_correlation::align_frames_with_progress;
+use jupiter_core::align::phase_correlation::{align_frames_with_progress, compute_offset};
 use jupiter_core::io::image_io::save_image;
 use jupiter_core::io::ser::SerReader;
 use jupiter_core::pipeline::config::QualityMetric;
 use jupiter_core::quality::laplacian::rank_frames;
+use jupiter_core::stack::drizzle::{drizzle_stack, DrizzleConfig};
 use jupiter_core::stack::mean::mean_stack;
 use jupiter_core::stack::median::median_stack;
 use jupiter_core::stack::multi_point::{multi_point_stack, MultiPointConfig};
@@ -18,6 +19,7 @@ pub enum StackMethodArg {
     Median,
     SigmaClip,
     MultiPoint,
+    Drizzle,
 }
 
 #[derive(Args)]
@@ -49,6 +51,14 @@ pub struct StackArgs {
     #[arg(long, default_value = "0.05")]
     pub min_brightness: f32,
 
+    /// Output scale factor for drizzle (e.g., 2.0 = 2x resolution)
+    #[arg(long, default_value = "2.0")]
+    pub drizzle_scale: f32,
+
+    /// Pixfrac (drop size) for drizzle: 0.0-1.0
+    #[arg(long, default_value = "0.7")]
+    pub pixfrac: f32,
+
     /// Output file path
     #[arg(short, long, default_value = "stacked.tiff")]
     pub output: PathBuf,
@@ -60,6 +70,7 @@ pub fn run(args: &StackArgs) -> Result<()> {
 
     match args.method {
         StackMethodArg::MultiPoint => run_multi_point(&reader, args, percentage),
+        StackMethodArg::Drizzle => run_drizzle(&reader, args, percentage),
         _ => run_standard(&reader, args, percentage),
     }
 }
@@ -151,5 +162,82 @@ fn run_standard(reader: &SerReader, args: &StackArgs, percentage: f32) -> Result
 
     save_image(&result, &args.output)?;
     println!("Saved to {}", args.output.display());
+    Ok(())
+}
+
+fn run_drizzle(reader: &SerReader, args: &StackArgs, percentage: f32) -> Result<()> {
+    let total = reader.frame_count();
+    println!(
+        "Drizzle stacking {} frames (scale={}, pixfrac={})",
+        total, args.drizzle_scale, args.pixfrac
+    );
+
+    println!("Reading {} frames...", total);
+    let frames: Vec<_> = reader.frames().collect::<std::result::Result<_, _>>()?;
+
+    println!("Scoring frames...");
+    let ranked = rank_frames(&frames);
+
+    let keep = (total as f32 * percentage).ceil() as usize;
+    let keep = keep.max(1).min(total);
+    println!("Selected {} best frames (top {}%)", keep, args.select);
+
+    let selected_indices: Vec<usize> = ranked.iter().take(keep).map(|(i, _)| *i).collect();
+    let selected: Vec<_> = selected_indices
+        .iter()
+        .map(|&i| frames[i].clone())
+        .collect();
+    let quality_scores: Vec<f64> = selected_indices
+        .iter()
+        .map(|&i| {
+            ranked
+                .iter()
+                .find(|(idx, _)| *idx == i)
+                .unwrap()
+                .1
+                .composite
+        })
+        .collect();
+
+    println!("Computing alignment offsets...");
+    let pb = ProgressBar::new(keep as u64);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("Aligning [{bar:40}] {pos}/{len}")?
+            .progress_chars("=> "),
+    );
+
+    let reference = &selected[0];
+    let offsets: Vec<_> = selected
+        .iter()
+        .enumerate()
+        .map(|(i, frame)| {
+            pb.set_position(i as u64 + 1);
+            if i == 0 {
+                jupiter_core::frame::AlignmentOffset::default()
+            } else {
+                compute_offset(reference, frame).unwrap_or_default()
+            }
+        })
+        .collect();
+    pb.finish();
+
+    println!("Drizzle stacking...");
+    let drizzle_config = DrizzleConfig {
+        scale: args.drizzle_scale,
+        pixfrac: args.pixfrac,
+        quality_weighted: true,
+        ..Default::default()
+    };
+
+    let result = drizzle_stack(&selected, &offsets, &drizzle_config, Some(&quality_scores))?;
+
+    save_image(&result, &args.output)?;
+    println!(
+        "Saved {}x{} drizzle result to {}",
+        result.width(),
+        result.height(),
+        args.output.display()
+    );
     Ok(())
 }

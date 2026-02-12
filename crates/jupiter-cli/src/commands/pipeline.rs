@@ -10,6 +10,7 @@ use jupiter_core::pipeline::config::{
     DeconvolutionConfig, DeconvolutionMethod, FilterStep, FrameSelectionConfig, PipelineConfig,
     PsfModel, SharpeningConfig, StackMethod, StackingConfig,
 };
+use jupiter_core::stack::drizzle::DrizzleConfig;
 use jupiter_core::pipeline::{run_pipeline_reported, PipelineStage, ProgressReporter};
 use jupiter_core::sharpen::wavelet::WaveletParams;
 use jupiter_core::stack::multi_point::MultiPointConfig;
@@ -98,6 +99,14 @@ pub struct RunArgs {
     /// Wiener noise-to-signal ratio
     #[arg(long, default_value = "0.001")]
     pub noise_ratio: f32,
+
+    /// Drizzle output scale factor (e.g., 2.0 = 2x resolution)
+    #[arg(long, default_value = "2.0")]
+    pub drizzle_scale: f32,
+
+    /// Drizzle pixfrac (drop size): 0.0-1.0
+    #[arg(long, default_value = "0.7")]
+    pub pixfrac: f32,
 
     /// Disable sharpening
     #[arg(long)]
@@ -280,6 +289,12 @@ fn build_config_from_args(args: &RunArgs) -> PipelineConfig {
             search_radius: args.search_radius,
             select_percentage: args.select as f32 / 100.0,
             min_brightness: args.min_brightness,
+            ..Default::default()
+        }),
+        StackMethodArg::Drizzle => StackMethod::Drizzle(DrizzleConfig {
+            scale: args.drizzle_scale,
+            pixfrac: args.pixfrac,
+            quality_weighted: true,
             ..Default::default()
         }),
     };

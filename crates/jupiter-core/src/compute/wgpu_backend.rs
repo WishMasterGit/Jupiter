@@ -245,14 +245,12 @@ impl WgpuBackend {
         let adapter_name = adapter.get_info().name.clone();
         tracing::info!("GPU adapter: {adapter_name}");
 
-        let (device, queue) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("jupiter"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
-                ..Default::default()
-            },
-        ))
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("jupiter"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::default(),
+            ..Default::default()
+        }))
         .map_err(|e| format!("Failed to create GPU device: {e}"))?;
 
         let device: Arc<wgpu::Device> = Arc::new(device);

@@ -5,7 +5,8 @@ use std::sync::Arc;
 use tracing::info;
 
 use crate::align::phase_correlation::{
-    align_frames, align_frames_gpu_with_progress, align_frames_with_progress,
+    align_frames, align_frames_gpu_with_progress, align_frames_with_progress, compute_offset,
+    compute_offset_gpu,
 };
 use crate::compute::ComputeBackend;
 use crate::error::Result;
@@ -13,13 +14,14 @@ use crate::filters::gaussian_blur::gaussian_blur;
 use crate::filters::histogram::{auto_stretch, histogram_stretch};
 use crate::filters::levels::{brightness_contrast, gamma_correct};
 use crate::filters::unsharp_mask::unsharp_mask;
-use crate::frame::Frame;
+use crate::frame::{AlignmentOffset, Frame};
 use crate::io::image_io::save_image;
 use crate::io::ser::SerReader;
 use crate::quality::gradient::rank_frames_gradient;
 use crate::quality::laplacian::rank_frames;
 use crate::sharpen::deconvolution::{deconvolve, deconvolve_gpu};
 use crate::sharpen::wavelet;
+use crate::stack::drizzle::drizzle_stack;
 use crate::stack::mean::mean_stack;
 use crate::stack::median::median_stack;
 use crate::stack::multi_point::multi_point_stack;
@@ -90,6 +92,81 @@ pub fn run_pipeline_reported(
         info!("Multi-point stacking complete");
         reporter.finish_stage();
         result
+    } else if let StackMethod::Drizzle(ref drizzle_config) = config.stacking.method {
+        // Drizzle flow: read → quality → select → compute offsets (no shift) → drizzle
+        reporter.begin_stage(PipelineStage::Reading, Some(total));
+        let frames: Vec<Frame> = reader.frames().collect::<Result<_>>()?;
+        reporter.finish_stage();
+
+        reporter.begin_stage(PipelineStage::QualityAssessment, Some(total));
+        let ranked = match config.frame_selection.metric {
+            QualityMetric::Laplacian => rank_frames(&frames),
+            QualityMetric::Gradient => rank_frames_gradient(&frames),
+        };
+        reporter.finish_stage();
+
+        reporter.begin_stage(PipelineStage::FrameSelection, None);
+        let keep = (total as f32 * config.frame_selection.select_percentage).ceil() as usize;
+        let keep = keep.max(1).min(total);
+        let selected_indices: Vec<usize> = ranked.iter().take(keep).map(|(i, _)| *i).collect();
+        let quality_scores: Vec<f64> = selected_indices
+            .iter()
+            .map(|&i| {
+                ranked
+                    .iter()
+                    .find(|(idx, _)| *idx == i)
+                    .unwrap()
+                    .1
+                    .composite
+            })
+            .collect();
+        let selected_frames: Vec<Frame> = selected_indices
+            .iter()
+            .map(|&i| frames[i].clone())
+            .collect();
+        info!(
+            selected = selected_frames.len(),
+            total, "Selected best frames for drizzle"
+        );
+        reporter.finish_stage();
+
+        // Compute alignment offsets without shifting frames.
+        let frame_count = selected_frames.len();
+        reporter.begin_stage(PipelineStage::Alignment, Some(frame_count));
+        let reference = &selected_frames[0];
+        let offsets: Vec<AlignmentOffset> = selected_frames
+            .iter()
+            .enumerate()
+            .map(|(i, frame)| {
+                reporter.advance(i + 1);
+                if i == 0 {
+                    AlignmentOffset::default()
+                } else if backend.is_gpu() {
+                    compute_offset_gpu(&reference.data, &frame.data, backend.as_ref())
+                        .unwrap_or_default()
+                } else {
+                    compute_offset(reference, frame).unwrap_or_default()
+                }
+            })
+            .collect();
+        info!("Alignment offsets computed for drizzle");
+        reporter.finish_stage();
+
+        reporter.begin_stage(PipelineStage::Stacking, None);
+        let scores = if drizzle_config.quality_weighted {
+            Some(quality_scores.as_slice())
+        } else {
+            None
+        };
+        let result = drizzle_stack(&selected_frames, &offsets, drizzle_config, scores)?;
+        info!(
+            method = "Drizzle",
+            scale = drizzle_config.scale,
+            pixfrac = drizzle_config.pixfrac,
+            "Drizzle stacking complete"
+        );
+        reporter.finish_stage();
+        result
     } else {
         // Read
         reporter.begin_stage(PipelineStage::Reading, Some(total));
@@ -149,7 +226,7 @@ pub fn run_pipeline_reported(
             StackMethod::Mean => mean_stack(&aligned)?,
             StackMethod::Median => median_stack(&aligned)?,
             StackMethod::SigmaClip(params) => sigma_clip_stack(&aligned, params)?,
-            StackMethod::MultiPoint(_) => unreachable!(),
+            StackMethod::MultiPoint(_) | StackMethod::Drizzle(_) => unreachable!(),
         };
         info!(method = ?config.stacking.method, "Stacking complete");
         reporter.finish_stage();
@@ -222,6 +299,78 @@ where
         info!("Multi-point stacking complete");
         on_progress(PipelineStage::Stacking, 1.0);
         result
+    } else if let StackMethod::Drizzle(ref drizzle_config) = config.stacking.method {
+        // Drizzle flow: read → quality → select → compute offsets (no shift) → drizzle
+        on_progress(PipelineStage::Reading, 0.0);
+        let frames: Vec<Frame> = reader.frames().collect::<Result<_>>()?;
+        on_progress(PipelineStage::Reading, 1.0);
+
+        on_progress(PipelineStage::QualityAssessment, 0.0);
+        let ranked = match config.frame_selection.metric {
+            QualityMetric::Laplacian => rank_frames(&frames),
+            QualityMetric::Gradient => rank_frames_gradient(&frames),
+        };
+        on_progress(PipelineStage::QualityAssessment, 1.0);
+
+        on_progress(PipelineStage::FrameSelection, 0.0);
+        let keep = (total as f32 * config.frame_selection.select_percentage).ceil() as usize;
+        let keep = keep.max(1).min(total);
+        let selected_indices: Vec<usize> = ranked.iter().take(keep).map(|(i, _)| *i).collect();
+        let quality_scores: Vec<f64> = selected_indices
+            .iter()
+            .map(|&i| {
+                ranked
+                    .iter()
+                    .find(|(idx, _)| *idx == i)
+                    .unwrap()
+                    .1
+                    .composite
+            })
+            .collect();
+        let selected_frames: Vec<Frame> = selected_indices
+            .iter()
+            .map(|&i| frames[i].clone())
+            .collect();
+        info!(
+            selected = selected_frames.len(),
+            total, "Selected best frames for drizzle"
+        );
+        on_progress(PipelineStage::FrameSelection, 1.0);
+
+        on_progress(PipelineStage::Alignment, 0.0);
+        let reference = &selected_frames[0];
+        let offsets: Vec<AlignmentOffset> = selected_frames
+            .iter()
+            .enumerate()
+            .map(|(i, frame)| {
+                if i == 0 {
+                    AlignmentOffset::default()
+                } else if backend.is_gpu() {
+                    compute_offset_gpu(&reference.data, &frame.data, backend.as_ref())
+                        .unwrap_or_default()
+                } else {
+                    compute_offset(reference, frame).unwrap_or_default()
+                }
+            })
+            .collect();
+        info!("Alignment offsets computed for drizzle");
+        on_progress(PipelineStage::Alignment, 1.0);
+
+        on_progress(PipelineStage::Stacking, 0.0);
+        let scores = if drizzle_config.quality_weighted {
+            Some(quality_scores.as_slice())
+        } else {
+            None
+        };
+        let result = drizzle_stack(&selected_frames, &offsets, drizzle_config, scores)?;
+        info!(
+            method = "Drizzle",
+            scale = drizzle_config.scale,
+            pixfrac = drizzle_config.pixfrac,
+            "Drizzle stacking complete"
+        );
+        on_progress(PipelineStage::Stacking, 1.0);
+        result
     } else {
         // Standard flow: read all -> quality -> select -> align -> stack
         on_progress(PipelineStage::Reading, 0.0);
@@ -276,7 +425,7 @@ where
             StackMethod::Mean => mean_stack(&aligned)?,
             StackMethod::Median => median_stack(&aligned)?,
             StackMethod::SigmaClip(params) => sigma_clip_stack(&aligned, params)?,
-            StackMethod::MultiPoint(_) => unreachable!(),
+            StackMethod::MultiPoint(_) | StackMethod::Drizzle(_) => unreachable!(),
         };
         info!(method = ?config.stacking.method, "Stacking complete");
         on_progress(PipelineStage::Stacking, 1.0);

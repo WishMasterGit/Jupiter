@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::compute::DevicePreference;
 use crate::sharpen::wavelet::WaveletParams;
+use crate::stack::drizzle::DrizzleConfig;
 use crate::stack::multi_point::{LocalStackMethod, MultiPointConfig};
 use crate::stack::sigma_clip::SigmaClipParams;
 
@@ -69,6 +70,7 @@ pub enum StackMethod {
     Median,
     SigmaClip(SigmaClipParams),
     MultiPoint(MultiPointConfig),
+    Drizzle(DrizzleConfig),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -139,6 +141,9 @@ impl fmt::Display for StackMethod {
             StackMethod::Median => write!(f, "Median"),
             StackMethod::SigmaClip(_) => write!(f, "Sigma Clip"),
             StackMethod::MultiPoint(_) => write!(f, "Multi-Point"),
+            StackMethod::Drizzle(cfg) => {
+                write!(f, "Drizzle ({}x, pixfrac={})", cfg.scale, cfg.pixfrac)
+            }
         }
     }
 }
