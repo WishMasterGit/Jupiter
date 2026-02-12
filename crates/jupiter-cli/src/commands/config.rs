@@ -1,13 +1,21 @@
 use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use clap::Args;
 use jupiter_core::pipeline::config::{
     FrameSelectionConfig, PipelineConfig, SharpeningConfig, StackingConfig,
 };
 use jupiter_core::sharpen::wavelet::WaveletParams;
 
-/// Print a full default PipelineConfig as TOML to stdout.
-pub fn run() -> Result<()> {
+#[derive(Args)]
+pub struct ConfigArgs {
+    /// Write config to a file instead of stdout
+    #[arg(short, long)]
+    pub output: Option<PathBuf>,
+}
+
+/// Print or save a full default PipelineConfig as TOML.
+pub fn run(args: &ConfigArgs) -> Result<()> {
     let config = PipelineConfig {
         input: PathBuf::from("input.ser"),
         output: PathBuf::from("result.tiff"),
@@ -20,6 +28,14 @@ pub fn run() -> Result<()> {
         filters: vec![],
     };
     let toml_str = toml::to_string_pretty(&config)?;
-    print!("{}", toml_str);
+
+    if let Some(ref path) = args.output {
+        std::fs::write(path, &toml_str)
+            .with_context(|| format!("Failed to write config to {}", path.display()))?;
+        println!("Default config saved to {}", path.display());
+    } else {
+        print!("{}", toml_str);
+    }
+
     Ok(())
 }

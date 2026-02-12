@@ -101,6 +101,10 @@ pub struct RunArgs {
     /// Output file path
     #[arg(short, long)]
     pub output: Option<PathBuf>,
+
+    /// Save effective config as TOML and exit without processing
+    #[arg(long)]
+    pub save_config: Option<PathBuf>,
 }
 
 /// Progress reporter using indicatif MultiProgress with stage + detail bars.
@@ -192,6 +196,16 @@ pub fn run(args: &RunArgs) -> Result<()> {
         config.output = out.clone();
     } else if config.output.as_os_str().is_empty() {
         config.output = PathBuf::from("result.tiff");
+    }
+
+    // Save config and exit if --save-config is set
+    if let Some(ref save_path) = args.save_config {
+        let toml_str =
+            toml::to_string_pretty(&config).context("Failed to serialize pipeline config")?;
+        std::fs::write(save_path, &toml_str)
+            .with_context(|| format!("Failed to write config to {}", save_path.display()))?;
+        println!("Config saved to {}", save_path.display());
+        return Ok(());
     }
 
     crate::summary::print_pipeline_summary(&config);
