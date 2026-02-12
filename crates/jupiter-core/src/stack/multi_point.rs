@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use tracing::info;
 
 use crate::align::phase_correlation::{bilinear_sample, compute_offset_array};
+use crate::consts::EPSILON;
 use crate::error::{JupiterError, Result};
 use crate::frame::{AlignmentOffset, Frame};
 use crate::io::ser::SerReader;
@@ -347,7 +348,7 @@ fn sigma_clip_stack_arrays(patches: &[Array2<f32>], sigma: f32, iterations: usiz
 
             for _ in 0..iterations {
                 let (mean, stddev) = masked_mean_stddev(&vals, &mask);
-                if stddev < 1e-10 {
+                if stddev < EPSILON {
                     break;
                 }
                 let lo = mean - sigma * stddev;

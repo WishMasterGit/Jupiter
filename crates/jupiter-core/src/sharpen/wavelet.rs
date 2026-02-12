@@ -2,10 +2,8 @@ use ndarray::Array2;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::consts::{B3_KERNEL, PARALLEL_PIXEL_THRESHOLD};
 use crate::frame::Frame;
-
-/// Minimum pixel count (h*w) to justify row-level parallelism.
-const PARALLEL_PIXEL_THRESHOLD: usize = 65_536;
 
 /// Parameters for wavelet sharpening.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -29,9 +27,6 @@ impl Default for WaveletParams {
         }
     }
 }
-
-/// B3 spline 1D kernel coefficients: [1, 4, 6, 4, 1] / 16.
-const B3_KERNEL: [f32; 5] = [1.0 / 16.0, 4.0 / 16.0, 6.0 / 16.0, 4.0 / 16.0, 1.0 / 16.0];
 
 /// Decompose an image into wavelet detail layers + residual.
 ///

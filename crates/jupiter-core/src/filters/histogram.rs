@@ -1,9 +1,10 @@
+use crate::consts::EPSILON;
 use crate::frame::Frame;
 
 /// Linear histogram stretch: maps [black_point, white_point] → [0.0, 1.0].
 pub fn histogram_stretch(frame: &Frame, black_point: f32, white_point: f32) -> Frame {
     let range = white_point - black_point;
-    let range = if range.abs() < 1e-10 { 1.0 } else { range };
+    let range = if range.abs() < EPSILON { 1.0 } else { range };
 
     let data = frame.data.mapv(|v| ((v - black_point) / range).clamp(0.0, 1.0));
     Frame::new(data, frame.original_bit_depth)

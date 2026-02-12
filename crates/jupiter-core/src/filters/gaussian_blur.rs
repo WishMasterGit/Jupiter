@@ -1,10 +1,8 @@
 use ndarray::Array2;
 use rayon::prelude::*;
 
+use crate::consts::PARALLEL_PIXEL_THRESHOLD;
 use crate::frame::Frame;
-
-/// Minimum pixel count (h*w) to justify row-level parallelism.
-const PARALLEL_PIXEL_THRESHOLD: usize = 65_536;
 
 /// Apply Gaussian blur to a frame using separable 1D convolution.
 pub fn gaussian_blur(frame: &Frame, sigma: f32) -> Frame {

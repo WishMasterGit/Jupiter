@@ -3,19 +3,9 @@ use num_complex::Complex;
 use rayon::prelude::*;
 use rustfft::FftPlanner;
 
+use crate::consts::{B3_KERNEL, PARALLEL_PIXEL_THRESHOLD};
+
 use super::{BufferInner, ComputeBackend, GpuBuffer};
-
-/// Minimum pixel count (h*w) to justify row-level parallelism.
-const PARALLEL_PIXEL_THRESHOLD: usize = 65_536;
-
-/// B3 spline wavelet kernel used for a-trous decomposition.
-const B3_KERNEL: [f32; 5] = [
-    1.0 / 16.0,
-    4.0 / 16.0,
-    6.0 / 16.0,
-    4.0 / 16.0,
-    1.0 / 16.0,
-];
 
 /// CPU backend using Rayon for parallelism.
 pub struct CpuBackend;

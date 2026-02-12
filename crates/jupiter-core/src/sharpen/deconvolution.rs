@@ -3,6 +3,7 @@ use num_complex::Complex;
 
 use crate::compute::cpu::{fft2d_forward, ifft2d_inverse};
 use crate::compute::ComputeBackend;
+use crate::consts::EPSILON;
 use crate::frame::Frame;
 use crate::pipeline::config::{DeconvolutionConfig, DeconvolutionMethod, PsfModel};
 
@@ -194,8 +195,6 @@ pub fn bessel_j1(x: f64) -> f64 {
 
 fn richardson_lucy(frame: &Frame, psf: &Array2<f32>, iterations: usize) -> Frame {
     let (h, w) = frame.data.dim();
-    let epsilon: f32 = 1e-10;
-
     // Pre-compute H = FFT(psf) and H_flip = FFT(psf_flipped)
     let h_fft = fft2d_forward(psf);
 
@@ -228,7 +227,7 @@ fn richardson_lucy(frame: &Frame, psf: &Array2<f32>, iterations: usize) -> Frame
         let mut ratio = Array2::<f32>::zeros((h, w));
         for row in 0..h {
             for col in 0..w {
-                ratio[[row, col]] = frame.data[[row, col]] / (blurred[[row, col]] as f32 + epsilon);
+                ratio[[row, col]] = frame.data[[row, col]] / (blurred[[row, col]] as f32 + EPSILON);
             }
         }
 
@@ -340,7 +339,7 @@ fn richardson_lucy_gpu(
         let blurred = backend.ifft2d_real(&blurred_fft, h, w);
 
         // ratio = observed / (blurred + epsilon)
-        let ratio = backend.divide_real(&observed, &blurred, 1e-10);
+        let ratio = backend.divide_real(&observed, &blurred, EPSILON);
 
         // correction = IFFT(FFT(ratio) * H_flip)
         let ratio_fft = backend.fft2d(&ratio);

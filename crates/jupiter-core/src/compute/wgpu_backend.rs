@@ -240,7 +240,7 @@ impl WgpuBackend {
             compatible_surface: None,
             force_fallback_adapter: false,
         }))
-        .ok_or_else(|| "No suitable GPU adapter found".to_string())?;
+        .map_err(|e| format!("No suitable GPU adapter found: {e}"))?;
 
         let adapter_name = adapter.get_info().name.clone();
         tracing::info!("GPU adapter: {adapter_name}");
@@ -252,12 +252,11 @@ impl WgpuBackend {
                 required_limits: wgpu::Limits::default(),
                 ..Default::default()
             },
-            None,
         ))
         .map_err(|e| format!("Failed to create GPU device: {e}"))?;
 
-        let device = Arc::new(device);
-        let queue = Arc::new(queue);
+        let device: Arc<wgpu::Device> = Arc::new(device);
+        let queue: Arc<wgpu::Queue> = Arc::new(queue);
 
         // Compile all shader modules
         let mk = |label, src: &str| {
@@ -318,13 +317,14 @@ impl WgpuBackend {
     // --- Buffer helpers ---
 
     fn create_storage(&self, data: &[f32]) -> wgpu::Buffer {
-        self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: None,
-            contents: bytemuck::cast_slice(data),
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_SRC
-                | wgpu::BufferUsages::COPY_DST,
-        })
+        self.device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: None,
+                contents: bytemuck::cast_slice(data),
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_SRC
+                    | wgpu::BufferUsages::COPY_DST,
+            })
     }
 
     fn create_storage_uninit(&self, byte_size: u64) -> wgpu::Buffer {
@@ -339,11 +339,12 @@ impl WgpuBackend {
     }
 
     fn create_uniform<T: Pod>(&self, data: &T) -> wgpu::Buffer {
-        self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: None,
-            contents: bytemuck::bytes_of(data),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        })
+        self.device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: None,
+                contents: bytemuck::bytes_of(data),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            })
     }
 
     fn download_f32(&self, buffer: &wgpu::Buffer) -> Vec<f32> {
@@ -364,7 +365,7 @@ impl WgpuBackend {
         slice.map_async(wgpu::MapMode::Read, move |r| {
             tx.send(r).ok();
         });
-        self.device.poll(wgpu::Maintain::Wait);
+        self.device.poll(wgpu::PollType::wait_indefinitely()).ok();
         rx.recv()
             .expect("GPU channel closed")
             .expect("Buffer mapping failed");
@@ -394,7 +395,7 @@ impl WgpuBackend {
         slice.map_async(wgpu::MapMode::Read, move |r| {
             tx.send(r).ok();
         });
-        self.device.poll(wgpu::Maintain::Wait);
+        self.device.poll(wgpu::PollType::wait_indefinitely()).ok();
         rx.recv()
             .expect("GPU channel closed")
             .expect("Buffer mapping failed");
@@ -526,12 +527,7 @@ impl WgpuBackend {
 
     /// Transpose complex matrix from (rows, cols) to (cols, rows).
     /// Buffer holds rows*cols*2 f32 values (interleaved complex).
-    fn transpose_complex_buf(
-        &self,
-        input: &wgpu::Buffer,
-        rows: u32,
-        cols: u32,
-    ) -> wgpu::Buffer {
+    fn transpose_complex_buf(&self, input: &wgpu::Buffer, rows: u32, cols: u32) -> wgpu::Buffer {
         let byte_size = (rows as u64) * (cols as u64) * 2 * 4;
         let output = self.create_storage_uninit(byte_size);
         let uniform = self.create_uniform(&TransposeParams { rows, cols });
@@ -583,8 +579,7 @@ impl ComputeBackend for WgpuBackend {
         let num_f32s = (buffer.size() / 4) as usize;
         let storage_w = num_f32s / buf.height;
         let data = self.download_f32(buffer);
-        Array2::from_shape_vec((buf.height, storage_w), data)
-            .expect("shape mismatch in download")
+        Array2::from_shape_vec((buf.height, storage_w), data).expect("shape mismatch in download")
     }
 
     fn hann_window(&self, input: &GpuBuffer) -> GpuBuffer {
@@ -596,9 +591,18 @@ impl ComputeBackend for WgpuBackend {
         self.dispatch(
             &self.hann_pipeline,
             &[
-                wgpu::BindGroupEntry { binding: 0, resource: buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: out.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: uniform.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: out.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: uniform.as_entire_binding(),
+                },
             ],
             (div_ceil(w, 16), div_ceil(h, 16), 1),
         );
@@ -611,15 +615,29 @@ impl ComputeBackend for WgpuBackend {
         let complex_count = (a.height * a.width) as u32; // logical width = real width
         let byte_size = (complex_count as u64) * 2 * 4;
         let out = self.create_storage_uninit(byte_size);
-        let uniform = self.create_uniform(&CountParams { count: complex_count });
+        let uniform = self.create_uniform(&CountParams {
+            count: complex_count,
+        });
 
         self.dispatch(
             &self.cross_power_pipeline,
             &[
-                wgpu::BindGroupEntry { binding: 0, resource: a_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: b_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: out.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: uniform.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: a_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: b_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: out.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: uniform.as_entire_binding(),
+                },
             ],
             (div_ceil(complex_count, 256), 1, 1),
         );
@@ -643,9 +661,18 @@ impl ComputeBackend for WgpuBackend {
             label: None,
             layout: &layout1,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: intermediate.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: params1.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: intermediate.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: params1.as_entire_binding(),
+                },
             ],
         });
 
@@ -661,9 +688,18 @@ impl ComputeBackend for WgpuBackend {
             label: None,
             layout: &layout2,
             entries: &[
-                wgpu::BindGroupEntry { binding: 3, resource: intermediate.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 4, resource: result_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 5, resource: params2.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: intermediate.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: result_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: params2.as_entire_binding(),
+                },
             ],
         });
 
@@ -707,9 +743,18 @@ impl ComputeBackend for WgpuBackend {
         self.dispatch(
             &self.shift_pipeline,
             &[
-                wgpu::BindGroupEntry { binding: 0, resource: buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: out.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: uniform.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: out.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: uniform.as_entire_binding(),
+                },
             ],
             (div_ceil(w, 16), div_ceil(h, 16), 1),
         );
@@ -722,15 +767,29 @@ impl ComputeBackend for WgpuBackend {
         let complex_count = (a.height * a.width) as u32;
         let byte_size = (complex_count as u64) * 2 * 4;
         let out = self.create_storage_uninit(byte_size);
-        let uniform = self.create_uniform(&CountParams { count: complex_count });
+        let uniform = self.create_uniform(&CountParams {
+            count: complex_count,
+        });
 
         self.dispatch(
             &self.complex_mul_pipeline,
             &[
-                wgpu::BindGroupEntry { binding: 0, resource: a_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: b_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: out.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: uniform.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: a_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: b_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: out.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: uniform.as_entire_binding(),
+                },
             ],
             (div_ceil(complex_count, 256), 1, 1),
         );
@@ -747,10 +806,22 @@ impl ComputeBackend for WgpuBackend {
         self.dispatch(
             &self.divide_real_pipeline,
             &[
-                wgpu::BindGroupEntry { binding: 0, resource: a_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: b_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: out.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: uniform.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: a_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: b_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: out.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: uniform.as_entire_binding(),
+                },
             ],
             (div_ceil(count, 256), 1, 1),
         );
@@ -767,10 +838,22 @@ impl ComputeBackend for WgpuBackend {
         self.dispatch(
             &self.multiply_real_pipeline,
             &[
-                wgpu::BindGroupEntry { binding: 0, resource: a_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: b_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: out.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: uniform.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: a_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: b_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: out.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: uniform.as_entire_binding(),
+                },
             ],
             (div_ceil(count, 256), 1, 1),
         );
@@ -795,10 +878,22 @@ impl ComputeBackend for WgpuBackend {
         self.dispatch(
             &self.convolve_rows_pipeline,
             &[
-                wgpu::BindGroupEntry { binding: 0, resource: buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: after_rows.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: kernel_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: params.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: after_rows.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: kernel_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: params.as_entire_binding(),
+                },
             ],
             (div_ceil(total_pixels, 256), 1, 1),
         );
@@ -808,10 +903,22 @@ impl ComputeBackend for WgpuBackend {
         self.dispatch(
             &self.convolve_cols_pipeline,
             &[
-                wgpu::BindGroupEntry { binding: 0, resource: after_rows.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: after_cols.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: kernel_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: params.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: after_rows.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: after_cols.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: kernel_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: params.as_entire_binding(),
+                },
             ],
             (div_ceil(total_pixels, 256), 1, 1),
         );
@@ -839,10 +946,22 @@ impl ComputeBackend for WgpuBackend {
         self.dispatch(
             &self.convolve_rows_pipeline,
             &[
-                wgpu::BindGroupEntry { binding: 0, resource: buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: after_rows.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: kernel_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: params.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: after_rows.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: kernel_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: params.as_entire_binding(),
+                },
             ],
             (div_ceil(total_pixels, 256), 1, 1),
         );
@@ -852,10 +971,22 @@ impl ComputeBackend for WgpuBackend {
         self.dispatch(
             &self.convolve_cols_pipeline,
             &[
-                wgpu::BindGroupEntry { binding: 0, resource: after_rows.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: after_cols.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: kernel_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: params.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: after_rows.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: after_cols.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: kernel_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: params.as_entire_binding(),
+                },
             ],
             (div_ceil(total_pixels, 256), 1, 1),
         );
@@ -881,9 +1012,18 @@ impl ComputeBackend for WgpuBackend {
         self.dispatch(
             &self.pad_r2c_pipeline,
             &[
-                wgpu::BindGroupEntry { binding: 0, resource: buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: padded_complex.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: pad_params.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: padded_complex.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: pad_params.as_entire_binding(),
+                },
             ],
             (div_ceil(pw, 16), div_ceil(ph, 16), 1),
         );
@@ -894,9 +1034,9 @@ impl ComputeBackend for WgpuBackend {
             &padded_complex,
             total_complex,
             pw,
-            ph,    // batch_count = number of rows
-            pw,    // batch_stride = row length in complex elements
-            1.0,   // forward
+            ph,  // batch_count = number of rows
+            pw,  // batch_stride = row length in complex elements
+            1.0, // forward
         );
 
         // Step 3: Transpose (ph, pw) -> (pw, ph)
@@ -907,9 +1047,9 @@ impl ComputeBackend for WgpuBackend {
             &transposed,
             total_complex,
             ph,
-            pw,    // batch_count = number of "rows" in transposed
-            ph,    // batch_stride = "row" length in transposed
-            1.0,   // forward
+            pw,  // batch_count = number of "rows" in transposed
+            ph,  // batch_stride = "row" length in transposed
+            1.0, // forward
         );
 
         // Step 5: Transpose back (pw, ph) -> (ph, pw)

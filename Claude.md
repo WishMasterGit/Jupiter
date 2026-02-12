@@ -14,3 +14,5 @@ this is planet image/video processing tool to achieve crisp results from the ear
 - app should be crossplatform Windows/Mac/Linux but not mobile phones
 
 ## Claude workstream
+
+- make sure to build with features gpu and normally while testing

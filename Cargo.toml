@@ -36,4 +36,4 @@ serde = { version = "1", features = ["derive"] }
 toml = "1.0.0+spec-1.1.0"
 
 # GPU compute
-wgpu = "24"
+wgpu = "28"

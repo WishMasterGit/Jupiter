@@ -2,11 +2,9 @@ use ndarray::Array2;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::consts::{EPSILON, PARALLEL_PIXEL_THRESHOLD};
 use crate::error::{JupiterError, Result};
 use crate::frame::Frame;
-
-/// Minimum pixel count (h*w) to justify row-level parallelism.
-const PARALLEL_PIXEL_THRESHOLD: usize = 65_536;
 
 /// Parameters for sigma-clipped mean stacking.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -94,7 +92,7 @@ fn sigma_clip_pixel(
 
     for _ in 0..params.iterations {
         let (mean, stddev) = mean_stddev(pixel_values, mask);
-        if stddev < 1e-10 {
+        if stddev < EPSILON {
             break;
         }
         let lo = mean - params.sigma * stddev;

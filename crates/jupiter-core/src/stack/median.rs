@@ -1,11 +1,9 @@
 use ndarray::Array2;
 use rayon::prelude::*;
 
+use crate::consts::PARALLEL_PIXEL_THRESHOLD;
 use crate::error::{JupiterError, Result};
 use crate::frame::Frame;
-
-/// Minimum pixel count (h*w) to justify row-level parallelism.
-const PARALLEL_PIXEL_THRESHOLD: usize = 65_536;
 
 /// Stack frames by computing the median at each pixel position.
 ///

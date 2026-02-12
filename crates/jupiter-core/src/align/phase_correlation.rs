@@ -9,13 +9,9 @@ use crate::compute::ComputeBackend;
 use crate::error::{JupiterError, Result};
 use crate::frame::{AlignmentOffset, Frame};
 
+use crate::consts::{PARALLEL_FRAME_THRESHOLD, PARALLEL_PIXEL_THRESHOLD};
+
 use super::subpixel::refine_peak_paraboloid;
-
-/// Minimum number of frames to justify parallel alignment.
-const PARALLEL_FRAME_THRESHOLD: usize = 4;
-
-/// Minimum pixel count (h*w) to justify row-level parallelism within a single frame.
-const PARALLEL_PIXEL_THRESHOLD: usize = 65_536;
 
 /// Compute the translation offset between two raw arrays using FFT phase correlation.
 pub fn compute_offset_array(
