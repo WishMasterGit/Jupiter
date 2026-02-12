@@ -56,6 +56,23 @@ where
     }
 }
 
+/// Apply a processing function to each channel in parallel.
+pub fn process_color_parallel<F>(color: &ColorFrame, process_fn: F) -> ColorFrame
+where
+    F: Fn(&Frame) -> Frame + Send + Sync,
+{
+    let (red, (green, blue)) = rayon::join(
+        || process_fn(&color.red),
+        || {
+            rayon::join(
+                || process_fn(&color.green),
+                || process_fn(&color.blue),
+            )
+        },
+    );
+    ColorFrame { red, green, blue }
+}
+
 /// Create a ColorFrame from three separate mono frames.
 pub fn from_channels(red: Frame, green: Frame, blue: Frame) -> ColorFrame {
     ColorFrame { red, green, blue }

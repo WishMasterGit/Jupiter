@@ -1,9 +1,13 @@
 use ndarray::Array2;
 use num_complex::Complex;
+use rayon::prelude::*;
 use rustfft::FftPlanner;
 
 use crate::frame::Frame;
 use crate::pipeline::config::{DeconvolutionConfig, DeconvolutionMethod, PsfModel};
+
+/// Minimum pixel count (h*w) to justify row-level parallelism.
+const PARALLEL_PIXEL_THRESHOLD: usize = 65_536;
 
 /// Generate PSF and dispatch to the appropriate deconvolution algorithm.
 pub fn deconvolve(frame: &Frame, config: &DeconvolutionConfig) -> Frame {
@@ -197,6 +201,7 @@ fn fft2d(data: &Array2<f32>) -> Array2<Complex<f64>> {
     let fft_row = planner.plan_fft_forward(w);
     let fft_col = planner.plan_fft_forward(h);
 
+    // Convert to complex
     let mut result = Array2::<Complex<f64>>::zeros((h, w));
     for row in 0..h {
         for col in 0..w {
@@ -204,21 +209,50 @@ fn fft2d(data: &Array2<f32>) -> Array2<Complex<f64>> {
         }
     }
 
-    // Row-wise FFT
-    for row in 0..h {
-        let mut row_data: Vec<Complex<f64>> = (0..w).map(|c| result[[row, c]]).collect();
-        fft_row.process(&mut row_data);
-        for col in 0..w {
-            result[[row, col]] = row_data[col];
+    if h * w >= PARALLEL_PIXEL_THRESHOLD {
+        // Parallel row-wise FFT: collect rows, process in parallel, write back
+        let processed_rows: Vec<Vec<Complex<f64>>> = (0..h)
+            .into_par_iter()
+            .map(|row| {
+                let mut row_data: Vec<Complex<f64>> = (0..w).map(|c| result[[row, c]]).collect();
+                fft_row.process(&mut row_data);
+                row_data
+            })
+            .collect();
+        for (row, row_data) in processed_rows.into_iter().enumerate() {
+            for (col, val) in row_data.into_iter().enumerate() {
+                result[[row, col]] = val;
+            }
         }
-    }
 
-    // Column-wise FFT
-    for col in 0..w {
-        let mut col_data: Vec<Complex<f64>> = (0..h).map(|r| result[[r, col]]).collect();
-        fft_col.process(&mut col_data);
+        // Parallel column-wise FFT
+        let processed_cols: Vec<Vec<Complex<f64>>> = (0..w)
+            .into_par_iter()
+            .map(|col| {
+                let mut col_data: Vec<Complex<f64>> = (0..h).map(|r| result[[r, col]]).collect();
+                fft_col.process(&mut col_data);
+                col_data
+            })
+            .collect();
+        for (col, col_data) in processed_cols.into_iter().enumerate() {
+            for (row, val) in col_data.into_iter().enumerate() {
+                result[[row, col]] = val;
+            }
+        }
+    } else {
         for row in 0..h {
-            result[[row, col]] = col_data[row];
+            let mut row_data: Vec<Complex<f64>> = (0..w).map(|c| result[[row, c]]).collect();
+            fft_row.process(&mut row_data);
+            for col in 0..w {
+                result[[row, col]] = row_data[col];
+            }
+        }
+        for col in 0..w {
+            let mut col_data: Vec<Complex<f64>> = (0..h).map(|r| result[[r, col]]).collect();
+            fft_col.process(&mut col_data);
+            for row in 0..h {
+                result[[row, col]] = col_data[row];
+            }
         }
     }
 
@@ -233,21 +267,50 @@ fn ifft2d(data: &Array2<Complex<f64>>) -> Array2<f64> {
 
     let mut work = data.clone();
 
-    // Column-wise IFFT
-    for col in 0..w {
-        let mut col_data: Vec<Complex<f64>> = (0..h).map(|r| work[[r, col]]).collect();
-        ifft_col.process(&mut col_data);
-        for row in 0..h {
-            work[[row, col]] = col_data[row];
+    if h * w >= PARALLEL_PIXEL_THRESHOLD {
+        // Parallel column-wise IFFT
+        let processed_cols: Vec<Vec<Complex<f64>>> = (0..w)
+            .into_par_iter()
+            .map(|col| {
+                let mut col_data: Vec<Complex<f64>> = (0..h).map(|r| work[[r, col]]).collect();
+                ifft_col.process(&mut col_data);
+                col_data
+            })
+            .collect();
+        for (col, col_data) in processed_cols.into_iter().enumerate() {
+            for (row, val) in col_data.into_iter().enumerate() {
+                work[[row, col]] = val;
+            }
         }
-    }
 
-    // Row-wise IFFT
-    for row in 0..h {
-        let mut row_data: Vec<Complex<f64>> = (0..w).map(|c| work[[row, c]]).collect();
-        ifft_row.process(&mut row_data);
+        // Parallel row-wise IFFT
+        let processed_rows: Vec<Vec<Complex<f64>>> = (0..h)
+            .into_par_iter()
+            .map(|row| {
+                let mut row_data: Vec<Complex<f64>> = (0..w).map(|c| work[[row, c]]).collect();
+                ifft_row.process(&mut row_data);
+                row_data
+            })
+            .collect();
+        for (row, row_data) in processed_rows.into_iter().enumerate() {
+            for (col, val) in row_data.into_iter().enumerate() {
+                work[[row, col]] = val;
+            }
+        }
+    } else {
         for col in 0..w {
-            work[[row, col]] = row_data[col];
+            let mut col_data: Vec<Complex<f64>> = (0..h).map(|r| work[[r, col]]).collect();
+            ifft_col.process(&mut col_data);
+            for row in 0..h {
+                work[[row, col]] = col_data[row];
+            }
+        }
+        for row in 0..h {
+            let mut row_data: Vec<Complex<f64>> = (0..w).map(|c| work[[row, c]]).collect();
+            ifft_row.process(&mut row_data);
+            for col in 0..w {
+                work[[row, col]] = row_data[col];
+            }
         }
     }
 

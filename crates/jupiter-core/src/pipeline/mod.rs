@@ -1,8 +1,10 @@
 pub mod config;
 
+use std::sync::Arc;
+
 use tracing::info;
 
-use crate::align::phase_correlation::{compute_offset, shift_frame};
+use crate::align::phase_correlation::{align_frames, align_frames_with_progress};
 use crate::error::Result;
 use crate::filters::gaussian_blur::gaussian_blur;
 use crate::filters::histogram::{auto_stretch, histogram_stretch};
@@ -48,6 +50,132 @@ impl std::fmt::Display for PipelineStage {
             Self::Writing => write!(f, "Writing output"),
         }
     }
+}
+
+/// Thread-safe progress reporting for the pipeline.
+///
+/// Implementors can use this to drive progress bars, logging, or any other
+/// UI feedback. All methods have default no-op implementations.
+pub trait ProgressReporter: Send + Sync {
+    /// A new pipeline stage has started. `total_items` is the number of
+    /// work items in this stage (e.g., frame count), if known.
+    fn begin_stage(&self, _stage: PipelineStage, _total_items: Option<usize>) {}
+
+    /// One work item within the current stage has completed.
+    fn advance(&self, _items_done: usize) {}
+
+    /// The current stage is finished.
+    fn finish_stage(&self) {}
+}
+
+/// Run the full processing pipeline with a thread-safe progress reporter.
+///
+/// This variant supports per-item progress updates during parallel operations
+/// (e.g., "Aligning frame 42/500").
+pub fn run_pipeline_reported(
+    config: &PipelineConfig,
+    reporter: Arc<dyn ProgressReporter>,
+) -> Result<Frame> {
+    let reader = SerReader::open(&config.input)?;
+    let total = reader.frame_count();
+    info!(total_frames = total, "Reading SER file");
+
+    let stacked = if let StackMethod::MultiPoint(ref mp_config) = config.stacking.method {
+        reporter.begin_stage(PipelineStage::Stacking, None);
+        let result = multi_point_stack(&reader, mp_config, |_progress| {})?;
+        info!("Multi-point stacking complete");
+        reporter.finish_stage();
+        result
+    } else {
+        // Read
+        reporter.begin_stage(PipelineStage::Reading, Some(total));
+        let frames: Vec<Frame> = reader.frames().collect::<Result<_>>()?;
+        reporter.finish_stage();
+
+        // Quality
+        reporter.begin_stage(PipelineStage::QualityAssessment, Some(total));
+        let ranked = match config.frame_selection.metric {
+            QualityMetric::Laplacian => rank_frames(&frames),
+            QualityMetric::Gradient => rank_frames_gradient(&frames),
+        };
+        reporter.finish_stage();
+
+        // Selection
+        reporter.begin_stage(PipelineStage::FrameSelection, None);
+        let keep = (total as f32 * config.frame_selection.select_percentage).ceil() as usize;
+        let keep = keep.max(1).min(total);
+        let selected_indices: Vec<usize> = ranked.iter().take(keep).map(|(i, _)| *i).collect();
+        info!(
+            selected = selected_indices.len(),
+            total, "Selected best frames"
+        );
+        let selected_frames: Vec<Frame> = selected_indices
+            .iter()
+            .map(|&i| frames[i].clone())
+            .collect();
+        reporter.finish_stage();
+
+        // Alignment (parallel with per-frame progress)
+        let frame_count = selected_frames.len();
+        reporter.begin_stage(PipelineStage::Alignment, Some(frame_count));
+        let aligned = if frame_count > 1 {
+            let r = reporter.clone();
+            align_frames_with_progress(&selected_frames, 0, move |done| {
+                r.advance(done);
+            })?
+        } else {
+            selected_frames
+        };
+        reporter.finish_stage();
+
+        // Stacking
+        reporter.begin_stage(PipelineStage::Stacking, None);
+        let result = match &config.stacking.method {
+            StackMethod::Mean => mean_stack(&aligned)?,
+            StackMethod::Median => median_stack(&aligned)?,
+            StackMethod::SigmaClip(params) => sigma_clip_stack(&aligned, params)?,
+            StackMethod::MultiPoint(_) => unreachable!(),
+        };
+        info!(method = ?config.stacking.method, "Stacking complete");
+        reporter.finish_stage();
+        result
+    };
+
+    // Sharpening
+    let mut result = if let Some(ref sharpening_config) = config.sharpening {
+        reporter.begin_stage(PipelineStage::Sharpening, None);
+        let mut sharpened = stacked;
+        if let Some(ref deconv_config) = sharpening_config.deconvolution {
+            sharpened = deconvolve(&sharpened, deconv_config);
+            info!("Deconvolution complete");
+        }
+        sharpened = wavelet::sharpen(&sharpened, &sharpening_config.wavelet);
+        info!("Wavelet sharpening complete");
+        reporter.finish_stage();
+        sharpened
+    } else {
+        stacked
+    };
+
+    // Filters
+    if !config.filters.is_empty() {
+        let total_filters = config.filters.len();
+        reporter.begin_stage(PipelineStage::Filtering, Some(total_filters));
+        for (i, step) in config.filters.iter().enumerate() {
+            result = apply_filter_step(&result, step);
+            reporter.advance(i + 1);
+        }
+        info!(count = total_filters, "Filters applied");
+        reporter.finish_stage();
+    }
+
+    // Write
+    reporter.begin_stage(PipelineStage::Writing, None);
+    save_image(&result, &config.output)?;
+    info!(output = %config.output.display(), "Output saved");
+    reporter.finish_stage();
+
+    Ok(result)
 }
 
 /// Run the full processing pipeline.
@@ -101,22 +229,10 @@ where
             .collect();
         on_progress(PipelineStage::FrameSelection, 1.0);
 
-        // Alignment
+        // Alignment (parallel when >= 4 frames)
         on_progress(PipelineStage::Alignment, 0.0);
         let aligned = if selected_frames.len() > 1 {
-            let reference = &selected_frames[0];
-            let mut aligned = Vec::with_capacity(selected_frames.len());
-            aligned.push(reference.clone());
-
-            for (i, frame) in selected_frames.iter().enumerate().skip(1) {
-                let offset = compute_offset(reference, frame)?;
-                aligned.push(shift_frame(frame, &offset));
-                on_progress(
-                    PipelineStage::Alignment,
-                    (i + 1) as f32 / selected_frames.len() as f32,
-                );
-            }
-            aligned
+            align_frames(&selected_frames, 0)?
         } else {
             selected_frames
         };

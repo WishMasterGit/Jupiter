@@ -1,11 +1,19 @@
 use ndarray::Array2;
 use num_complex::Complex;
+use rayon::prelude::*;
 use rustfft::FftPlanner;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::error::{JupiterError, Result};
 use crate::frame::{AlignmentOffset, Frame};
 
 use super::subpixel::refine_peak_paraboloid;
+
+/// Minimum number of frames to justify parallel alignment.
+const PARALLEL_FRAME_THRESHOLD: usize = 4;
+
+/// Minimum pixel count (h*w) to justify row-level parallelism within a single frame.
+const PARALLEL_PIXEL_THRESHOLD: usize = 65_536;
 
 /// Compute the translation offset between two raw arrays using FFT phase correlation.
 pub fn compute_offset_array(
@@ -68,39 +76,116 @@ pub fn compute_offset(reference: &Frame, target: &Frame) -> Result<AlignmentOffs
 /// Shift a frame by the given offset using bilinear interpolation.
 pub fn shift_frame(frame: &Frame, offset: &AlignmentOffset) -> Frame {
     let (h, w) = frame.data.dim();
-    let mut result = Array2::<f32>::zeros((h, w));
 
-    for row in 0..h {
-        for col in 0..w {
-            let src_y = row as f64 - offset.dy;
-            let src_x = col as f64 - offset.dx;
+    if h * w >= PARALLEL_PIXEL_THRESHOLD {
+        // Row-parallel: each row's interpolation is independent
+        let rows: Vec<Vec<f32>> = (0..h)
+            .into_par_iter()
+            .map(|row| {
+                (0..w)
+                    .map(|col| {
+                        let src_y = row as f64 - offset.dy;
+                        let src_x = col as f64 - offset.dx;
+                        bilinear_sample(&frame.data, src_y, src_x)
+                    })
+                    .collect()
+            })
+            .collect();
 
-            result[[row, col]] = bilinear_sample(&frame.data, src_y, src_x);
+        let mut result = Array2::<f32>::zeros((h, w));
+        for (row, row_data) in rows.into_iter().enumerate() {
+            for (col, val) in row_data.into_iter().enumerate() {
+                result[[row, col]] = val;
+            }
         }
+        Frame::new(result, frame.original_bit_depth)
+    } else {
+        let mut result = Array2::<f32>::zeros((h, w));
+        for row in 0..h {
+            for col in 0..w {
+                let src_y = row as f64 - offset.dy;
+                let src_x = col as f64 - offset.dx;
+                result[[row, col]] = bilinear_sample(&frame.data, src_y, src_x);
+            }
+        }
+        Frame::new(result, frame.original_bit_depth)
     }
-
-    Frame::new(result, frame.original_bit_depth)
 }
 
 /// Align a sequence of frames to a reference frame.
+///
+/// Uses parallel processing when there are enough frames to benefit.
 pub fn align_frames(frames: &[Frame], reference_idx: usize) -> Result<Vec<Frame>> {
     if frames.is_empty() {
         return Err(JupiterError::EmptySequence);
     }
 
     let reference = &frames[reference_idx];
-    let mut aligned = Vec::with_capacity(frames.len());
 
-    for (i, frame) in frames.iter().enumerate() {
-        if i == reference_idx {
-            aligned.push(frame.clone());
-        } else {
-            let offset = compute_offset(reference, frame)?;
-            aligned.push(shift_frame(frame, &offset));
+    if frames.len() >= PARALLEL_FRAME_THRESHOLD {
+        let results: Vec<Result<Frame>> = frames
+            .par_iter()
+            .enumerate()
+            .map(|(i, frame)| {
+                if i == reference_idx {
+                    Ok(frame.clone())
+                } else {
+                    let offset = compute_offset(reference, frame)?;
+                    Ok(shift_frame(frame, &offset))
+                }
+            })
+            .collect();
+        results.into_iter().collect()
+    } else {
+        let mut aligned = Vec::with_capacity(frames.len());
+        for (i, frame) in frames.iter().enumerate() {
+            if i == reference_idx {
+                aligned.push(frame.clone());
+            } else {
+                let offset = compute_offset(reference, frame)?;
+                aligned.push(shift_frame(frame, &offset));
+            }
         }
+        Ok(aligned)
+    }
+}
+
+/// Align a sequence of frames to a reference frame with progress reporting.
+///
+/// The `on_frame_done` callback receives the number of frames completed so far.
+/// It must be `Fn + Send + Sync` to support parallel execution.
+pub fn align_frames_with_progress<F>(
+    frames: &[Frame],
+    reference_idx: usize,
+    on_frame_done: F,
+) -> Result<Vec<Frame>>
+where
+    F: Fn(usize) + Send + Sync,
+{
+    if frames.is_empty() {
+        return Err(JupiterError::EmptySequence);
     }
 
-    Ok(aligned)
+    let reference = &frames[reference_idx];
+    let counter = AtomicUsize::new(0);
+
+    let results: Vec<Result<Frame>> = frames
+        .par_iter()
+        .enumerate()
+        .map(|(i, frame)| {
+            let result = if i == reference_idx {
+                Ok(frame.clone())
+            } else {
+                let offset = compute_offset(reference, frame)?;
+                Ok(shift_frame(frame, &offset))
+            };
+            let done = counter.fetch_add(1, Ordering::Relaxed) + 1;
+            on_frame_done(done);
+            result
+        })
+        .collect();
+
+    results.into_iter().collect()
 }
 
 fn apply_hann(data: &Array2<f32>) -> Array2<f32> {

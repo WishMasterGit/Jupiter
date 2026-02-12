@@ -1,4 +1,7 @@
+use std::collections::{BTreeSet, HashMap};
+
 use ndarray::Array2;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
@@ -192,27 +195,28 @@ pub fn score_all_aps(
     Ok(result)
 }
 
-/// Stack one AP: local alignment + stack the selected patches.
-fn stack_ap(
-    reader: &SerReader,
+/// Stack one AP using pre-cached frames (for parallel execution).
+fn stack_ap_cached(
+    frame_cache: &HashMap<usize, Frame>,
     ap: &AlignmentPoint,
     selected_frames: &[(usize, f64)],
     global_offsets: &[AlignmentOffset],
     reference_data: &Array2<f32>,
     config: &MultiPointConfig,
-) -> Result<Array2<f32>> {
+) -> Array2<f32> {
     let half = config.ap_size / 2;
     let search_half = half + config.search_radius;
 
-    // Extract search region from reference
     let ref_search = extract_region(reference_data, ap.cy, ap.cx, search_half);
 
     let mut patches: Vec<Array2<f32>> = Vec::with_capacity(selected_frames.len());
 
     for &(frame_idx, _) in selected_frames {
-        let frame = reader.read_frame(frame_idx)?;
+        let frame = match frame_cache.get(&frame_idx) {
+            Some(f) => f,
+            None => continue,
+        };
 
-        // Extract search region with global offset
         let tgt_search = extract_region_shifted(
             &frame.data,
             ap.cy,
@@ -221,10 +225,8 @@ fn stack_ap(
             &global_offsets[frame_idx],
         );
 
-        // Local phase correlation on search regions
         let local_offset = compute_offset_array(&ref_search, &tgt_search).unwrap_or_default();
 
-        // Extract AP-sized patch shifted by local offset
         let search_size = search_half * 2;
         let center = search_size as f64 / 2.0;
         let patch_half = half;
@@ -242,16 +244,13 @@ fn stack_ap(
         patches.push(patch);
     }
 
-    // Stack patches
-    let stacked = match config.local_stack_method {
+    match config.local_stack_method {
         LocalStackMethod::Mean => mean_stack_arrays(&patches),
         LocalStackMethod::Median => median_stack_arrays(&patches),
         LocalStackMethod::SigmaClip { sigma, iterations } => {
             sigma_clip_stack_arrays(&patches, sigma, iterations)
         }
-    };
-
-    Ok(stacked)
+    }
 }
 
 /// Bilinear sample from an Array2<f32> (uses f64 coordinates, returns 0 for out-of-bounds).
@@ -500,19 +499,23 @@ where
     let reference = reader.read_frame(0)?;
     let (h, w) = reference.data.dim();
 
-    // Step 1: Global alignment — compute offsets only
+    // Step 1: Global alignment — compute offsets in parallel
     info!(
         "Computing global alignment offsets for {} frames",
         total_frames
     );
-    let mut global_offsets = Vec::with_capacity(total_frames);
-    global_offsets.push(AlignmentOffset::default()); // frame 0 has zero offset
+    let rest_offsets: Vec<Result<AlignmentOffset>> = (1..total_frames)
+        .into_par_iter()
+        .map(|i| {
+            let frame = reader.read_frame(i)?;
+            crate::align::phase_correlation::compute_offset(&reference, &frame)
+        })
+        .collect();
 
-    for i in 1..total_frames {
-        let frame = reader.read_frame(i)?;
-        let offset = crate::align::phase_correlation::compute_offset(&reference, &frame)?;
-        global_offsets.push(offset);
-        on_progress(0.1 * (i as f32 / total_frames as f32));
+    let mut global_offsets = Vec::with_capacity(total_frames);
+    global_offsets.push(AlignmentOffset::default());
+    for offset_result in rest_offsets {
+        global_offsets.push(offset_result?);
     }
     on_progress(0.1);
 
@@ -536,26 +539,36 @@ where
     let ap_selections = score_all_aps(reader, &grid, &global_offsets, config)?;
     on_progress(0.4);
 
-    // Step 4 & 5: Per-AP local alignment + stacking (parallelizable)
+    // Step 4 & 5: Per-AP local alignment + stacking (parallel)
     info!("Stacking {} alignment points", grid.points.len());
-    let num_aps = grid.points.len();
 
-    // We cannot easily parallelize with rayon here because SerReader is not Sync
-    // (mmap is not Send+Sync in all contexts). Process sequentially.
-    let mut ap_stacks: Vec<(AlignmentPoint, Array2<f32>)> = Vec::with_capacity(num_aps);
+    // Pre-read all frames needed by any AP into a cache for parallel access
+    let needed_frames: BTreeSet<usize> = ap_selections
+        .iter()
+        .flat_map(|sel| sel.iter().map(|(idx, _)| *idx))
+        .collect();
 
-    for (ap_idx, ap) in grid.points.iter().enumerate() {
-        let stacked_patch = stack_ap(
-            reader,
-            ap,
-            &ap_selections[ap.index],
-            &global_offsets,
-            &reference.data,
-            config,
-        )?;
-        ap_stacks.push((ap.clone(), stacked_patch));
-        on_progress(0.4 + 0.5 * ((ap_idx + 1) as f32 / num_aps as f32));
+    let mut frame_cache: HashMap<usize, Frame> = HashMap::with_capacity(needed_frames.len());
+    for &idx in &needed_frames {
+        frame_cache.insert(idx, reader.read_frame(idx)?);
     }
+
+    let ap_stacks: Vec<(AlignmentPoint, Array2<f32>)> = grid
+        .points
+        .par_iter()
+        .map(|ap| {
+            let stacked_patch = stack_ap_cached(
+                &frame_cache,
+                ap,
+                &ap_selections[ap.index],
+                &global_offsets,
+                &reference.data,
+                config,
+            );
+            (ap.clone(), stacked_patch)
+        })
+        .collect();
+    on_progress(0.9);
 
     // Step 6: Blend
     info!("Blending alignment point stacks");

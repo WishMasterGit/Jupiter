@@ -9,7 +9,7 @@ license = "MIT"
 
 [workspace.dependencies]
 # Core computation
-ndarray = "0.17.2"
+ndarray = { version = "0.17.2", features = ["rayon"] }
 rayon = "1.10"
 rustfft = "6.2"
 num-complex = "0.4"

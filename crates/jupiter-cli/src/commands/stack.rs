@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::{Args, ValueEnum};
 use indicatif::{ProgressBar, ProgressStyle};
-use jupiter_core::align::phase_correlation::{compute_offset, shift_frame};
+use jupiter_core::align::phase_correlation::align_frames_with_progress;
 use jupiter_core::io::image_io::save_image;
 use jupiter_core::io::ser::SerReader;
 use jupiter_core::pipeline::config::QualityMetric;
@@ -123,13 +123,9 @@ fn run_standard(reader: &SerReader, args: &StackArgs, percentage: f32) -> Result
             .progress_chars("=> "),
     );
 
-    let reference = &selected[0];
-    let mut aligned = vec![reference.clone()];
-    for (i, frame) in selected.iter().enumerate().skip(1) {
-        let offset = compute_offset(reference, frame)?;
-        aligned.push(shift_frame(frame, &offset));
-        pb.set_position(i as u64 + 1);
-    }
+    let aligned = align_frames_with_progress(&selected, 0, |done| {
+        pb.set_position(done as u64);
+    })?;
     pb.finish();
 
     let method_name = match args.method {

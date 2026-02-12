@@ -1,13 +1,15 @@
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use clap::Args;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use jupiter_core::pipeline::config::{
     DeconvolutionConfig, DeconvolutionMethod, FilterStep, FrameSelectionConfig, PipelineConfig,
     PsfModel, SharpeningConfig, StackMethod, StackingConfig,
 };
-use jupiter_core::pipeline::run_pipeline;
+use jupiter_core::pipeline::{PipelineStage, ProgressReporter, run_pipeline_reported};
 use jupiter_core::sharpen::wavelet::WaveletParams;
 use jupiter_core::stack::multi_point::MultiPointConfig;
 use jupiter_core::stack::sigma_clip::SigmaClipParams;
@@ -101,6 +103,78 @@ pub struct RunArgs {
     pub output: Option<PathBuf>,
 }
 
+/// Progress reporter using indicatif MultiProgress with stage + detail bars.
+struct MultiProgressReporter {
+    stage_bar: ProgressBar,
+    detail_bar: ProgressBar,
+    stage_count: AtomicUsize,
+    current_total: AtomicUsize,
+}
+
+impl MultiProgressReporter {
+    fn new(multi: &MultiProgress) -> Result<Self> {
+        let stage_bar = multi.add(ProgressBar::new(8));
+        stage_bar.set_style(
+            ProgressStyle::default_bar()
+                .template("{msg:20} [{bar:40}] stage {pos}/{len}")?
+                .progress_chars("=> "),
+        );
+
+        let detail_bar = multi.add(ProgressBar::new(0));
+        detail_bar.set_style(
+            ProgressStyle::default_bar()
+                .template("  {msg:18} [{bar:40}] {pos}/{len}")?
+                .progress_chars("=> "),
+        );
+        detail_bar.set_length(0);
+
+        Ok(Self {
+            stage_bar,
+            detail_bar,
+            stage_count: AtomicUsize::new(0),
+            current_total: AtomicUsize::new(0),
+        })
+    }
+
+    fn finish(&self) {
+        self.detail_bar.finish_and_clear();
+        self.stage_bar.finish_with_message("Done");
+    }
+}
+
+impl ProgressReporter for MultiProgressReporter {
+    fn begin_stage(&self, stage: PipelineStage, total_items: Option<usize>) {
+        self.stage_bar.set_message(stage.to_string());
+
+        if let Some(total) = total_items {
+            self.current_total.store(total, Ordering::Relaxed);
+            self.detail_bar.set_length(total as u64);
+            self.detail_bar.set_position(0);
+            self.detail_bar.set_message("items");
+        } else {
+            self.current_total.store(0, Ordering::Relaxed);
+            self.detail_bar.set_length(0);
+            self.detail_bar.set_position(0);
+            self.detail_bar.set_message("");
+        }
+    }
+
+    fn advance(&self, items_done: usize) {
+        self.detail_bar.set_position(items_done as u64);
+    }
+
+    fn finish_stage(&self) {
+        let count = self.stage_count.fetch_add(1, Ordering::Relaxed) + 1;
+        self.stage_bar.set_position(count as u64);
+
+        // Clear detail bar between stages
+        let total = self.current_total.load(Ordering::Relaxed);
+        if total > 0 {
+            self.detail_bar.set_position(total as u64);
+        }
+    }
+}
+
 pub fn run(args: &RunArgs) -> Result<()> {
     let mut config: PipelineConfig = if let Some(ref config_path) = args.config {
         let contents = std::fs::read_to_string(config_path)
@@ -122,19 +196,12 @@ pub fn run(args: &RunArgs) -> Result<()> {
 
     crate::summary::print_pipeline_summary(&config);
 
-    let pb = ProgressBar::new(100);
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("{msg:20} [{bar:40}] {pos}%")?
-            .progress_chars("=> "),
-    );
+    let multi = MultiProgress::new();
+    let reporter = Arc::new(MultiProgressReporter::new(&multi)?);
 
-    run_pipeline(&config, |stage, progress| {
-        pb.set_message(stage.to_string());
-        pb.set_position((progress * 100.0) as u64);
-    })?;
+    run_pipeline_reported(&config, reporter.clone())?;
 
-    pb.finish_with_message("Done");
+    reporter.finish();
     println!("\nOutput saved to {}", config.output.display());
 
     Ok(())
