@@ -31,8 +31,8 @@ enum Commands {
     Filter(commands::filter::FilterArgs),
     /// Run the full processing pipeline
     Run(commands::pipeline::RunArgs),
-    /// Print a default pipeline config as TOML
-    Config,
+    /// Print or save a default pipeline config as TOML
+    Config(commands::config::ConfigArgs),
 }
 
 fn main() -> Result<()> {
@@ -52,6 +52,6 @@ fn main() -> Result<()> {
         Commands::Sharpen(args) => commands::sharpen::run(args),
         Commands::Filter(args) => commands::filter::run(args),
         Commands::Run(args) => commands::pipeline::run(args),
-        Commands::Config => commands::config::run(),
+        Commands::Config(args) => commands::config::run(args),
     }
 }
