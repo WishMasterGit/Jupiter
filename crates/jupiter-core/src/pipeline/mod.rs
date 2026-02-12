@@ -4,7 +4,10 @@ use std::sync::Arc;
 
 use tracing::info;
 
-use crate::align::phase_correlation::{align_frames, align_frames_with_progress};
+use crate::align::phase_correlation::{
+    align_frames, align_frames_gpu_with_progress, align_frames_with_progress,
+};
+use crate::compute::ComputeBackend;
 use crate::error::Result;
 use crate::filters::gaussian_blur::gaussian_blur;
 use crate::filters::histogram::{auto_stretch, histogram_stretch};
@@ -15,7 +18,7 @@ use crate::io::image_io::save_image;
 use crate::io::ser::SerReader;
 use crate::quality::gradient::rank_frames_gradient;
 use crate::quality::laplacian::rank_frames;
-use crate::sharpen::deconvolution::deconvolve;
+use crate::sharpen::deconvolution::{deconvolve, deconvolve_gpu};
 use crate::sharpen::wavelet;
 use crate::stack::mean::mean_stack;
 use crate::stack::median::median_stack;
@@ -74,11 +77,12 @@ pub trait ProgressReporter: Send + Sync {
 /// (e.g., "Aligning frame 42/500").
 pub fn run_pipeline_reported(
     config: &PipelineConfig,
+    backend: Arc<dyn ComputeBackend>,
     reporter: Arc<dyn ProgressReporter>,
 ) -> Result<Frame> {
     let reader = SerReader::open(&config.input)?;
     let total = reader.frame_count();
-    info!(total_frames = total, "Reading SER file");
+    info!(total_frames = total, device = backend.name(), "Reading SER file");
 
     let stacked = if let StackMethod::MultiPoint(ref mp_config) = config.stacking.method {
         reporter.begin_stage(PipelineStage::Stacking, None);
@@ -115,14 +119,25 @@ pub fn run_pipeline_reported(
             .collect();
         reporter.finish_stage();
 
-        // Alignment (parallel with per-frame progress)
+        // Alignment
         let frame_count = selected_frames.len();
         reporter.begin_stage(PipelineStage::Alignment, Some(frame_count));
         let aligned = if frame_count > 1 {
             let r = reporter.clone();
-            align_frames_with_progress(&selected_frames, 0, move |done| {
-                r.advance(done);
-            })?
+            if backend.is_gpu() {
+                align_frames_gpu_with_progress(
+                    &selected_frames,
+                    0,
+                    backend.clone(),
+                    move |done| {
+                        r.advance(done);
+                    },
+                )?
+            } else {
+                align_frames_with_progress(&selected_frames, 0, move |done| {
+                    r.advance(done);
+                })?
+            }
         } else {
             selected_frames
         };
@@ -146,7 +161,11 @@ pub fn run_pipeline_reported(
         reporter.begin_stage(PipelineStage::Sharpening, None);
         let mut sharpened = stacked;
         if let Some(ref deconv_config) = sharpening_config.deconvolution {
-            sharpened = deconvolve(&sharpened, deconv_config);
+            if backend.is_gpu() {
+                sharpened = deconvolve_gpu(&sharpened, deconv_config, &*backend);
+            } else {
+                sharpened = deconvolve(&sharpened, deconv_config);
+            }
             info!("Deconvolution complete");
         }
         sharpened = wavelet::sharpen(&sharpened, &sharpening_config.wavelet);
@@ -181,17 +200,21 @@ pub fn run_pipeline_reported(
 /// Run the full processing pipeline.
 ///
 /// `on_progress` is called with (stage, fraction_complete) for UI updates.
-pub fn run_pipeline<F>(config: &PipelineConfig, mut on_progress: F) -> Result<Frame>
+pub fn run_pipeline<F>(
+    config: &PipelineConfig,
+    backend: Arc<dyn ComputeBackend>,
+    mut on_progress: F,
+) -> Result<Frame>
 where
     F: FnMut(PipelineStage, f32),
 {
     // For multi-point stacking, use a completely different flow
     let reader = SerReader::open(&config.input)?;
     let total = reader.frame_count();
-    info!(total_frames = total, "Reading SER file");
+    info!(total_frames = total, device = backend.name(), "Reading SER file");
 
     let stacked = if let StackMethod::MultiPoint(ref mp_config) = config.stacking.method {
-        // Multi-point: global align → AP grid → per-AP score/select/align/stack → blend
+        // Multi-point: global align -> AP grid -> per-AP score/select/align/stack -> blend
         on_progress(PipelineStage::Stacking, 0.0);
         let result = multi_point_stack(&reader, mp_config, |progress| {
             on_progress(PipelineStage::Stacking, progress);
@@ -200,7 +223,7 @@ where
         on_progress(PipelineStage::Stacking, 1.0);
         result
     } else {
-        // Standard flow: read all → quality → select → align → stack
+        // Standard flow: read all -> quality -> select -> align -> stack
         on_progress(PipelineStage::Reading, 0.0);
         let frames: Vec<Frame> = reader.frames().collect::<Result<_>>()?;
         on_progress(PipelineStage::Reading, 1.0);
@@ -229,10 +252,19 @@ where
             .collect();
         on_progress(PipelineStage::FrameSelection, 1.0);
 
-        // Alignment (parallel when >= 4 frames)
+        // Alignment
         on_progress(PipelineStage::Alignment, 0.0);
         let aligned = if selected_frames.len() > 1 {
-            align_frames(&selected_frames, 0)?
+            if backend.is_gpu() {
+                align_frames_gpu_with_progress(
+                    &selected_frames,
+                    0,
+                    backend.clone(),
+                    |_done| {},
+                )?
+            } else {
+                align_frames(&selected_frames, 0)?
+            }
         } else {
             selected_frames
         };
@@ -256,7 +288,11 @@ where
         on_progress(PipelineStage::Sharpening, 0.0);
         let mut sharpened = stacked;
         if let Some(ref deconv_config) = sharpening_config.deconvolution {
-            sharpened = deconvolve(&sharpened, deconv_config);
+            if backend.is_gpu() {
+                sharpened = deconvolve_gpu(&sharpened, deconv_config, &*backend);
+            } else {
+                sharpened = deconvolve(&sharpened, deconv_config);
+            }
             info!("Deconvolution complete");
         }
         sharpened = wavelet::sharpen(&sharpened, &sharpening_config.wavelet);

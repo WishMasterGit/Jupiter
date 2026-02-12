@@ -9,6 +9,10 @@ build = "build.rs"
 name = "jupiter"
 path = "src/main.rs"
 
+[features]
+default = []
+gpu = ["jupiter-core/gpu"]
+
 [dependencies]
 jupiter-core = { path = "../jupiter-core" }
 clap = { workspace = true }

@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::compute::DevicePreference;
 use crate::sharpen::wavelet::WaveletParams;
 use crate::stack::multi_point::{LocalStackMethod, MultiPointConfig};
 use crate::stack::sigma_clip::SigmaClipParams;
@@ -13,6 +14,8 @@ pub struct PipelineConfig {
     pub input: PathBuf,
     #[serde(default)]
     pub output: PathBuf,
+    #[serde(default)]
+    pub device: DevicePreference,
     #[serde(default)]
     pub frame_selection: FrameSelectionConfig,
     #[serde(default)]

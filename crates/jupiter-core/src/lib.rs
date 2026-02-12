@@ -8,3 +8,4 @@ pub mod sharpen;
 pub mod filters;
 pub mod color;
 pub mod pipeline;
+pub mod compute;

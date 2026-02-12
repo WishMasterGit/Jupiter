@@ -1,7 +1,9 @@
 use std::io::Write;
+use std::sync::Arc;
 use tempfile::{NamedTempFile, TempDir};
 
 use jupiter_core::align::phase_correlation::{compute_offset, shift_frame};
+use jupiter_core::compute::cpu::CpuBackend;
 use jupiter_core::io::image_io::{load_image, save_tiff};
 use jupiter_core::io::ser::SerReader;
 use jupiter_core::pipeline::config::{
@@ -97,6 +99,7 @@ fn test_full_pipeline_end_to_end() {
     let config = PipelineConfig {
         input: ser_file.path().to_path_buf(),
         output: output_path.clone(),
+        device: Default::default(),
         frame_selection: FrameSelectionConfig {
             select_percentage: 0.5,
             ..Default::default()
@@ -106,8 +109,9 @@ fn test_full_pipeline_end_to_end() {
         filters: vec![],
     };
 
+    let backend = Arc::new(CpuBackend);
     let mut stages_seen = vec![];
-    let result = run_pipeline(&config, |stage, _progress| {
+    let result = run_pipeline(&config, backend, |stage, _progress| {
         stages_seen.push(format!("{}", stage));
     });
 
@@ -142,6 +146,7 @@ fn test_pipeline_without_sharpening() {
     let config = PipelineConfig {
         input: ser_file.path().to_path_buf(),
         output: output_path.clone(),
+        device: Default::default(),
         frame_selection: FrameSelectionConfig {
             select_percentage: 0.5,
             ..Default::default()
@@ -151,7 +156,8 @@ fn test_pipeline_without_sharpening() {
         filters: vec![],
     };
 
-    let result = run_pipeline(&config, |_, _| {});
+    let backend = Arc::new(CpuBackend);
+    let result = run_pipeline(&config, backend, |_, _| {});
     assert!(result.is_ok());
     assert!(output_path.exists());
 }

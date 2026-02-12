@@ -1,9 +1,11 @@
 use ndarray::Array2;
 use num_complex::Complex;
 use rayon::prelude::*;
-use rustfft::FftPlanner;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
+use crate::compute::cpu::{fft2d_forward, ifft2d_inverse};
+use crate::compute::ComputeBackend;
 use crate::error::{JupiterError, Result};
 use crate::frame::{AlignmentOffset, Frame};
 
@@ -34,14 +36,14 @@ pub fn compute_offset_array(
     let tgt_windowed = apply_hann(target);
 
     // 2D FFT of both
-    let ref_fft = fft2d(&ref_windowed);
-    let tgt_fft = fft2d(&tgt_windowed);
+    let ref_fft = fft2d_forward(&ref_windowed);
+    let tgt_fft = fft2d_forward(&tgt_windowed);
 
     // Normalized cross-power spectrum
     let cross_power = normalized_cross_power(&ref_fft, &tgt_fft);
 
     // Inverse 2D FFT to get correlation surface
-    let correlation = ifft2d(&cross_power);
+    let correlation = ifft2d_inverse(&cross_power);
 
     // Find peak in the correlation surface
     let (peak_row, peak_col, _peak_val) = find_peak(&correlation);
@@ -60,6 +62,64 @@ pub fn compute_offset_array(
 
     // Subpixel refinement
     let (sub_dy, sub_dx) = refine_peak_paraboloid(&correlation, peak_row, peak_col);
+
+    Ok(AlignmentOffset {
+        dx: dx + sub_dx,
+        dy: dy + sub_dy,
+    })
+}
+
+/// Compute translation offset using a ComputeBackend (GPU or CPU).
+pub fn compute_offset_gpu(
+    reference: &Array2<f32>,
+    target: &Array2<f32>,
+    backend: &dyn ComputeBackend,
+) -> Result<AlignmentOffset> {
+    let (h, w) = reference.dim();
+    let (th, tw) = target.dim();
+    if h != th || w != tw {
+        return Err(JupiterError::Pipeline(format!(
+            "Array size mismatch: {}x{} vs {}x{}",
+            w, h, tw, th
+        )));
+    }
+
+    let ref_buf = backend.upload(reference);
+    let tgt_buf = backend.upload(target);
+
+    let ref_hann = backend.hann_window(&ref_buf);
+    let tgt_hann = backend.hann_window(&tgt_buf);
+
+    let ref_fft = backend.fft2d(&ref_hann);
+    let tgt_fft = backend.fft2d(&tgt_hann);
+
+    let cross_power = backend.cross_power_spectrum(&ref_fft, &tgt_fft);
+
+    // Use padded (power-of-2) dimensions for IFFT so negative-shift peaks
+    // (which wrap to high indices in the padded domain) are not cropped away.
+    let ph = ref_fft.height;
+    let pw = ref_fft.width;
+    let correlation_buf = backend.ifft2d_real(&cross_power, ph, pw);
+
+    let (peak_row, peak_col, _peak_val) = backend.find_peak(&correlation_buf);
+
+    // Download correlation for subpixel refinement
+    let correlation_f32 = backend.download(&correlation_buf);
+    let correlation_f64 = correlation_f32.mapv(|v| v as f64);
+
+    // Wrap-around: peaks beyond half the padded size represent negative shifts
+    let dy = if peak_row > ph / 2 {
+        peak_row as f64 - ph as f64
+    } else {
+        peak_row as f64
+    };
+    let dx = if peak_col > pw / 2 {
+        peak_col as f64 - pw as f64
+    } else {
+        peak_col as f64
+    };
+
+    let (sub_dy, sub_dx) = refine_peak_paraboloid(&correlation_f64, peak_row, peak_col);
 
     Ok(AlignmentOffset {
         dx: dx + sub_dx,
@@ -188,6 +248,68 @@ where
     results.into_iter().collect()
 }
 
+/// Align frames using a ComputeBackend (GPU or CPU) with progress reporting.
+pub fn align_frames_gpu_with_progress<F>(
+    frames: &[Frame],
+    reference_idx: usize,
+    backend: Arc<dyn ComputeBackend>,
+    on_frame_done: F,
+) -> Result<Vec<Frame>>
+where
+    F: Fn(usize) + Send + Sync,
+{
+    if frames.is_empty() {
+        return Err(JupiterError::EmptySequence);
+    }
+
+    let reference = &frames[reference_idx];
+    let counter = AtomicUsize::new(0);
+
+    if frames.len() >= PARALLEL_FRAME_THRESHOLD {
+        let results: Vec<Result<Frame>> = frames
+            .par_iter()
+            .enumerate()
+            .map(|(i, frame)| {
+                let result = if i == reference_idx {
+                    Ok(frame.clone())
+                } else {
+                    let offset =
+                        compute_offset_gpu(&reference.data, &frame.data, backend.as_ref())?;
+                    let shifted_buf = backend.shift_bilinear(
+                        &backend.upload(&frame.data),
+                        offset.dx,
+                        offset.dy,
+                    );
+                    let shifted_data = backend.download(&shifted_buf);
+                    Ok(Frame::new(shifted_data, frame.original_bit_depth))
+                };
+                let done = counter.fetch_add(1, Ordering::Relaxed) + 1;
+                on_frame_done(done);
+                result
+            })
+            .collect();
+        results.into_iter().collect()
+    } else {
+        let mut aligned = Vec::with_capacity(frames.len());
+        for (i, frame) in frames.iter().enumerate() {
+            let result = if i == reference_idx {
+                frame.clone()
+            } else {
+                let offset =
+                    compute_offset_gpu(&reference.data, &frame.data, backend.as_ref())?;
+                let shifted_buf =
+                    backend.shift_bilinear(&backend.upload(&frame.data), offset.dx, offset.dy);
+                let shifted_data = backend.download(&shifted_buf);
+                Frame::new(shifted_data, frame.original_bit_depth)
+            };
+            aligned.push(result);
+            let done = counter.fetch_add(1, Ordering::Relaxed) + 1;
+            on_frame_done(done);
+        }
+        Ok(aligned)
+    }
+}
+
 fn apply_hann(data: &Array2<f32>) -> Array2<f32> {
     let (h, w) = data.dim();
     let mut result = Array2::<f32>::zeros((h, w));
@@ -197,81 +319,6 @@ fn apply_hann(data: &Array2<f32>) -> Array2<f32> {
         for col in 0..w {
             let wx = 0.5 * (1.0 - (std::f64::consts::TAU * col as f64 / w as f64).cos());
             result[[row, col]] = data[[row, col]] * (wy * wx) as f32;
-        }
-    }
-
-    result
-}
-
-/// 2D FFT: row-wise FFT, then column-wise FFT.
-fn fft2d(data: &Array2<f32>) -> Array2<Complex<f64>> {
-    let (h, w) = data.dim();
-    let mut planner = FftPlanner::new();
-    let fft_row = planner.plan_fft_forward(w);
-    let fft_col = planner.plan_fft_forward(h);
-
-    // Convert to complex
-    let mut result = Array2::<Complex<f64>>::zeros((h, w));
-    for row in 0..h {
-        for col in 0..w {
-            result[[row, col]] = Complex::new(data[[row, col]] as f64, 0.0);
-        }
-    }
-
-    // Row-wise FFT
-    for row in 0..h {
-        let mut row_data: Vec<Complex<f64>> = (0..w).map(|c| result[[row, c]]).collect();
-        fft_row.process(&mut row_data);
-        for col in 0..w {
-            result[[row, col]] = row_data[col];
-        }
-    }
-
-    // Column-wise FFT
-    for col in 0..w {
-        let mut col_data: Vec<Complex<f64>> = (0..h).map(|r| result[[r, col]]).collect();
-        fft_col.process(&mut col_data);
-        for row in 0..h {
-            result[[row, col]] = col_data[row];
-        }
-    }
-
-    result
-}
-
-/// Inverse 2D FFT.
-fn ifft2d(data: &Array2<Complex<f64>>) -> Array2<f64> {
-    let (h, w) = data.dim();
-    let mut planner = FftPlanner::new();
-    let ifft_row = planner.plan_fft_inverse(w);
-    let ifft_col = planner.plan_fft_inverse(h);
-
-    let mut work = data.clone();
-
-    // Column-wise IFFT
-    for col in 0..w {
-        let mut col_data: Vec<Complex<f64>> = (0..h).map(|r| work[[r, col]]).collect();
-        ifft_col.process(&mut col_data);
-        for row in 0..h {
-            work[[row, col]] = col_data[row];
-        }
-    }
-
-    // Row-wise IFFT
-    for row in 0..h {
-        let mut row_data: Vec<Complex<f64>> = (0..w).map(|c| work[[row, c]]).collect();
-        ifft_row.process(&mut row_data);
-        for col in 0..w {
-            work[[row, col]] = row_data[col];
-        }
-    }
-
-    // Extract real part and normalize
-    let scale = 1.0 / (h * w) as f64;
-    let mut result = Array2::<f64>::zeros((h, w));
-    for row in 0..h {
-        for col in 0..w {
-            result[[row, col]] = work[[row, col]].re * scale;
         }
     }
 

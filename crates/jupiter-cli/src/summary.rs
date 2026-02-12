@@ -28,7 +28,7 @@ impl Styles {
     }
 }
 
-pub fn print_pipeline_summary(config: &PipelineConfig) {
+pub fn print_pipeline_summary(config: &PipelineConfig, device_name: &str) {
     let s = Styles::new();
 
     println!();
@@ -36,7 +36,7 @@ pub fn print_pipeline_summary(config: &PipelineConfig) {
     println!("  {}", s.title.apply_to("\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}"));
     println!();
 
-    // Input / Output
+    // Input / Output / Device
     println!(
         "  {:<14}{}",
         s.label.apply_to("Input"),
@@ -46,6 +46,11 @@ pub fn print_pipeline_summary(config: &PipelineConfig) {
         "  {:<14}{}",
         s.label.apply_to("Output"),
         s.path.apply_to(config.output.display())
+    );
+    println!(
+        "  {:<14}{}",
+        s.label.apply_to("Device"),
+        s.method.apply_to(device_name)
     );
     println!();
 

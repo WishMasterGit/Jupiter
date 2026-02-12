@@ -25,6 +25,9 @@ pub enum JupiterError {
 
     #[error("Empty frame sequence")]
     EmptySequence,
+
+    #[error("GPU error: {0}")]
+    GpuError(String),
 }
 
 pub type Result<T> = std::result::Result<T, JupiterError>;

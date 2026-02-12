@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::Args;
+use jupiter_core::compute::DevicePreference;
 use jupiter_core::pipeline::config::{
     FrameSelectionConfig, PipelineConfig, SharpeningConfig, StackingConfig,
 };
@@ -19,6 +20,7 @@ pub fn run(args: &ConfigArgs) -> Result<()> {
     let config = PipelineConfig {
         input: PathBuf::from("input.ser"),
         output: PathBuf::from("result.tiff"),
+        device: DevicePreference::Auto,
         frame_selection: FrameSelectionConfig::default(),
         stacking: StackingConfig::default(),
         sharpening: Some(SharpeningConfig {

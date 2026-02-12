@@ -5,16 +5,25 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use clap::Args;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use jupiter_core::compute::{create_backend, DevicePreference};
 use jupiter_core::pipeline::config::{
     DeconvolutionConfig, DeconvolutionMethod, FilterStep, FrameSelectionConfig, PipelineConfig,
     PsfModel, SharpeningConfig, StackMethod, StackingConfig,
 };
-use jupiter_core::pipeline::{PipelineStage, ProgressReporter, run_pipeline_reported};
+use jupiter_core::pipeline::{run_pipeline_reported, PipelineStage, ProgressReporter};
 use jupiter_core::sharpen::wavelet::WaveletParams;
 use jupiter_core::stack::multi_point::MultiPointConfig;
 use jupiter_core::stack::sigma_clip::SigmaClipParams;
 
 use super::stack::StackMethodArg;
+
+#[derive(Clone, clap::ValueEnum)]
+pub enum DeviceArg {
+    Auto,
+    Cpu,
+    Gpu,
+    Cuda,
+}
 
 #[derive(Args)]
 pub struct RunArgs {
@@ -25,6 +34,10 @@ pub struct RunArgs {
     /// Pipeline config file (TOML)
     #[arg(long)]
     pub config: Option<PathBuf>,
+
+    /// Compute device (auto, cpu, gpu, cuda)
+    #[arg(long, value_enum, default_value = "auto")]
+    pub device: DeviceArg,
 
     /// Percentage of best frames to keep (1-100)
     #[arg(long, default_value = "25")]
@@ -208,12 +221,13 @@ pub fn run(args: &RunArgs) -> Result<()> {
         return Ok(());
     }
 
-    crate::summary::print_pipeline_summary(&config);
+    let backend = create_backend(&config.device);
+    crate::summary::print_pipeline_summary(&config, backend.name());
 
     let multi = MultiProgress::new();
     let reporter = Arc::new(MultiProgressReporter::new(&multi)?);
 
-    run_pipeline_reported(&config, reporter.clone())?;
+    run_pipeline_reported(&config, backend, reporter.clone())?;
 
     reporter.finish();
     println!("\nOutput saved to {}", config.output.display());
@@ -281,6 +295,13 @@ fn build_config_from_args(args: &RunArgs) -> PipelineConfig {
         filters.push(FilterStep::Gamma(gamma));
     }
 
+    let device = match args.device {
+        DeviceArg::Auto => DevicePreference::Auto,
+        DeviceArg::Cpu => DevicePreference::Cpu,
+        DeviceArg::Gpu => DevicePreference::Gpu,
+        DeviceArg::Cuda => DevicePreference::Cuda,
+    };
+
     // file is always Some when --config is absent (required_unless_present)
     let input = args.file.clone().unwrap_or_default();
     let output = args.output.clone().unwrap_or_else(|| PathBuf::from("result.tiff"));
@@ -288,6 +309,7 @@ fn build_config_from_args(args: &RunArgs) -> PipelineConfig {
     PipelineConfig {
         input,
         output,
+        device,
         frame_selection: FrameSelectionConfig {
             select_percentage: args.select as f32 / 100.0,
             ..Default::default()
