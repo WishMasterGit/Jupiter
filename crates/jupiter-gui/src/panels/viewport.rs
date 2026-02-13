@@ -11,10 +11,12 @@ pub fn show(ctx: &egui::Context, app: &mut JupiterApp) {
             .rect_filled(rect, 0.0, egui::Color32::from_gray(30));
 
         if let Some(ref texture) = app.viewport.texture {
-            let image_size = egui::vec2(
-                texture.size()[0] as f32,
-                texture.size()[1] as f32,
-            );
+            // Use original image size for zoom/pan calculations (not texture size which may be scaled)
+            let image_size = if let Some(size) = app.viewport.image_size {
+                egui::vec2(size[0] as f32, size[1] as f32)
+            } else {
+                egui::vec2(texture.size()[0] as f32, texture.size()[1] as f32)
+            };
 
             // Handle input
             let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());

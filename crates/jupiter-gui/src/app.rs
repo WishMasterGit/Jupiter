@@ -2,7 +2,7 @@ use std::sync::mpsc;
 
 use jupiter_core::frame::Frame;
 
-use crate::convert::frame_to_color_image;
+use crate::convert::frame_to_display_image;
 use crate::messages::{WorkerCommand, WorkerResult};
 use crate::panels;
 use crate::state::{ConfigState, UIState, ViewportState};
@@ -117,15 +117,15 @@ impl JupiterApp {
     }
 
     fn update_viewport_texture(&mut self, ctx: &egui::Context, frame: &Frame, label: &str) {
-        let image = frame_to_color_image(frame);
-        let size = image.size;
+        let display = frame_to_display_image(frame);
         let texture = ctx.load_texture(
             "viewport",
-            image,
+            display.image,
             egui::TextureOptions::NEAREST,
         );
         self.viewport.texture = Some(texture);
-        self.viewport.image_size = Some(size);
+        self.viewport.image_size = Some(display.original_size);
+        self.viewport.display_scale = display.display_scale;
         self.viewport.viewing_label = label.to_string();
     }
 

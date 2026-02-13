@@ -1,0 +1,38 @@
+input = "target/debug/data/jup.ser"
+output = "result.tiff"
+
+[frame_selection]
+select_percentage = 0.25
+metric = "Laplacian"
+
+[stacking.method.MultiPoint]
+ap_size = 5
+search_radius = 16
+select_percentage = 0.25
+min_brightness = 0.05
+quality_metric = "Laplacian"
+local_stack_method = "Mean"
+
+[sharpening.wavelet]
+num_layers = 6
+coefficients = [
+    1.5,
+    1.3,
+    1.2,
+    1.1,
+    1.0,
+    1.0,
+]
+denoise = []
+
+[sharpening.deconvolution.method.RichardsonLucy]
+iterations = 20
+
+[sharpening.deconvolution.psf.Kolmogorov]
+seeing = 3.0
+
+[[filters]]
+
+[filters.AutoStretch]
+low_percentile = 0.001
+high_percentile = 0.999
