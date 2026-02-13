@@ -10,8 +10,9 @@ use jupiter_core::pipeline::config::{
     FrameSelectionConfig, MemoryStrategy, PipelineConfig, StackingConfig,
 };
 use jupiter_core::pipeline::run_pipeline;
-use jupiter_core::quality::gradient::{rank_frames_gradient, rank_frames_gradient_streaming};
-use jupiter_core::quality::laplacian::{rank_frames, rank_frames_streaming};
+use jupiter_core::color::debayer::{luminance, DebayerMethod};
+use jupiter_core::quality::gradient::{rank_frames_gradient, rank_frames_gradient_color_streaming, rank_frames_gradient_streaming};
+use jupiter_core::quality::laplacian::{rank_frames, rank_frames_color_streaming, rank_frames_streaming};
 use jupiter_core::stack::mean::{mean_stack, StreamingMeanStacker};
 
 const SER_HEADER_SIZE: usize = 178;
@@ -72,6 +73,65 @@ fn build_test_ser(width: u32, height: u32, num_frames: usize) -> Vec<u8> {
 
 fn write_test_ser_file(num_frames: usize) -> NamedTempFile {
     let ser_data = build_test_ser(64, 64, num_frames);
+    let mut tmpfile = NamedTempFile::new().unwrap();
+    tmpfile.write_all(&ser_data).unwrap();
+    tmpfile
+}
+
+/// Build a SER file with BayerRGGB pattern (color_id = 8).
+fn build_test_bayer_ser(width: u32, height: u32, num_frames: usize) -> Vec<u8> {
+    let mut buf = Vec::new();
+
+    // Header
+    buf.extend_from_slice(b"LUCAM-RECORDER");
+    buf.extend_from_slice(&0i32.to_le_bytes()); // LuID
+    buf.extend_from_slice(&8i32.to_le_bytes()); // ColorID = BayerRGGB
+    buf.extend_from_slice(&0i32.to_le_bytes()); // LittleEndian
+    buf.extend_from_slice(&(width as i32).to_le_bytes());
+    buf.extend_from_slice(&(height as i32).to_le_bytes());
+    buf.extend_from_slice(&8i32.to_le_bytes()); // 8-bit
+    buf.extend_from_slice(&(num_frames as i32).to_le_bytes());
+    buf.extend_from_slice(&[0u8; 40]); // Observer
+    buf.extend_from_slice(&[0u8; 40]); // Instrument
+    buf.extend_from_slice(&[0u8; 40]); // Telescope
+    buf.extend_from_slice(&0u64.to_le_bytes()); // DateTime
+    buf.extend_from_slice(&0u64.to_le_bytes()); // DateTimeUTC
+    assert_eq!(buf.len(), SER_HEADER_SIZE);
+
+    let w = width as usize;
+    let h = height as usize;
+    let square_size = 12;
+    let center_y = h / 2;
+    let center_x = w / 2;
+
+    for frame_idx in 0..num_frames {
+        let mut frame_data = vec![40u8; w * h];
+        let sharpness = if frame_idx % 4 == 0 {
+            220u8
+        } else if frame_idx % 4 == 2 {
+            160u8
+        } else {
+            100u8
+        };
+
+        let sy = center_y - square_size / 2;
+        let sx = center_x - square_size / 2;
+        for r in sy..sy + square_size {
+            for c in sx..sx + square_size {
+                if r < h && c < w {
+                    frame_data[r * w + c] = sharpness;
+                }
+            }
+        }
+
+        buf.extend_from_slice(&frame_data);
+    }
+
+    buf
+}
+
+fn write_test_bayer_ser_file(num_frames: usize) -> NamedTempFile {
+    let ser_data = build_test_bayer_ser(64, 64, num_frames);
     let mut tmpfile = NamedTempFile::new().unwrap();
     tmpfile.write_all(&ser_data).unwrap();
     tmpfile
@@ -326,4 +386,65 @@ fn test_auto_detection_threshold() {
     // should be well over the threshold
     let large_decoded = 100 * 4096 * 4096 * std::mem::size_of::<f32>();
     assert!(large_decoded > LOW_MEMORY_THRESHOLD_BYTES);
+}
+
+// --- Color streaming scoring tests ---
+
+#[test]
+fn test_color_streaming_laplacian_matches_eager() {
+    let ser_file = write_test_bayer_ser_file(20);
+    let reader = SerReader::open(ser_file.path()).unwrap();
+    let color_mode = reader.header.color_mode();
+    let method = DebayerMethod::default();
+
+    // Eager: read all, debayer, luminance, score
+    let color_frames: Vec<_> = (0..reader.frame_count())
+        .map(|i| reader.read_frame_color(i, &method).unwrap())
+        .collect();
+    let lum_frames: Vec<_> = color_frames.iter().map(luminance).collect();
+    let eager_ranked = rank_frames(&lum_frames);
+
+    // Streaming
+    let streaming_ranked = rank_frames_color_streaming(&reader, &color_mode, &method).unwrap();
+
+    assert_eq!(eager_ranked.len(), streaming_ranked.len());
+    for (eager, streaming) in eager_ranked.iter().zip(streaming_ranked.iter()) {
+        assert_eq!(eager.0, streaming.0, "Frame indices differ");
+        assert!(
+            (eager.1.composite - streaming.1.composite).abs() < 1e-10,
+            "Scores differ for frame {}: eager={}, streaming={}",
+            eager.0,
+            eager.1.composite,
+            streaming.1.composite
+        );
+    }
+}
+
+#[test]
+fn test_color_streaming_gradient_matches_eager() {
+    let ser_file = write_test_bayer_ser_file(20);
+    let reader = SerReader::open(ser_file.path()).unwrap();
+    let color_mode = reader.header.color_mode();
+    let method = DebayerMethod::default();
+
+    // Eager: read all, debayer, luminance, score with gradient
+    let color_frames: Vec<_> = (0..reader.frame_count())
+        .map(|i| reader.read_frame_color(i, &method).unwrap())
+        .collect();
+    let lum_frames: Vec<_> = color_frames.iter().map(luminance).collect();
+    let eager_ranked = rank_frames_gradient(&lum_frames);
+
+    // Streaming
+    let streaming_ranked =
+        rank_frames_gradient_color_streaming(&reader, &color_mode, &method).unwrap();
+
+    assert_eq!(eager_ranked.len(), streaming_ranked.len());
+    for (eager, streaming) in eager_ranked.iter().zip(streaming_ranked.iter()) {
+        assert_eq!(eager.0, streaming.0, "Frame indices differ");
+        assert!(
+            (eager.1.composite - streaming.1.composite).abs() < 1e-10,
+            "Gradient scores differ for frame {}",
+            eager.0
+        );
+    }
 }

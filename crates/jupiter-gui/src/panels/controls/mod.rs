@@ -1,4 +1,5 @@
 mod actions;
+mod crop;
 mod debayer;
 mod file;
 mod filters;
@@ -17,6 +18,8 @@ pub fn show(ctx: &egui::Context, app: &mut crate::app::JupiterApp) {
                 ui.set_min_width(LEFT_PANEL_WIDTH - 20.0);
 
                 file::file_section(ui, app);
+                ui.separator();
+                crop::crop_section(ui, app);
                 ui.separator();
                 debayer::debayer_section(ui, app);
                 ui.separator();

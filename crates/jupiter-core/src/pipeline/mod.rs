@@ -19,8 +19,8 @@ use crate::filters::unsharp_mask::unsharp_mask;
 use crate::frame::{AlignmentOffset, ColorFrame, ColorMode, Frame};
 use crate::io::image_io::{save_color_image, save_image};
 use crate::io::ser::SerReader;
-use crate::quality::gradient::{rank_frames_gradient, rank_frames_gradient_streaming};
-use crate::quality::laplacian::{rank_frames, rank_frames_streaming};
+use crate::quality::gradient::{rank_frames_gradient, rank_frames_gradient_color_streaming, rank_frames_gradient_streaming};
+use crate::quality::laplacian::{rank_frames, rank_frames_color_streaming, rank_frames_streaming};
 use crate::sharpen::deconvolution::{deconvolve, deconvolve_gpu};
 use crate::sharpen::wavelet;
 use crate::stack::drizzle::{drizzle_stack, drizzle_stack_streaming};
@@ -31,7 +31,7 @@ use crate::stack::sigma_clip::sigma_clip_stack;
 
 use self::config::{FilterStep, MemoryStrategy, PipelineConfig, QualityMetric, StackMethod};
 
-use crate::consts::LOW_MEMORY_THRESHOLD_BYTES;
+use crate::consts::{COLOR_CHANNEL_COUNT, LOW_MEMORY_THRESHOLD_BYTES};
 
 /// Pipeline processing stage, used for progress reporting.
 #[derive(Clone, Debug)]
@@ -45,6 +45,7 @@ pub enum PipelineStage {
     Sharpening,
     Filtering,
     Writing,
+    Cropping,
 }
 
 impl std::fmt::Display for PipelineStage {
@@ -59,6 +60,7 @@ impl std::fmt::Display for PipelineStage {
             Self::Sharpening => write!(f, "Sharpening"),
             Self::Filtering => write!(f, "Applying filters"),
             Self::Writing => write!(f, "Writing output"),
+            Self::Cropping => write!(f, "Cropping"),
         }
     }
 }
@@ -161,14 +163,16 @@ pub fn run_pipeline_reported(
 }
 
 /// Decide whether to use the streaming (low-memory) path.
-fn should_use_streaming(reader: &SerReader, config: &PipelineConfig) -> bool {
+fn should_use_streaming(reader: &SerReader, config: &PipelineConfig, use_color: bool) -> bool {
     match config.memory {
         MemoryStrategy::Eager => false,
         MemoryStrategy::LowMemory => true,
         MemoryStrategy::Auto => {
+            let channels: usize = if use_color { COLOR_CHANNEL_COUNT } else { 1 };
             let frame_bytes = reader.header.width as usize
                 * reader.header.height as usize
-                * std::mem::size_of::<f32>();
+                * std::mem::size_of::<f32>()
+                * channels;
             let total_decoded = frame_bytes * reader.frame_count();
             total_decoded > LOW_MEMORY_THRESHOLD_BYTES
         }
@@ -183,7 +187,7 @@ fn run_mono_pipeline(
     reporter: &Arc<dyn ProgressReporter>,
     total: usize,
 ) -> Result<PipelineOutput> {
-    let streaming = should_use_streaming(reader, config);
+    let streaming = should_use_streaming(reader, config, false);
     if streaming {
         info!("Using low-memory streaming mode");
     }
@@ -489,6 +493,14 @@ fn run_color_pipeline(
     total: usize,
 ) -> Result<PipelineOutput> {
     let is_rgb_bgr = matches!(color_mode, ColorMode::RGB | ColorMode::BGR);
+    let streaming = should_use_streaming(reader, config, true);
+
+    if streaming {
+        info!("Using low-memory streaming mode for color");
+        return run_color_pipeline_streaming(
+            reader, config, backend, reporter, debayer_method, color_mode, total, is_rgb_bgr,
+        );
+    }
 
     // Read raw frames
     reporter.begin_stage(PipelineStage::Reading, Some(total));
@@ -533,6 +545,64 @@ fn run_color_pipeline(
         .map(|&i| lum_frames[i].clone())
         .collect();
     info!(selected = selected_color.len(), total, "Selected best frames (color)");
+    reporter.finish_stage();
+
+    let stacked_color = if let StackMethod::Drizzle(ref drizzle_config) = config.stacking.method {
+        color_drizzle_flow(
+            &selected_color,
+            &selected_lum,
+            &quality_scores,
+            backend,
+            reporter,
+            drizzle_config,
+        )?
+    } else {
+        color_standard_flow(&selected_color, &selected_lum, config, backend, reporter)?
+    };
+
+    apply_post_stack_color(stacked_color, config, backend, reporter)
+}
+
+/// Streaming color pipeline: score via batched read-debayer-luminance-score-drop,
+/// then re-read only selected frames for stacking.
+fn run_color_pipeline_streaming(
+    reader: &SerReader,
+    config: &PipelineConfig,
+    backend: &Arc<dyn ComputeBackend>,
+    reporter: &Arc<dyn ProgressReporter>,
+    debayer_method: &DebayerMethod,
+    color_mode: &ColorMode,
+    total: usize,
+    is_rgb_bgr: bool,
+) -> Result<PipelineOutput> {
+    // Quality (streaming: read-debayer-luminance-score in batches)
+    reporter.begin_stage(PipelineStage::QualityAssessment, Some(total));
+    let ranked = match config.frame_selection.metric {
+        QualityMetric::Laplacian => rank_frames_color_streaming(reader, color_mode, debayer_method)?,
+        QualityMetric::Gradient => rank_frames_gradient_color_streaming(reader, color_mode, debayer_method)?,
+    };
+    reporter.finish_stage();
+
+    // Selection
+    reporter.begin_stage(PipelineStage::FrameSelection, None);
+    let (selected_indices, quality_scores) =
+        select_frames(&ranked, total, config.frame_selection.select_percentage);
+    info!(selected = selected_indices.len(), total, "Selected best frames (color streaming)");
+    reporter.finish_stage();
+
+    // Re-read only selected color frames from disk
+    reporter.begin_stage(PipelineStage::Reading, Some(selected_indices.len()));
+    let selected_color: Vec<ColorFrame> = selected_indices
+        .iter()
+        .map(|&i| {
+            if is_rgb_bgr {
+                reader.read_frame_rgb(i)
+            } else {
+                reader.read_frame_color(i, debayer_method)
+            }
+        })
+        .collect::<Result<_>>()?;
+    let selected_lum: Vec<Frame> = selected_color.iter().map(luminance).collect();
     reporter.finish_stage();
 
     let stacked_color = if let StackMethod::Drizzle(ref drizzle_config) = config.stacking.method {

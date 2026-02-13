@@ -1,9 +1,8 @@
 use std::sync::mpsc;
 
-use jupiter_core::frame::Frame;
 use jupiter_core::pipeline::PipelineOutput;
 
-use crate::convert::{frame_to_display_image, output_to_display_image};
+use crate::convert::output_to_display_image;
 use crate::messages::{WorkerCommand, WorkerResult};
 use crate::panels;
 use crate::state::{ConfigState, UIState, ViewportState};
@@ -47,11 +46,17 @@ impl JupiterApp {
                         info.color_mode
                     ));
                     self.ui_state.source_info = Some(info);
-                    self.ui_state.file_path = Some(path);
                     self.ui_state.preview_frame_index = 0;
+                    self.ui_state.crop_state = Default::default();
+                    // Auto-preview frame 0
+                    self.send_command(WorkerCommand::PreviewFrame {
+                        path: path.clone(),
+                        frame_index: 0,
+                    });
+                    self.ui_state.file_path = Some(path);
                 }
-                WorkerResult::FramePreview { frame, index } => {
-                    self.update_viewport_texture(ctx, &frame, &format!("Raw Frame #{index}"));
+                WorkerResult::FramePreview { output, index } => {
+                    self.update_viewport_from_output(ctx, &output, &format!("Raw Frame #{index}"));
                 }
                 WorkerResult::LoadAndScoreComplete {
                     frame_count,
@@ -102,6 +107,15 @@ impl JupiterApp {
                     self.ui_state.progress_items_done = items_done;
                     self.ui_state.progress_items_total = items_total;
                 }
+                WorkerResult::CropComplete { output_path, elapsed } => {
+                    self.ui_state.running_stage = None;
+                    self.ui_state.crop_state.is_saving = false;
+                    self.ui_state.add_log(format!(
+                        "Crop saved: {} ({})",
+                        output_path.display(),
+                        format_duration(elapsed)
+                    ));
+                }
                 WorkerResult::ImageSaved { path } => {
                     self.ui_state.running_stage = None;
                     self.ui_state.add_log(format!("Saved: {}", path.display()));
@@ -115,19 +129,6 @@ impl JupiterApp {
                 }
             }
         }
-    }
-
-    fn update_viewport_texture(&mut self, ctx: &egui::Context, frame: &Frame, label: &str) {
-        let display = frame_to_display_image(frame);
-        let texture = ctx.load_texture(
-            "viewport",
-            display.image,
-            egui::TextureOptions::NEAREST,
-        );
-        self.viewport.texture = Some(texture);
-        self.viewport.image_size = Some(display.original_size);
-        self.viewport.display_scale = display.display_scale;
-        self.viewport.viewing_label = label.to_string();
     }
 
     fn update_viewport_from_output(&mut self, ctx: &egui::Context, output: &PipelineOutput, label: &str) {

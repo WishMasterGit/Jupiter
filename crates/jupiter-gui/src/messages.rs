@@ -2,7 +2,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use jupiter_core::compute::DevicePreference;
-use jupiter_core::frame::{Frame, SourceInfo};
+use jupiter_core::frame::SourceInfo;
+use jupiter_core::io::crop::CropRect;
 use jupiter_core::pipeline::config::{
     DebayerConfig, FilterStep, PipelineConfig, QualityMetric, SharpeningConfig, StackMethod,
 };
@@ -44,6 +45,13 @@ pub enum WorkerCommand {
 
     /// Save the currently displayed frame to disk.
     SaveImage { path: PathBuf },
+
+    /// Crop a SER file and save to a new file.
+    CropAndSave {
+        source_path: PathBuf,
+        output_path: PathBuf,
+        crop: CropRect,
+    },
 }
 
 /// Results sent from worker thread back to UI thread.
@@ -53,7 +61,7 @@ pub enum WorkerResult {
         info: SourceInfo,
     },
     FramePreview {
-        frame: Frame,
+        output: PipelineOutput,
         index: usize,
     },
 
@@ -95,6 +103,10 @@ pub enum WorkerResult {
         items_total: Option<usize>,
     },
 
+    CropComplete {
+        output_path: PathBuf,
+        elapsed: Duration,
+    },
     ImageSaved {
         path: PathBuf,
     },

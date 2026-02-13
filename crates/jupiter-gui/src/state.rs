@@ -13,6 +13,52 @@ use jupiter_core::stack::drizzle::DrizzleConfig;
 use jupiter_core::stack::multi_point::MultiPointConfig;
 use jupiter_core::stack::sigma_clip::SigmaClipParams;
 
+/// Crop rectangle in image pixel coordinates.
+#[derive(Clone, Debug)]
+pub struct CropRectPixels {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+impl CropRectPixels {
+    /// Convert to core `CropRect`, rounding to integers and snapping to even for Bayer.
+    pub fn to_core_crop_rect(&self, is_bayer: bool) -> jupiter_core::io::crop::CropRect {
+        let mut x = self.x.round() as u32;
+        let mut y = self.y.round() as u32;
+        let mut w = self.width.round() as u32;
+        let mut h = self.height.round() as u32;
+
+        if is_bayer {
+            x = x & !1;
+            y = y & !1;
+            w = w & !1;
+            h = h & !1;
+        }
+
+        jupiter_core::io::crop::CropRect {
+            x,
+            y,
+            width: w,
+            height: h,
+        }
+    }
+}
+
+/// State for crop mode.
+#[derive(Default)]
+pub struct CropState {
+    /// Whether crop mode is active.
+    pub active: bool,
+    /// Current selection in image coords.
+    pub rect: Option<CropRectPixels>,
+    /// Screen coords of drag start.
+    pub drag_start: Option<egui::Pos2>,
+    /// Worker processing flag.
+    pub is_saving: bool,
+}
+
 /// Overall UI state.
 #[derive(Default)]
 pub struct UIState {
@@ -37,6 +83,9 @@ pub struct UIState {
     /// Progress.
     pub progress_items_done: Option<usize>,
     pub progress_items_total: Option<usize>,
+
+    /// Crop state.
+    pub crop_state: CropState,
 
     /// Params changed since last run (stale indicators).
     pub score_params_dirty: bool,

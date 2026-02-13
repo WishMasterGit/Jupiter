@@ -1,9 +1,10 @@
 use ndarray::Array2;
 use rayon::prelude::*;
 
+use crate::color::debayer::{luminance, DebayerMethod};
 use crate::consts::STREAMING_BATCH_SIZE;
 use crate::error::Result;
-use crate::frame::{Frame, QualityScore};
+use crate::frame::{ColorMode, Frame, QualityScore};
 use crate::io::ser::SerReader;
 
 /// Compute Laplacian variance of a frame — higher means sharper.
@@ -104,6 +105,55 @@ pub fn rank_frames_streaming(reader: &SerReader) -> Result<Vec<(usize, QualitySc
 
         scores.extend(batch_scores);
         // batch dropped here — memory freed
+    }
+
+    scores.sort_by(|a, b| b.1.composite.partial_cmp(&a.1.composite).unwrap());
+    Ok(scores)
+}
+
+/// Score color frames by reading them in batches from the SER reader.
+///
+/// For each batch: read raw frames, debayer (or split RGB), convert to
+/// luminance, score in parallel, then drop the batch.
+///
+/// Returns `(index, QualityScore)` sorted by quality descending.
+pub fn rank_frames_color_streaming(
+    reader: &SerReader,
+    color_mode: &ColorMode,
+    debayer_method: &DebayerMethod,
+) -> Result<Vec<(usize, QualityScore)>> {
+    let total = reader.frame_count();
+    let is_rgb_bgr = matches!(color_mode, ColorMode::RGB | ColorMode::BGR);
+    let mut scores: Vec<(usize, QualityScore)> = Vec::with_capacity(total);
+
+    for batch_start in (0..total).step_by(STREAMING_BATCH_SIZE) {
+        let batch_end = (batch_start + STREAMING_BATCH_SIZE).min(total);
+        let batch: Vec<(usize, Frame)> = (batch_start..batch_end)
+            .map(|i| {
+                let color_frame = if is_rgb_bgr {
+                    reader.read_frame_rgb(i)?
+                } else {
+                    reader.read_frame_color(i, debayer_method)?
+                };
+                Ok((i, luminance(&color_frame)))
+            })
+            .collect::<Result<_>>()?;
+
+        let batch_scores: Vec<(usize, QualityScore)> = batch
+            .par_iter()
+            .map(|(i, frame)| {
+                let lv = laplacian_variance(frame);
+                (
+                    *i,
+                    QualityScore {
+                        laplacian_variance: lv,
+                        composite: lv,
+                    },
+                )
+            })
+            .collect();
+
+        scores.extend(batch_scores);
     }
 
     scores.sort_by(|a, b| b.1.composite.partial_cmp(&a.1.composite).unwrap());

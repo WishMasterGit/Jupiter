@@ -242,10 +242,22 @@ impl WgpuBackend {
         let adapter_name = adapter.get_info().name.clone();
         tracing::info!("GPU adapter: {adapter_name}");
 
+        let adapter_limits = adapter.limits();
+        tracing::info!(
+            "GPU max_storage_buffer_binding_size: {} MiB, max_buffer_size: {} MiB",
+            adapter_limits.max_storage_buffer_binding_size / (1024 * 1024),
+            adapter_limits.max_buffer_size / (1024 * 1024),
+        );
+
+        let mut required_limits = wgpu::Limits::default();
+        required_limits.max_storage_buffer_binding_size =
+            adapter_limits.max_storage_buffer_binding_size;
+        required_limits.max_buffer_size = adapter_limits.max_buffer_size;
+
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("jupiter"),
             required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
+            required_limits,
             ..Default::default()
         }))
         .map_err(|e| format!("Failed to create GPU device: {e}"))?;

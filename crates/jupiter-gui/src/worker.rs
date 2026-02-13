@@ -7,17 +7,18 @@ use jupiter_core::align::phase_correlation::{
     align_frames_gpu_with_progress, align_frames_with_progress, compute_offset,
     compute_offset_gpu, shift_frame,
 };
-use jupiter_core::color::debayer::{debayer, is_bayer, luminance};
+use jupiter_core::color::debayer::{debayer, is_bayer, luminance, DebayerMethod};
 use jupiter_core::color::process::process_color_parallel;
 use jupiter_core::compute::create_backend;
 use jupiter_core::frame::{AlignmentOffset, ColorFrame, ColorMode, Frame, QualityScore};
+use jupiter_core::io::crop::crop_ser;
 use jupiter_core::io::image_io::{save_color_image, save_image};
 use jupiter_core::io::ser::SerReader;
 use jupiter_core::pipeline::config::{DebayerConfig, QualityMetric, StackMethod};
 use jupiter_core::pipeline::{apply_filter_step, run_pipeline_reported, PipelineOutput, PipelineStage};
-use jupiter_core::consts::LOW_MEMORY_THRESHOLD_BYTES;
-use jupiter_core::quality::gradient::{rank_frames_gradient, rank_frames_gradient_streaming};
-use jupiter_core::quality::laplacian::{rank_frames, rank_frames_streaming};
+use jupiter_core::consts::{COLOR_CHANNEL_COUNT, LOW_MEMORY_THRESHOLD_BYTES};
+use jupiter_core::quality::gradient::{rank_frames_gradient, rank_frames_gradient_color_streaming, rank_frames_gradient_streaming};
+use jupiter_core::quality::laplacian::{rank_frames, rank_frames_color_streaming, rank_frames_streaming};
 use jupiter_core::sharpen::deconvolution::{deconvolve, deconvolve_gpu};
 use jupiter_core::sharpen::wavelet;
 use jupiter_core::stack::drizzle::drizzle_stack;
@@ -33,6 +34,11 @@ use crate::progress::ChannelProgressReporter;
 struct PipelineCache {
     file_path: Option<PathBuf>,
     is_color: bool,
+    is_streaming: bool,
+    /// Stored color mode from the SER header, needed for re-reading color frames in streaming mode.
+    color_mode: Option<ColorMode>,
+    /// Stored debayer method, needed for re-reading Bayer frames in streaming mode.
+    debayer_method: Option<DebayerMethod>,
     all_frames: Option<Vec<Frame>>,
     all_color_frames: Option<Vec<ColorFrame>>,
     ranked: Option<Vec<(usize, QualityScore)>>,
@@ -49,6 +55,9 @@ impl PipelineCache {
         Self {
             file_path: None,
             is_color: false,
+            is_streaming: false,
+            color_mode: None,
+            debayer_method: None,
             all_frames: None,
             all_color_frames: None,
             ranked: None,
@@ -153,6 +162,13 @@ fn worker_loop(
             WorkerCommand::SaveImage { path } => {
                 handle_save_image(&path, &cache, &tx, &ctx);
             }
+            WorkerCommand::CropAndSave {
+                source_path,
+                output_path,
+                crop,
+            } => {
+                handle_crop_and_save(&source_path, &output_path, &crop, &tx, &ctx);
+            }
         }
     }
 }
@@ -180,18 +196,46 @@ fn handle_preview_frame(
     tx: &mpsc::Sender<WorkerResult>,
     ctx: &egui::Context,
 ) {
-    match SerReader::open(path) {
-        Ok(reader) => match reader.read_frame(frame_index) {
-            Ok(frame) => {
-                send(tx, ctx, WorkerResult::FramePreview {
-                    frame,
-                    index: frame_index,
-                });
+    let reader = match SerReader::open(path) {
+        Ok(r) => r,
+        Err(e) => {
+            send_error(tx, ctx, format!("Failed to open file: {e}"));
+            return;
+        }
+    };
+
+    let color_mode = reader.header.color_mode();
+
+    let output = if is_bayer(&color_mode) {
+        match reader.read_frame_color(frame_index, &DebayerMethod::Bilinear) {
+            Ok(cf) => PipelineOutput::Color(cf),
+            Err(e) => {
+                send_error(tx, ctx, format!("Failed to read frame {frame_index}: {e}"));
+                return;
             }
-            Err(e) => send_error(tx, ctx, format!("Failed to read frame {frame_index}: {e}")),
-        },
-        Err(e) => send_error(tx, ctx, format!("Failed to open file: {e}")),
-    }
+        }
+    } else if matches!(color_mode, ColorMode::RGB | ColorMode::BGR) {
+        match reader.read_frame_rgb(frame_index) {
+            Ok(cf) => PipelineOutput::Color(cf),
+            Err(e) => {
+                send_error(tx, ctx, format!("Failed to read frame {frame_index}: {e}"));
+                return;
+            }
+        }
+    } else {
+        match reader.read_frame(frame_index) {
+            Ok(frame) => PipelineOutput::Mono(frame),
+            Err(e) => {
+                send_error(tx, ctx, format!("Failed to read frame {frame_index}: {e}"));
+                return;
+            }
+        }
+    };
+
+    send(tx, ctx, WorkerResult::FramePreview {
+        output,
+        index: frame_index,
+    });
 }
 
 fn handle_load_and_score(
@@ -223,31 +267,51 @@ fn handle_load_and_score(
     let is_rgb_bgr = matches!(color_mode, ColorMode::RGB | ColorMode::BGR);
     let total = reader.frame_count();
 
-    // Check if we should use streaming mode (mono only, large files)
+    // Check if we should use streaming mode (large files)
+    let channels: usize = if use_color { COLOR_CHANNEL_COUNT } else { 1 };
     let decoded_bytes = reader.header.width as usize
         * reader.header.height as usize
         * std::mem::size_of::<f32>()
+        * channels
         * total;
-    let use_streaming = !use_color && decoded_bytes > LOW_MEMORY_THRESHOLD_BYTES;
+    let use_streaming = decoded_bytes > LOW_MEMORY_THRESHOLD_BYTES;
 
     if use_streaming {
-        // Streaming mode: score frames one-batch-at-a-time, don't load all
-        send_log(tx, ctx, format!("Scoring {total} frames (streaming)..."));
+        let debayer_method = debayer_config
+            .as_ref()
+            .map(|c| c.method.clone())
+            .unwrap_or_default();
+
+        let mode_label = if use_color { "color " } else { "" };
+        send_log(tx, ctx, format!("Scoring {total} {mode_label}frames (streaming)..."));
         send(tx, ctx, WorkerResult::Progress {
             stage: PipelineStage::QualityAssessment,
             items_done: Some(0),
             items_total: Some(total),
         });
 
-        let ranked = match metric {
-            QualityMetric::Laplacian => match rank_frames_streaming(&reader) {
-                Ok(r) => r,
-                Err(e) => { send_error(tx, ctx, format!("Streaming scoring failed: {e}")); return; }
-            },
-            QualityMetric::Gradient => match rank_frames_gradient_streaming(&reader) {
-                Ok(r) => r,
-                Err(e) => { send_error(tx, ctx, format!("Streaming scoring failed: {e}")); return; }
-            },
+        let ranked = if use_color {
+            match metric {
+                QualityMetric::Laplacian => match rank_frames_color_streaming(&reader, &color_mode, &debayer_method) {
+                    Ok(r) => r,
+                    Err(e) => { send_error(tx, ctx, format!("Streaming color scoring failed: {e}")); return; }
+                },
+                QualityMetric::Gradient => match rank_frames_gradient_color_streaming(&reader, &color_mode, &debayer_method) {
+                    Ok(r) => r,
+                    Err(e) => { send_error(tx, ctx, format!("Streaming color scoring failed: {e}")); return; }
+                },
+            }
+        } else {
+            match metric {
+                QualityMetric::Laplacian => match rank_frames_streaming(&reader) {
+                    Ok(r) => r,
+                    Err(e) => { send_error(tx, ctx, format!("Streaming scoring failed: {e}")); return; }
+                },
+                QualityMetric::Gradient => match rank_frames_gradient_streaming(&reader) {
+                    Ok(r) => r,
+                    Err(e) => { send_error(tx, ctx, format!("Streaming scoring failed: {e}")); return; }
+                },
+            }
         };
 
         let ranked_preview: Vec<(usize, f64)> = ranked
@@ -257,13 +321,16 @@ fn handle_load_and_score(
             .collect();
 
         cache.file_path = Some(path.to_path_buf());
-        cache.is_color = false;
+        cache.is_color = use_color;
+        cache.is_streaming = true;
+        cache.color_mode = if use_color { Some(color_mode.clone()) } else { None };
+        cache.debayer_method = if use_color { Some(debayer_method) } else { None };
         cache.all_frames = None; // streaming: no cached frames
         cache.all_color_frames = None;
         cache.ranked = Some(ranked);
         cache.invalidate_downstream();
 
-        send_log(tx, ctx, format!("Scored {total} frames (streaming mode)"));
+        send_log(tx, ctx, format!("Scored {total} {mode_label}frames (streaming mode)"));
         send(tx, ctx, WorkerResult::LoadAndScoreComplete {
             frame_count: total,
             ranked_preview,
@@ -336,6 +403,9 @@ fn handle_load_and_score(
     // Update cache — invalidate downstream
     cache.file_path = Some(path.to_path_buf());
     cache.is_color = use_color;
+    cache.is_streaming = false;
+    cache.color_mode = None;
+    cache.debayer_method = None;
     cache.all_frames = Some(scoring_frames);
     cache.all_color_frames = color_frames;
     cache.ranked = Some(ranked);
@@ -408,7 +478,7 @@ fn handle_stack(
     let start = Instant::now();
 
     // Streaming mode: all_frames is None, must load selected frames from disk
-    let is_streaming = cache.all_frames.is_none();
+    let is_streaming = cache.is_streaming;
 
     let (total, selected_indices) = if is_streaming {
         // Determine total from ranked scores (all frames were scored)
@@ -427,8 +497,8 @@ fn handle_stack(
 
     let frame_count = selected_indices.len();
 
-    // Load selected frames: either from cache or from SER reader
-    let selected_frames: Vec<Frame> = if is_streaming {
+    // Load selected frames and color frames
+    let (selected_frames, selected_color): (Vec<Frame>, Option<Vec<ColorFrame>>) = if is_streaming {
         let file_path = match &cache.file_path {
             Some(p) => p.clone(),
             None => {
@@ -443,26 +513,58 @@ fn handle_stack(
                 return;
             }
         };
-        send_log(tx, ctx, format!("Loading {frame_count} selected frames..."));
-        match selected_indices.iter().map(|&i| reader.read_frame(i)).collect::<jupiter_core::error::Result<_>>() {
-            Ok(frames) => frames,
-            Err(e) => {
-                send_error(tx, ctx, format!("Failed to read selected frames: {e}"));
-                return;
-            }
+        send_log(tx, ctx, format!("Loading {frame_count} selected frames from disk..."));
+
+        if cache.is_color {
+            // Color streaming: read color frames from disk, derive luminance for alignment
+            let color_mode = cache.color_mode.as_ref().unwrap();
+            let debayer_method = cache.debayer_method.as_ref().unwrap();
+            let is_rgb_bgr = matches!(color_mode, ColorMode::RGB | ColorMode::BGR);
+
+            let color_frames: Vec<ColorFrame> = match selected_indices.iter().map(|&i| {
+                if is_rgb_bgr {
+                    reader.read_frame_rgb(i)
+                } else {
+                    reader.read_frame_color(i, debayer_method)
+                }
+            }).collect::<jupiter_core::error::Result<_>>() {
+                Ok(cf) => cf,
+                Err(e) => {
+                    send_error(tx, ctx, format!("Failed to read selected color frames: {e}"));
+                    return;
+                }
+            };
+
+            let lum_frames: Vec<Frame> = color_frames.iter().map(luminance).collect();
+            (lum_frames, Some(color_frames))
+        } else {
+            // Mono streaming: read mono frames from disk
+            let mono_frames: Vec<Frame> = match selected_indices.iter()
+                .map(|&i| reader.read_frame(i))
+                .collect::<jupiter_core::error::Result<_>>()
+            {
+                Ok(frames) => frames,
+                Err(e) => {
+                    send_error(tx, ctx, format!("Failed to read selected frames: {e}"));
+                    return;
+                }
+            };
+            (mono_frames, None)
         }
     } else {
+        // Eager mode: frames already in cache
         let frames = cache.all_frames.as_ref().unwrap();
-        selected_indices.iter().map(|&i| frames[i].clone()).collect()
-    };
+        let mono: Vec<Frame> = selected_indices.iter().map(|&i| frames[i].clone()).collect();
 
-    // Gather selected color frames if in color mode
-    let selected_color: Option<Vec<ColorFrame>> = if cache.is_color {
-        cache.all_color_frames.as_ref().map(|cfs| {
-            selected_indices.iter().map(|&i| cfs[i].clone()).collect()
-        })
-    } else {
-        None
+        let color = if cache.is_color {
+            cache.all_color_frames.as_ref().map(|cfs| {
+                selected_indices.iter().map(|&i| cfs[i].clone()).collect()
+            })
+        } else {
+            None
+        };
+
+        (mono, color)
     };
 
     send_log(tx, ctx, format!("Selected {frame_count}/{total} frames, aligning..."));
@@ -884,5 +986,54 @@ fn handle_save_image(
             send(tx, ctx, WorkerResult::ImageSaved { path: path.to_path_buf() });
         }
         Err(e) => send_error(tx, ctx, format!("Failed to save: {e}")),
+    }
+}
+
+fn handle_crop_and_save(
+    source_path: &Path,
+    output_path: &Path,
+    crop: &jupiter_core::io::crop::CropRect,
+    tx: &mpsc::Sender<WorkerResult>,
+    ctx: &egui::Context,
+) {
+    let start = Instant::now();
+    send_log(tx, ctx, format!(
+        "Cropping to {}x{} at ({},{})...",
+        crop.width, crop.height, crop.x, crop.y
+    ));
+
+    let reader = match SerReader::open(source_path) {
+        Ok(r) => r,
+        Err(e) => {
+            send_error(tx, ctx, format!("Failed to open source: {e}"));
+            return;
+        }
+    };
+
+    let total = reader.frame_count();
+    let tx_progress = tx.clone();
+    let ctx_progress = ctx.clone();
+
+    match crop_ser(&reader, output_path, crop, |done, total| {
+        let _ = tx_progress.send(WorkerResult::Progress {
+            stage: PipelineStage::Cropping,
+            items_done: Some(done),
+            items_total: Some(total),
+        });
+        ctx_progress.request_repaint();
+    }) {
+        Ok(()) => {
+            let elapsed = start.elapsed();
+            send_log(tx, ctx, format!(
+                "Cropped {total} frames in {:.1}s -> {}",
+                elapsed.as_secs_f32(),
+                output_path.display()
+            ));
+            send(tx, ctx, WorkerResult::CropComplete {
+                output_path: output_path.to_path_buf(),
+                elapsed,
+            });
+        }
+        Err(e) => send_error(tx, ctx, format!("Crop failed: {e}")),
     }
 }

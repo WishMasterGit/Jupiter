@@ -55,7 +55,7 @@ pub struct RunArgs {
     pub device: DeviceArg,
 
     /// Memory strategy (auto, eager, low-memory)
-    #[arg(long, value_enum, default_value = "auto")]
+    #[arg(long, value_enum, default_value = "low-memory")]
     pub memory: MemoryArg,
 
     /// Debayer method for Bayer-pattern SER files (bilinear, mhc)

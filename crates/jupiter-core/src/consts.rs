@@ -26,3 +26,6 @@ pub const LOW_MEMORY_THRESHOLD_BYTES: usize = 1_073_741_824;
 /// Number of frames decoded simultaneously during streaming quality scoring.
 /// Balances memory usage vs. parallelism. At 4096x4096 f32, 8 frames = 512 MB.
 pub const STREAMING_BATCH_SIZE: usize = 8;
+
+/// Number of channels in a color frame (R, G, B).
+pub const COLOR_CHANNEL_COUNT: usize = 3;

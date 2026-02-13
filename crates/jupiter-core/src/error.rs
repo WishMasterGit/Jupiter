@@ -26,6 +26,9 @@ pub enum JupiterError {
     #[error("Empty frame sequence")]
     EmptySequence,
 
+    #[error("Invalid crop region: {0}")]
+    InvalidCrop(String),
+
     #[error("GPU error: {0}")]
     GpuError(String),
 }

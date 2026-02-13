@@ -1,4 +1,5 @@
 use crate::app::JupiterApp;
+use crate::state::CropRectPixels;
 
 const MIN_ZOOM: f32 = 0.1;
 const MAX_ZOOM: f32 = 20.0;
@@ -10,12 +11,17 @@ pub fn show(ctx: &egui::Context, app: &mut JupiterApp) {
         ui.painter()
             .rect_filled(rect, 0.0, egui::Color32::from_gray(30));
 
-        if let Some(ref texture) = app.viewport.texture {
+        // Extract texture info before mutable borrows
+        let texture_info = app.viewport.texture.as_ref().map(|t| {
+            (t.id(), [t.size()[0] as f32, t.size()[1] as f32])
+        });
+
+        if let Some((texture_id, tex_size)) = texture_info {
             // Use original image size for zoom/pan calculations (not texture size which may be scaled)
             let image_size = if let Some(size) = app.viewport.image_size {
                 egui::vec2(size[0] as f32, size[1] as f32)
             } else {
-                egui::vec2(texture.size()[0] as f32, texture.size()[1] as f32)
+                egui::vec2(tex_size[0], tex_size[1])
             };
 
             // Handle input
@@ -46,6 +52,12 @@ pub fn show(ctx: &egui::Context, app: &mut JupiterApp) {
                 app.viewport.pan_offset += response.drag_delta();
             }
 
+            // Crop drag: primary button without Ctrl, when crop mode active
+            let crop_active = app.ui_state.crop_state.active;
+            if crop_active {
+                handle_crop_drag(&response, ui, app, image_size);
+            }
+
             // Double-click to fit
             if response.double_clicked() {
                 fit_to_rect(&mut app.viewport.zoom, &mut app.viewport.pan_offset, image_size, rect);
@@ -58,11 +70,16 @@ pub fn show(ctx: &egui::Context, app: &mut JupiterApp) {
 
             // Draw the image
             ui.painter().image(
-                texture.id(),
+                texture_id,
                 img_rect,
                 egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
                 egui::Color32::WHITE,
             );
+
+            // Draw crop overlay
+            if let Some(ref crop_rect) = app.ui_state.crop_state.rect {
+                draw_crop_overlay(ui, crop_rect, img_rect, image_size, app.viewport.zoom);
+            }
 
             // Label in top-left corner
             if !app.viewport.viewing_label.is_empty() {
@@ -86,6 +103,151 @@ pub fn show(ctx: &egui::Context, app: &mut JupiterApp) {
             });
         }
     });
+}
+
+/// Convert screen coordinates to image pixel coordinates.
+fn screen_to_image(
+    pos: egui::Pos2,
+    img_rect: egui::Rect,
+    image_size: egui::Vec2,
+) -> egui::Pos2 {
+    egui::pos2(
+        (pos.x - img_rect.left()) / img_rect.width() * image_size.x,
+        (pos.y - img_rect.top()) / img_rect.height() * image_size.y,
+    )
+}
+
+/// Convert image pixel coordinates to screen coordinates.
+fn image_to_screen(
+    pos: egui::Pos2,
+    img_rect: egui::Rect,
+    image_size: egui::Vec2,
+) -> egui::Pos2 {
+    egui::pos2(
+        pos.x / image_size.x * img_rect.width() + img_rect.left(),
+        pos.y / image_size.y * img_rect.height() + img_rect.top(),
+    )
+}
+
+fn handle_crop_drag(
+    response: &egui::Response,
+    ui: &egui::Ui,
+    app: &mut JupiterApp,
+    image_size: egui::Vec2,
+) {
+    let is_primary = response.dragged_by(egui::PointerButton::Primary);
+    let no_ctrl = !ui.input(|i| i.modifiers.command);
+
+    if is_primary && no_ctrl {
+        // Compute current img_rect for coordinate conversion
+        let rect = response.rect;
+        let scaled = image_size * app.viewport.zoom;
+        let center = rect.center() + app.viewport.pan_offset;
+        let img_rect = egui::Rect::from_center_size(center, scaled);
+
+        if app.ui_state.crop_state.drag_start.is_none() {
+            if let Some(pos) = response.interact_pointer_pos() {
+                app.ui_state.crop_state.drag_start = Some(pos);
+            }
+        }
+
+        if let Some(start) = app.ui_state.crop_state.drag_start {
+            if let Some(current) = ui.input(|i| i.pointer.hover_pos()) {
+                let img_start = screen_to_image(start, img_rect, image_size);
+                let img_current = screen_to_image(current, img_rect, image_size);
+
+                let x_min = img_start.x.min(img_current.x).max(0.0);
+                let y_min = img_start.y.min(img_current.y).max(0.0);
+                let x_max = img_start.x.max(img_current.x).min(image_size.x);
+                let y_max = img_start.y.max(img_current.y).min(image_size.y);
+
+                let w = x_max - x_min;
+                let h = y_max - y_min;
+
+                if w > 1.0 && h > 1.0 {
+                    app.ui_state.crop_state.rect = Some(CropRectPixels {
+                        x: x_min,
+                        y: y_min,
+                        width: w,
+                        height: h,
+                    });
+                }
+            }
+        }
+    }
+
+    if response.drag_stopped_by(egui::PointerButton::Primary) {
+        app.ui_state.crop_state.drag_start = None;
+    }
+}
+
+fn draw_crop_overlay(
+    ui: &egui::Ui,
+    crop: &CropRectPixels,
+    img_rect: egui::Rect,
+    image_size: egui::Vec2,
+    _zoom: f32,
+) {
+    let top_left = image_to_screen(
+        egui::pos2(crop.x, crop.y),
+        img_rect,
+        image_size,
+    );
+    let bottom_right = image_to_screen(
+        egui::pos2(crop.x + crop.width, crop.y + crop.height),
+        img_rect,
+        image_size,
+    );
+    let crop_screen = egui::Rect::from_min_max(top_left, bottom_right);
+
+    let dim_color = egui::Color32::from_black_alpha(140);
+    let painter = ui.painter();
+
+    // Top dim region
+    painter.rect_filled(
+        egui::Rect::from_min_max(img_rect.left_top(), egui::pos2(img_rect.right(), crop_screen.top())),
+        0.0,
+        dim_color,
+    );
+    // Bottom dim region
+    painter.rect_filled(
+        egui::Rect::from_min_max(egui::pos2(img_rect.left(), crop_screen.bottom()), img_rect.right_bottom()),
+        0.0,
+        dim_color,
+    );
+    // Left dim region (between top and bottom)
+    painter.rect_filled(
+        egui::Rect::from_min_max(
+            egui::pos2(img_rect.left(), crop_screen.top()),
+            egui::pos2(crop_screen.left(), crop_screen.bottom()),
+        ),
+        0.0,
+        dim_color,
+    );
+    // Right dim region (between top and bottom)
+    painter.rect_filled(
+        egui::Rect::from_min_max(
+            egui::pos2(crop_screen.right(), crop_screen.top()),
+            egui::pos2(img_rect.right(), crop_screen.bottom()),
+        ),
+        0.0,
+        dim_color,
+    );
+
+    // Yellow border around crop rect
+    let border_color = egui::Color32::from_rgb(255, 255, 0);
+    painter.rect_stroke(crop_screen, 0.0, egui::Stroke::new(1.5, border_color), egui::epaint::StrokeKind::Outside);
+
+    // Dimensions label near bottom-right corner
+    let label = format!("{}x{}", crop.width.round() as u32, crop.height.round() as u32);
+    let label_pos = egui::pos2(crop_screen.right() - 4.0, crop_screen.bottom() + 4.0);
+    painter.text(
+        label_pos,
+        egui::Align2::RIGHT_TOP,
+        label,
+        egui::FontId::proportional(12.0),
+        border_color,
+    );
 }
 
 fn fit_to_rect(zoom: &mut f32, pan: &mut egui::Vec2, image_size: egui::Vec2, rect: egui::Rect) {
