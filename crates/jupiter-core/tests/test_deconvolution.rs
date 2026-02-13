@@ -4,7 +4,7 @@ use jupiter_core::frame::Frame;
 use jupiter_core::pipeline::config::{
     DeconvolutionConfig, DeconvolutionMethod, PsfModel,
 };
-use jupiter_core::sharpen::deconvolution::{bessel_j1, deconvolve, generate_psf};
+use jupiter_core::sharpen::deconvolution::{bessel_j1, deconvolve, generate_psf, rewrap_psf_padded};
 
 // ---------------------------------------------------------------------------
 // Helper: create a simple test frame from an Array2
@@ -688,4 +688,207 @@ fn wiener_with_airy_psf() {
     };
     let result = deconvolve(&frame, &config);
     assert!(result.data.iter().all(|&v| (0.0..=1.0).contains(&v)));
+}
+
+// ---------------------------------------------------------------------------
+// PSF re-wrapping tests (for GPU FFT power-of-2 padding)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn rewrap_psf_padded_identity_when_power_of_two() {
+    // 32x32 is already a power of 2 — rewrap to same dims is a no-op.
+    let psf = generate_psf(&PsfModel::Gaussian { sigma: 2.0 }, 32, 32);
+    let rewrapped = rewrap_psf_padded(&psf, 32, 32);
+    for r in 0..32 {
+        for c in 0..32 {
+            assert!(
+                (psf[[r, c]] - rewrapped[[r, c]]).abs() < 1e-10,
+                "Identity rewrap should match at [{r},{c}]"
+            );
+        }
+    }
+}
+
+#[test]
+fn rewrap_psf_padded_preserves_sum() {
+    let psf = generate_psf(&PsfModel::Gaussian { sigma: 2.0 }, 48, 48);
+    let rewrapped = rewrap_psf_padded(&psf, 64, 64);
+    let sum_orig: f32 = psf.iter().sum();
+    let sum_rewrapped: f32 = rewrapped.iter().sum();
+    assert!(
+        (sum_orig - sum_rewrapped).abs() < 1e-6,
+        "Rewrap should preserve total energy: {sum_orig} vs {sum_rewrapped}"
+    );
+}
+
+#[test]
+fn rewrap_psf_padded_origin_preserved() {
+    let psf = generate_psf(&PsfModel::Gaussian { sigma: 2.0 }, 48, 48);
+    let rewrapped = rewrap_psf_padded(&psf, 64, 64);
+    // Origin [0,0] should be preserved (peak of the PSF)
+    assert!(
+        (psf[[0, 0]] - rewrapped[[0, 0]]).abs() < 1e-10,
+        "Origin should be preserved"
+    );
+    // Values near origin in positive quadrant should be preserved
+    assert!(
+        (psf[[1, 1]] - rewrapped[[1, 1]]).abs() < 1e-10,
+        "Near-origin positive quadrant should be preserved"
+    );
+}
+
+#[test]
+fn rewrap_psf_padded_wraparound_quadrant() {
+    let psf = generate_psf(&PsfModel::Gaussian { sigma: 2.0 }, 48, 48);
+    let rewrapped = rewrap_psf_padded(&psf, 64, 64);
+    // PSF[47, 47] (row=47, col=47 in 48x48) represents spatial offset (-1, -1).
+    // In 64x64 layout, that should be at [63, 63].
+    assert!(
+        (psf[[47, 47]] - rewrapped[[63, 63]]).abs() < 1e-10,
+        "Wrap-around corner should map correctly: psf[47,47]={} vs rewrapped[63,63]={}",
+        psf[[47, 47]],
+        rewrapped[[63, 63]]
+    );
+    // PSF[47, 0] (row=47, col=0) represents offset (-1, 0).
+    // In 64x64 layout, that should be at [63, 0].
+    assert!(
+        (psf[[47, 0]] - rewrapped[[63, 0]]).abs() < 1e-10,
+        "Wrap-around row should map correctly"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// GPU Richardson-Lucy tests (require `gpu` feature)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "gpu")]
+#[test]
+fn gpu_rl_matches_cpu_rl_non_power_of_two() {
+    use jupiter_core::compute::{create_backend, DevicePreference};
+    use jupiter_core::sharpen::deconvolution::deconvolve_gpu;
+
+    let backend = create_backend(&DevicePreference::Gpu);
+    if !backend.is_gpu() {
+        return; // skip if no GPU available
+    }
+
+    // Non-power-of-2: 48x48 → padded to 64x64 by GPU FFT
+    let size = 48;
+    let mut data = Array2::<f32>::zeros((size, size));
+    for r in 14..34 {
+        for c in 14..34 {
+            data[[r, c]] = 0.7;
+        }
+    }
+    let frame = make_frame(data);
+
+    let config = DeconvolutionConfig {
+        method: DeconvolutionMethod::RichardsonLucy { iterations: 5 },
+        psf: PsfModel::Gaussian { sigma: 2.0 },
+    };
+
+    let cpu_result = deconvolve(&frame, &config);
+    let gpu_result = deconvolve_gpu(&frame, &config, &*backend);
+
+    // GPU uses f32, CPU uses f64 internally — allow some tolerance
+    let max_diff = cpu_result
+        .data
+        .iter()
+        .zip(gpu_result.data.iter())
+        .map(|(&a, &b)| (a - b).abs())
+        .fold(0.0f32, f32::max);
+
+    assert!(
+        max_diff < 0.05,
+        "GPU RL should approximately match CPU RL on non-power-of-2: max_diff={max_diff}"
+    );
+}
+
+#[cfg(feature = "gpu")]
+#[test]
+fn gpu_rl_flat_image_stable_non_power_of_two() {
+    use jupiter_core::compute::{create_backend, DevicePreference};
+    use jupiter_core::sharpen::deconvolution::deconvolve_gpu;
+
+    let backend = create_backend(&DevicePreference::Gpu);
+    if !backend.is_gpu() {
+        return;
+    }
+
+    // 48x48 (non-power-of-2) — zero-padding to 64x64 causes border artifacts,
+    // so we check only interior pixels (margin of 8 pixels = 4x sigma).
+    let frame = flat_frame(48, 48, 0.5);
+    let config = DeconvolutionConfig {
+        method: DeconvolutionMethod::RichardsonLucy { iterations: 10 },
+        psf: PsfModel::Gaussian { sigma: 2.0 },
+    };
+    let result = deconvolve_gpu(&frame, &config, &*backend);
+
+    let margin = 8;
+    for r in margin..48 - margin {
+        for c in margin..48 - margin {
+            assert!(
+                (result.data[[r, c]] - 0.5).abs() < 0.05,
+                "GPU RL on flat image interior: [{r},{c}] = {}, expected ~0.5",
+                result.data[[r, c]]
+            );
+        }
+    }
+}
+
+#[cfg(feature = "gpu")]
+#[test]
+fn gpu_rl_recovers_sharpness_non_power_of_two() {
+    use jupiter_core::compute::{create_backend, DevicePreference};
+    use jupiter_core::sharpen::deconvolution::deconvolve_gpu;
+
+    let backend = create_backend(&DevicePreference::Gpu);
+    if !backend.is_gpu() {
+        return;
+    }
+
+    let size = 48;
+    let mut sharp = Array2::<f32>::zeros((size, size));
+    for r in 14..34 {
+        for c in 14..34 {
+            sharp[[r, c]] = 0.8;
+        }
+    }
+
+    // Manually blur
+    let sigma = 2.0f32;
+    let mut blurred = Array2::<f32>::zeros((size, size));
+    let kernel_rad = 6i32;
+    for r in 0..size {
+        for c in 0..size {
+            let mut sum = 0.0f32;
+            let mut wt = 0.0f32;
+            for kr in -kernel_rad..=kernel_rad {
+                for kc in -kernel_rad..=kernel_rad {
+                    let sr = (r as i32 + kr).clamp(0, size as i32 - 1) as usize;
+                    let sc = (c as i32 + kc).clamp(0, size as i32 - 1) as usize;
+                    let g = (-(kr * kr + kc * kc) as f32 / (2.0 * sigma * sigma)).exp();
+                    sum += sharp[[sr, sc]] * g;
+                    wt += g;
+                }
+            }
+            blurred[[r, c]] = sum / wt;
+        }
+    }
+
+    let blurred_grad = (blurred[[24, 15]] - blurred[[24, 13]]).abs();
+
+    let frame = make_frame(blurred);
+    let config = DeconvolutionConfig {
+        method: DeconvolutionMethod::RichardsonLucy { iterations: 15 },
+        psf: PsfModel::Gaussian { sigma: 2.0 },
+    };
+    let result = deconvolve_gpu(&frame, &config, &*backend);
+
+    let restored_grad = (result.data[[24, 15]] - result.data[[24, 13]]).abs();
+
+    assert!(
+        restored_grad > blurred_grad,
+        "GPU RL should sharpen edges: restored gradient {restored_grad} > blurred gradient {blurred_grad}"
+    );
 }

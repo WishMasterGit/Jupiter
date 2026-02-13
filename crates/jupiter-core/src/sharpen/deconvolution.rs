@@ -152,6 +152,34 @@ fn generate_airy_psf(radius: f32, h: usize, w: usize) -> Array2<f32> {
 }
 
 // ---------------------------------------------------------------------------
+// PSF re-wrapping for GPU FFT (power-of-2 padding)
+// ---------------------------------------------------------------------------
+
+/// Re-wrap a PSF from `(h, w)` circular structure to `(ph, pw)` circular structure.
+///
+/// PSF generators create arrays at `(h, w)` where values at rows > h/2 represent
+/// negative spatial offsets (wrap-around). When the GPU FFT zero-pads to `(ph, pw)`,
+/// those wrap-around values end up in the wrong positions. This function places them
+/// at the correct positions in the larger `(ph, pw)` array so that `FFT(padded_psf)`
+/// represents the same convolution kernel.
+///
+/// When `ph == h` and `pw == w` (already power-of-2), this is a no-op copy.
+pub fn rewrap_psf_padded(psf: &Array2<f32>, ph: usize, pw: usize) -> Array2<f32> {
+    let (h, w) = psf.dim();
+    let mut padded = Array2::<f32>::zeros((ph, pw));
+
+    for row in 0..h {
+        let dest_r = if row <= h / 2 { row } else { ph - (h - row) };
+        for col in 0..w {
+            let dest_c = if col <= w / 2 { col } else { pw - (w - col) };
+            padded[[dest_r, dest_c]] = psf[[row, col]];
+        }
+    }
+
+    padded
+}
+
+// ---------------------------------------------------------------------------
 // Bessel J1 — Abramowitz & Stegun rational polynomial approximation
 // ---------------------------------------------------------------------------
 
@@ -310,11 +338,18 @@ fn richardson_lucy_gpu(
 ) -> Frame {
     let (h, w) = frame.data.dim();
 
-    // Upload observed image
+    // GPU fft2d() zero-pads to next power-of-2. Re-wrap the PSF at the padded
+    // dimensions so that the circular wrap-around structure is preserved.
+    // When h/w are already power-of-2, this is a no-op.
+    let ph = h.next_power_of_two();
+    let pw = w.next_power_of_two();
+
+    // Upload observed image (zero-padded by fft2d — fine for images)
     let observed = backend.upload(&frame.data);
 
-    // FFT(psf) — stays on GPU
-    let psf_gpu = backend.upload(psf);
+    // Re-wrap PSF to (ph, pw), then FFT — stays on GPU
+    let psf_padded = rewrap_psf_padded(psf, ph, pw);
+    let psf_gpu = backend.upload(&psf_padded);
     let h_fft = backend.fft2d(&psf_gpu);
 
     // Flipped PSF: psf_flipped[r,c] = psf[h-r, w-c] (wrap at 0)
@@ -326,7 +361,8 @@ fn richardson_lucy_gpu(
             psf_flipped[[row, col]] = psf[[src_row, src_col]];
         }
     }
-    let psf_flip_gpu = backend.upload(&psf_flipped);
+    let psf_flipped_padded = rewrap_psf_padded(&psf_flipped, ph, pw);
+    let psf_flip_gpu = backend.upload(&psf_flipped_padded);
     let h_flip_fft = backend.fft2d(&psf_flip_gpu);
 
     // Initial estimate = observed image (on GPU)

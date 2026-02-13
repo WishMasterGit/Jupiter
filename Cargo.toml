@@ -33,13 +33,16 @@ tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
-toml = "1.0.0+spec-1.1.0"
+toml = "1.0.0"
 
 # GUI
-eframe = { version = "0.33", default-features = false, features = ["default_fonts", "wgpu"] }
+eframe = { version = "0.33", default-features = false, features = [
+  "default_fonts",
+  "wgpu",
+] }
 egui-wgpu = "0.33"
 egui = "0.33"
-rfd = "0.15"
+rfd = "0.17"
 
 # GPU compute
 wgpu = "28"
