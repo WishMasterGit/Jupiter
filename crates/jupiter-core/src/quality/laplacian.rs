@@ -1,7 +1,10 @@
 use ndarray::Array2;
 use rayon::prelude::*;
 
+use crate::consts::STREAMING_BATCH_SIZE;
+use crate::error::Result;
 use crate::frame::{Frame, QualityScore};
+use crate::io::ser::SerReader;
 
 /// Compute Laplacian variance of a frame — higher means sharper.
 ///
@@ -66,4 +69,43 @@ pub fn select_best(frames: &[Frame], percentage: f32) -> Vec<usize> {
     let ranked = rank_frames(frames);
     let keep = ((frames.len() as f32 * percentage.clamp(0.0, 1.0)).ceil()) as usize;
     ranked.into_iter().take(keep).map(|(i, _)| i).collect()
+}
+
+/// Score all frames by reading them in batches from the SER reader.
+///
+/// Each batch of `STREAMING_BATCH_SIZE` frames is decoded, scored in parallel,
+/// then dropped before the next batch is loaded. This avoids holding all N
+/// frames in memory simultaneously.
+///
+/// Returns `(index, QualityScore)` sorted by quality descending.
+pub fn rank_frames_streaming(reader: &SerReader) -> Result<Vec<(usize, QualityScore)>> {
+    let total = reader.frame_count();
+    let mut scores: Vec<(usize, QualityScore)> = Vec::with_capacity(total);
+
+    for batch_start in (0..total).step_by(STREAMING_BATCH_SIZE) {
+        let batch_end = (batch_start + STREAMING_BATCH_SIZE).min(total);
+        let batch: Vec<(usize, Frame)> = (batch_start..batch_end)
+            .map(|i| Ok((i, reader.read_frame(i)?)))
+            .collect::<Result<_>>()?;
+
+        let batch_scores: Vec<(usize, QualityScore)> = batch
+            .par_iter()
+            .map(|(i, frame)| {
+                let lv = laplacian_variance(frame);
+                (
+                    *i,
+                    QualityScore {
+                        laplacian_variance: lv,
+                        composite: lv,
+                    },
+                )
+            })
+            .collect();
+
+        scores.extend(batch_scores);
+        // batch dropped here — memory freed
+    }
+
+    scores.sort_by(|a, b| b.1.composite.partial_cmp(&a.1.composite).unwrap());
+    Ok(scores)
 }

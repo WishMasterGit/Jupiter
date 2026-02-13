@@ -5,8 +5,9 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use memmap2::Mmap;
 use ndarray::Array2;
 
+use crate::color::debayer::{debayer, is_bayer, DebayerMethod};
 use crate::error::{JupiterError, Result};
-use crate::frame::{ColorMode, Frame, FrameMetadata, SourceInfo};
+use crate::frame::{ColorFrame, ColorMode, Frame, FrameMetadata, SourceInfo};
 
 const SER_HEADER_SIZE: usize = 178;
 const SER_MAGIC: &[u8; 14] = b"LUCAM-RECORDER";
@@ -182,6 +183,91 @@ impl SerReader {
     /// Iterator over all frames.
     pub fn frames(&self) -> impl Iterator<Item = Result<Frame>> + '_ {
         (0..self.frame_count()).map(move |i| self.read_frame(i))
+    }
+
+    /// Read a Bayer frame and debayer it into a `ColorFrame`.
+    ///
+    /// Returns an error if the SER file's color mode is not a Bayer pattern.
+    pub fn read_frame_color(
+        &self,
+        index: usize,
+        method: &DebayerMethod,
+    ) -> Result<ColorFrame> {
+        let mode = self.header.color_mode();
+        if !is_bayer(&mode) {
+            return Err(JupiterError::InvalidSer(format!(
+                "read_frame_color requires Bayer mode, got {:?}",
+                mode
+            )));
+        }
+
+        let raw = self.frame_raw(index)?;
+        let h = self.header.height as usize;
+        let w = self.header.width as usize;
+        let bpp = self.header.bytes_per_pixel_plane();
+        let mosaic = decode_mono_plane(
+            raw, h, w, bpp,
+            self.header.pixel_depth,
+            self.header.little_endian,
+        )?;
+        let bit_depth = (bpp as u8) * 8;
+
+        debayer(&mosaic, &mode, method, bit_depth)
+            .ok_or_else(|| {
+                JupiterError::InvalidSer("Debayer failed for Bayer mode".into())
+            })
+    }
+
+    /// Read a single frame as a `ColorFrame` from an RGB or BGR SER file.
+    ///
+    /// Extracts the 3 interleaved planes into separate R, G, B channels.
+    pub fn read_frame_rgb(&self, index: usize) -> Result<ColorFrame> {
+        let mode = self.header.color_mode();
+        let raw = self.frame_raw(index)?;
+        let h = self.header.height as usize;
+        let w = self.header.width as usize;
+        let bpp = self.header.bytes_per_pixel_plane();
+        let bit_depth = (bpp as u8) * 8;
+
+        let (r_idx, b_idx) = match mode {
+            ColorMode::RGB => (0, 2),
+            ColorMode::BGR => (2, 0),
+            _ => {
+                return Err(JupiterError::InvalidSer(format!(
+                    "read_frame_rgb requires RGB/BGR mode, got {:?}",
+                    mode
+                )));
+            }
+        };
+
+        let red_data = decode_plane_from_interleaved(
+            raw, h, w, bpp, 3, r_idx,
+            self.header.pixel_depth, self.header.little_endian,
+        )?;
+        let green_data = decode_plane_from_interleaved(
+            raw, h, w, bpp, 3, 1,
+            self.header.pixel_depth, self.header.little_endian,
+        )?;
+        let blue_data = decode_plane_from_interleaved(
+            raw, h, w, bpp, 3, b_idx,
+            self.header.pixel_depth, self.header.little_endian,
+        )?;
+
+        Ok(ColorFrame {
+            red: Frame::new(red_data, bit_depth),
+            green: Frame::new(green_data, bit_depth),
+            blue: Frame::new(blue_data, bit_depth),
+        })
+    }
+
+    /// Whether this SER file contains color data (Bayer or RGB/BGR).
+    pub fn is_color(&self) -> bool {
+        !matches!(self.header.color_mode(), ColorMode::Mono)
+    }
+
+    /// Whether this SER file contains Bayer pattern data.
+    pub fn is_bayer(&self) -> bool {
+        is_bayer(&self.header.color_mode())
     }
 }
 

@@ -22,3 +22,38 @@ pub fn mean_stack(frames: &[Frame]) -> Result<Frame> {
 
     Ok(Frame::new(sum, frames[0].original_bit_depth))
 }
+
+/// Streaming mean stacker that accumulates one frame at a time.
+///
+/// Memory usage is O(h*w) regardless of frame count — only the running sum
+/// and a count are stored. Frames can be dropped immediately after `add()`.
+pub struct StreamingMeanStacker {
+    sum: Array2<f32>,
+    count: usize,
+    bit_depth: u8,
+}
+
+impl StreamingMeanStacker {
+    pub fn new(height: usize, width: usize, bit_depth: u8) -> Self {
+        Self {
+            sum: Array2::zeros((height, width)),
+            count: 0,
+            bit_depth,
+        }
+    }
+
+    /// Add one frame to the running sum.
+    pub fn add(&mut self, frame: &Frame) {
+        self.sum += &frame.data;
+        self.count += 1;
+    }
+
+    /// Produce the final mean-stacked frame.
+    pub fn finalize(mut self) -> Result<Frame> {
+        if self.count == 0 {
+            return Err(JupiterError::EmptySequence);
+        }
+        self.sum /= self.count as f32;
+        Ok(Frame::new(self.sum, self.bit_depth))
+    }
+}

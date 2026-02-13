@@ -200,9 +200,6 @@ fn gpu_buf(buf: &GpuBuffer) -> &wgpu::Buffer {
     }
 }
 
-const fn div_ceil(a: u32, b: u32) -> u32 {
-    (a + b - 1) / b
-}
 
 // ---------------------------------------------------------------------------
 // WgpuBackend
@@ -474,7 +471,7 @@ impl WgpuBackend {
         let fft_layout = self.fft_pipeline.get_bind_group_layout(0);
         let butterflies_per_batch = n / 2;
         let total_butterflies = butterflies_per_batch * batch_count;
-        let wg_x = div_ceil(total_butterflies, 256);
+        let wg_x = u32::div_ceil(total_butterflies, 256);
 
         let mut enc = self.device.create_command_encoder(&Default::default());
         enc.copy_buffer_to_buffer(input, 0, &buf_a, 0, byte_size);
@@ -516,7 +513,7 @@ impl WgpuBackend {
         self.queue.submit(std::iter::once(enc.finish()));
 
         // Result is in buf_a for even number of stages, buf_b for odd
-        if num_stages % 2 == 0 {
+        if num_stages.is_multiple_of(2) {
             buf_a
         } else {
             buf_b
@@ -546,7 +543,7 @@ impl WgpuBackend {
                     resource: uniform.as_entire_binding(),
                 },
             ],
-            (div_ceil(cols, 16), div_ceil(rows, 16), 1),
+            (u32::div_ceil(cols, 16), u32::div_ceil(rows, 16), 1),
         );
         output
     }
@@ -602,7 +599,7 @@ impl ComputeBackend for WgpuBackend {
                     resource: uniform.as_entire_binding(),
                 },
             ],
-            (div_ceil(w, 16), div_ceil(h, 16), 1),
+            (u32::div_ceil(w, 16), u32::div_ceil(h, 16), 1),
         );
         self.make_gpu_buffer(out, input.height, input.width)
     }
@@ -637,7 +634,7 @@ impl ComputeBackend for WgpuBackend {
                     resource: uniform.as_entire_binding(),
                 },
             ],
-            (div_ceil(complex_count, 256), 1, 1),
+            (u32::div_ceil(complex_count, 256), 1, 1),
         );
         self.make_gpu_buffer(out, a.height, a.width)
     }
@@ -645,7 +642,7 @@ impl ComputeBackend for WgpuBackend {
     fn find_peak(&self, input: &GpuBuffer) -> (usize, usize, f64) {
         let buf = gpu_buf(input);
         let total = (input.height * input.width) as u32;
-        let num_wg = div_ceil(total, 256);
+        let num_wg = u32::div_ceil(total, 256);
 
         // Pass 1: per-workgroup reduction
         let intermediate = self.create_storage_uninit((num_wg as u64) * 2 * 4); // pairs of u32
@@ -754,7 +751,7 @@ impl ComputeBackend for WgpuBackend {
                     resource: uniform.as_entire_binding(),
                 },
             ],
-            (div_ceil(w, 16), div_ceil(h, 16), 1),
+            (u32::div_ceil(w, 16), u32::div_ceil(h, 16), 1),
         );
         self.make_gpu_buffer(out, input.height, input.width)
     }
@@ -789,7 +786,7 @@ impl ComputeBackend for WgpuBackend {
                     resource: uniform.as_entire_binding(),
                 },
             ],
-            (div_ceil(complex_count, 256), 1, 1),
+            (u32::div_ceil(complex_count, 256), 1, 1),
         );
         self.make_gpu_buffer(out, a.height, a.width)
     }
@@ -821,7 +818,7 @@ impl ComputeBackend for WgpuBackend {
                     resource: uniform.as_entire_binding(),
                 },
             ],
-            (div_ceil(count, 256), 1, 1),
+            (u32::div_ceil(count, 256), 1, 1),
         );
         self.make_gpu_buffer(out, a.height, a.width)
     }
@@ -853,7 +850,7 @@ impl ComputeBackend for WgpuBackend {
                     resource: uniform.as_entire_binding(),
                 },
             ],
-            (div_ceil(count, 256), 1, 1),
+            (u32::div_ceil(count, 256), 1, 1),
         );
         self.make_gpu_buffer(out, a.height, a.width)
     }
@@ -893,7 +890,7 @@ impl ComputeBackend for WgpuBackend {
                     resource: params.as_entire_binding(),
                 },
             ],
-            (div_ceil(total_pixels, 256), 1, 1),
+            (u32::div_ceil(total_pixels, 256), 1, 1),
         );
 
         // Column pass
@@ -918,7 +915,7 @@ impl ComputeBackend for WgpuBackend {
                     resource: params.as_entire_binding(),
                 },
             ],
-            (div_ceil(total_pixels, 256), 1, 1),
+            (u32::div_ceil(total_pixels, 256), 1, 1),
         );
 
         self.make_gpu_buffer(after_cols, input.height, input.width)
@@ -961,7 +958,7 @@ impl ComputeBackend for WgpuBackend {
                     resource: params.as_entire_binding(),
                 },
             ],
-            (div_ceil(total_pixels, 256), 1, 1),
+            (u32::div_ceil(total_pixels, 256), 1, 1),
         );
 
         // Column pass
@@ -986,7 +983,7 @@ impl ComputeBackend for WgpuBackend {
                     resource: params.as_entire_binding(),
                 },
             ],
-            (div_ceil(total_pixels, 256), 1, 1),
+            (u32::div_ceil(total_pixels, 256), 1, 1),
         );
 
         self.make_gpu_buffer(after_cols, input.height, input.width)
@@ -1023,7 +1020,7 @@ impl ComputeBackend for WgpuBackend {
                     resource: pad_params.as_entire_binding(),
                 },
             ],
-            (div_ceil(pw, 16), div_ceil(ph, 16), 1),
+            (u32::div_ceil(pw, 16), u32::div_ceil(ph, 16), 1),
         );
 
         // Step 2: Row-wise FFT
@@ -1104,7 +1101,7 @@ impl ComputeBackend for WgpuBackend {
                     resource: extract_params.as_entire_binding(),
                 },
             ],
-            (div_ceil(out_w, 16), div_ceil(out_h, 16), 1),
+            (u32::div_ceil(out_w, 16), u32::div_ceil(out_h, 16), 1),
         );
 
         self.make_gpu_buffer(output, out_h as usize, out_w as usize)

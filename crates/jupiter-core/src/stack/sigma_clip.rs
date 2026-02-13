@@ -46,8 +46,8 @@ pub fn sigma_clip_stack(frames: &[Frame], params: &SigmaClipParams) -> Result<Fr
                 let mut pixel_values = vec![0.0f32; n];
                 let mut mask = vec![true; n];
                 let mut row_result = vec![0.0f32; w];
-                for col in 0..w {
-                    sigma_clip_pixel(frames, row, col, n, params, &mut pixel_values, &mut mask, &mut row_result[col]);
+                for (col, result) in row_result.iter_mut().enumerate() {
+                    sigma_clip_pixel(frames, row, col, n, params, &mut pixel_values, &mut mask, result);
                 }
                 row_result
             })
@@ -75,6 +75,7 @@ pub fn sigma_clip_stack(frames: &[Frame], params: &SigmaClipParams) -> Result<Fr
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn sigma_clip_pixel(
     frames: &[Frame],
     row: usize,

@@ -4,9 +4,9 @@ use std::time::Duration;
 use jupiter_core::compute::DevicePreference;
 use jupiter_core::frame::{Frame, SourceInfo};
 use jupiter_core::pipeline::config::{
-    FilterStep, PipelineConfig, QualityMetric, SharpeningConfig, StackMethod,
+    DebayerConfig, FilterStep, PipelineConfig, QualityMetric, SharpeningConfig, StackMethod,
 };
-use jupiter_core::pipeline::PipelineStage;
+use jupiter_core::pipeline::{PipelineOutput, PipelineStage};
 
 /// Commands sent from UI thread to worker thread.
 pub enum WorkerCommand {
@@ -17,7 +17,11 @@ pub enum WorkerCommand {
     PreviewFrame { path: PathBuf, frame_index: usize },
 
     /// Stage 1: Read all frames + score quality. Caches frames + ranked list.
-    LoadAndScore { path: PathBuf, metric: QualityMetric },
+    LoadAndScore {
+        path: PathBuf,
+        metric: QualityMetric,
+        debayer: Option<DebayerConfig>,
+    },
 
     /// Stage 2: Select best frames, align, and stack.
     Stack {
@@ -61,25 +65,25 @@ pub enum WorkerResult {
 
     /// Stage 2 complete: stacked result ready for preview.
     StackComplete {
-        result: Frame,
+        result: PipelineOutput,
         elapsed: Duration,
     },
 
     /// Stage 3 complete: sharpened result ready for preview.
     SharpenComplete {
-        result: Frame,
+        result: PipelineOutput,
         elapsed: Duration,
     },
 
     /// Stage 4 complete: filtered result ready for preview.
     FilterComplete {
-        result: Frame,
+        result: PipelineOutput,
         elapsed: Duration,
     },
 
     /// Full pipeline complete (RunAll mode).
     PipelineComplete {
-        result: Frame,
+        result: PipelineOutput,
         elapsed: Duration,
     },
 

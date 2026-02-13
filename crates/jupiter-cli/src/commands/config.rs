@@ -21,6 +21,9 @@ pub fn run(args: &ConfigArgs) -> Result<()> {
         input: PathBuf::from("input.ser"),
         output: PathBuf::from("result.tiff"),
         device: DevicePreference::Auto,
+        memory: Default::default(),
+        debayer: None,
+        force_mono: false,
         frame_selection: FrameSelectionConfig::default(),
         stacking: StackingConfig::default(),
         sharpening: Some(SharpeningConfig {

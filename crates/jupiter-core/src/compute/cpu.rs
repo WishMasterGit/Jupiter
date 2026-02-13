@@ -566,10 +566,10 @@ fn convolve_rows_atrous(data: &Array2<f32>, kernel: &[f32; 5], step: usize) -> A
                 (0..w)
                     .map(|col| {
                         let mut sum = 0.0f32;
-                        for k in 0..5 {
+                        for (k, &kval) in kernel.iter().enumerate() {
                             let offset = (k as isize - radius) * step as isize;
                             let c = mirror_index(col as isize + offset, w);
-                            sum += data[[row, c]] * kernel[k];
+                            sum += data[[row, c]] * kval;
                         }
                         sum
                     })
@@ -589,10 +589,10 @@ fn convolve_rows_atrous(data: &Array2<f32>, kernel: &[f32; 5], step: usize) -> A
         for row in 0..h {
             for col in 0..w {
                 let mut sum = 0.0f32;
-                for k in 0..5 {
+                for (k, &kval) in kernel.iter().enumerate() {
                     let offset = (k as isize - radius) * step as isize;
                     let c = mirror_index(col as isize + offset, w);
-                    sum += data[[row, c]] * kernel[k];
+                    sum += data[[row, c]] * kval;
                 }
                 result[[row, col]] = sum;
             }
@@ -612,10 +612,10 @@ fn convolve_cols_atrous(data: &Array2<f32>, kernel: &[f32; 5], step: usize) -> A
                 (0..w)
                     .map(|col| {
                         let mut sum = 0.0f32;
-                        for k in 0..5 {
+                        for (k, &kval) in kernel.iter().enumerate() {
                             let offset = (k as isize - radius) * step as isize;
                             let r = mirror_index(row as isize + offset, h);
-                            sum += data[[r, col]] * kernel[k];
+                            sum += data[[r, col]] * kval;
                         }
                         sum
                     })
@@ -635,10 +635,10 @@ fn convolve_cols_atrous(data: &Array2<f32>, kernel: &[f32; 5], step: usize) -> A
         for row in 0..h {
             for col in 0..w {
                 let mut sum = 0.0f32;
-                for k in 0..5 {
+                for (k, &kval) in kernel.iter().enumerate() {
                     let offset = (k as isize - radius) * step as isize;
                     let r = mirror_index(row as isize + offset, h);
-                    sum += data[[r, col]] * kernel[k];
+                    sum += data[[r, col]] * kval;
                 }
                 result[[row, col]] = sum;
             }

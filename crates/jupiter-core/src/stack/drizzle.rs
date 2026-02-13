@@ -6,6 +6,7 @@ use tracing::warn;
 use crate::consts::PARALLEL_FRAME_THRESHOLD;
 use crate::error::{JupiterError, Result};
 use crate::frame::{AlignmentOffset, Frame};
+use crate::io::ser::SerReader;
 
 /// Drop kernel shape for drizzle projection.
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -264,6 +265,71 @@ fn drizzle_frame_into(
             }
         }
     }
+}
+
+/// Stack frames using the Drizzle algorithm by streaming one frame at a time.
+///
+/// Instead of taking a `&[Frame]`, reads each frame on-demand from the SER
+/// reader. Memory usage: one decoded frame + one `DrizzleAccumulator` at output
+/// resolution, regardless of frame count.
+pub fn drizzle_stack_streaming(
+    reader: &SerReader,
+    frame_indices: &[usize],
+    offsets: &[AlignmentOffset],
+    config: &DrizzleConfig,
+    quality_scores: Option<&[f64]>,
+) -> Result<Frame> {
+    if frame_indices.is_empty() {
+        return Err(JupiterError::EmptySequence);
+    }
+    if frame_indices.len() != offsets.len() {
+        return Err(JupiterError::Pipeline(
+            "Frame count must match offset count".into(),
+        ));
+    }
+    if config.scale <= 0.0 {
+        return Err(JupiterError::Pipeline(format!(
+            "Invalid drizzle scale: {}",
+            config.scale
+        )));
+    }
+    if config.pixfrac <= 0.0 || config.pixfrac > 1.0 {
+        return Err(JupiterError::Pipeline(format!(
+            "Invalid pixfrac: {} (must be in (0.0, 1.0])",
+            config.pixfrac
+        )));
+    }
+
+    let h = reader.header.height as usize;
+    let w = reader.header.width as usize;
+    let bit_depth = reader.header.pixel_depth as u8;
+
+    let frame_weights: Vec<f32> = if config.quality_weighted {
+        if let Some(scores) = quality_scores {
+            scores.iter().map(|&s| s as f32).collect()
+        } else {
+            vec![1.0; frame_indices.len()]
+        }
+    } else {
+        vec![1.0; frame_indices.len()]
+    };
+
+    // Sequential single-accumulator: read frame → drizzle → drop
+    let mut acc = DrizzleAccumulator::new(h, w, config.scale);
+    for (i, (&frame_idx, offset)) in frame_indices.iter().zip(offsets.iter()).enumerate() {
+        let frame = reader.read_frame(frame_idx)?;
+        drizzle_frame_into(
+            &frame.data,
+            offset,
+            config.scale,
+            config.pixfrac,
+            frame_weights[i],
+            &mut acc,
+        );
+        // frame dropped here — memory freed
+    }
+
+    Ok(acc.finalize(bit_depth))
 }
 
 /// Compute overlap area between a square drop and a unit output pixel.

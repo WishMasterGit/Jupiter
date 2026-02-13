@@ -1,8 +1,8 @@
 use crate::app::JupiterApp;
 use crate::messages::WorkerCommand;
 use crate::state::{
-    DECONV_METHOD_NAMES, DEVICE_NAMES, FILTER_TYPE_NAMES, METRIC_NAMES, PSF_MODEL_NAMES,
-    STACK_METHOD_NAMES,
+    DEBAYER_METHOD_NAMES, DECONV_METHOD_NAMES, DEVICE_NAMES, FILTER_TYPE_NAMES, METRIC_NAMES,
+    PSF_MODEL_NAMES, STACK_METHOD_NAMES,
 };
 use jupiter_core::pipeline::config::{FilterStep, QualityMetric};
 use jupiter_core::pipeline::PipelineStage;
@@ -18,6 +18,8 @@ pub fn show(ctx: &egui::Context, app: &mut JupiterApp) {
                 ui.set_min_width(LEFT_PANEL_WIDTH - 20.0);
 
                 file_section(ui, app);
+                ui.separator();
+                debayer_section(ui, app);
                 ui.separator();
                 score_section(ui, app);
                 ui.separator();
@@ -101,6 +103,33 @@ fn file_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
     }
 }
 
+fn debayer_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
+    section_header(ui, "Debayer", None);
+    ui.add_space(4.0);
+
+    if let Some(ref info) = app.ui_state.source_info {
+        ui.small(format!("Color mode: {:?}", info.color_mode));
+    }
+
+    if ui.checkbox(&mut app.config.debayer_enabled, "Enable debayering").changed() {
+        app.ui_state.score_params_dirty = true;
+    }
+
+    if app.config.debayer_enabled
+        && egui::ComboBox::from_label("Method")
+            .selected_text(DEBAYER_METHOD_NAMES[app.config.debayer_method_index])
+            .show_index(
+                ui,
+                &mut app.config.debayer_method_index,
+                DEBAYER_METHOD_NAMES.len(),
+                |i| DEBAYER_METHOD_NAMES[i].to_string(),
+            )
+            .changed()
+    {
+        app.ui_state.score_params_dirty = true;
+    }
+}
+
 fn score_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
     let status = app
         .ui_state
@@ -160,6 +189,7 @@ fn score_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
             app.send_command(WorkerCommand::LoadAndScore {
                 path: path.clone(),
                 metric: app.config.quality_metric.clone(),
+                debayer: app.config.debayer_config(),
             });
         }
     }

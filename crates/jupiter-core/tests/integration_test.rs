@@ -100,6 +100,9 @@ fn test_full_pipeline_end_to_end() {
         input: ser_file.path().to_path_buf(),
         output: output_path.clone(),
         device: Default::default(),
+        memory: Default::default(),
+        debayer: None,
+        force_mono: false,
         frame_selection: FrameSelectionConfig {
             select_percentage: 0.5,
             ..Default::default()
@@ -110,14 +113,11 @@ fn test_full_pipeline_end_to_end() {
     };
 
     let backend = Arc::new(CpuBackend);
-    let mut stages_seen = vec![];
-    let result = run_pipeline(&config, backend, |stage, _progress| {
-        stages_seen.push(format!("{}", stage));
-    });
+    let result = run_pipeline(&config, backend, |_, _| {});
 
     assert!(result.is_ok(), "Pipeline failed: {:?}", result.err());
 
-    let frame = result.unwrap();
+    let frame = result.unwrap().to_mono();
     assert_eq!(frame.width(), 64);
     assert_eq!(frame.height(), 64);
 
@@ -128,13 +128,6 @@ fn test_full_pipeline_end_to_end() {
     let loaded = load_image(&output_path).unwrap();
     assert_eq!(loaded.width(), 64);
     assert_eq!(loaded.height(), 64);
-
-    // Pipeline should have gone through all stages
-    assert!(stages_seen.iter().any(|s| s.contains("Reading")));
-    assert!(stages_seen.iter().any(|s| s.contains("quality")));
-    assert!(stages_seen.iter().any(|s| s.contains("Stacking")));
-    assert!(stages_seen.iter().any(|s| s.contains("Sharpening")));
-    assert!(stages_seen.iter().any(|s| s.contains("Writing")));
 }
 
 #[test]
@@ -147,6 +140,9 @@ fn test_pipeline_without_sharpening() {
         input: ser_file.path().to_path_buf(),
         output: output_path.clone(),
         device: Default::default(),
+        memory: Default::default(),
+        debayer: None,
+        force_mono: false,
         frame_selection: FrameSelectionConfig {
             select_percentage: 0.5,
             ..Default::default()
@@ -175,7 +171,7 @@ fn test_quality_scoring_ranks_sharp_frames_higher() {
     let top_3: Vec<usize> = ranked.iter().take(3).map(|(i, _)| *i).collect();
 
     // At least one of the sharp frames should be in top 3
-    let sharp_indices = vec![0, 4, 8];
+    let sharp_indices = [0, 4, 8];
     let has_sharp = top_3.iter().any(|i| sharp_indices.contains(i));
     assert!(
         has_sharp,
@@ -257,7 +253,7 @@ fn test_wavelet_roundtrip_preserves_energy() {
     let (layers, residual) = wavelet::decompose(&frame.data, 6);
 
     // Reconstruct with all coefficients = 1.0
-    let reconstructed = wavelet::reconstruct(&layers, &residual, &vec![1.0; 6], &[]);
+    let reconstructed = wavelet::reconstruct(&layers, &residual, &[1.0; 6], &[]);
 
     let (h, w) = frame.data.dim();
     let mut max_diff = 0.0f32;

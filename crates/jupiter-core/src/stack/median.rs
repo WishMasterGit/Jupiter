@@ -24,11 +24,11 @@ pub fn median_stack(frames: &[Frame]) -> Result<Frame> {
             .map(|row| {
                 let mut pixel_values = vec![0.0f32; n];
                 let mut row_result = vec![0.0f32; w];
-                for col in 0..w {
+                for (col, result) in row_result.iter_mut().enumerate() {
                     for (i, frame) in frames.iter().enumerate() {
                         pixel_values[i] = frame.data[[row, col]];
                     }
-                    row_result[col] = compute_median(&mut pixel_values, n);
+                    *result = compute_median(&mut pixel_values, n);
                 }
                 row_result
             })

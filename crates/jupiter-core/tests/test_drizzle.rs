@@ -19,7 +19,7 @@ fn test_drizzle_single_frame_scale2() {
     assert_eq!(result.height(), 4);
     assert_eq!(result.width(), 4);
     // All output pixels should have values in [0, 1] (full coverage with pixfrac=1.0).
-    assert!(result.data.iter().all(|&v| v >= 0.0 && v <= 1.0));
+    assert!(result.data.iter().all(|&v| (0.0..=1.0).contains(&v)));
 }
 
 #[test]

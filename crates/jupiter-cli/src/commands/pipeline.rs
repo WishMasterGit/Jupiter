@@ -6,9 +6,10 @@ use anyhow::{Context, Result};
 use clap::Args;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use jupiter_core::compute::{create_backend, DevicePreference};
+use jupiter_core::color::debayer::DebayerMethod;
 use jupiter_core::pipeline::config::{
-    DeconvolutionConfig, DeconvolutionMethod, FilterStep, FrameSelectionConfig, PipelineConfig,
-    PsfModel, SharpeningConfig, StackMethod, StackingConfig,
+    DebayerConfig, DeconvolutionConfig, DeconvolutionMethod, FilterStep, FrameSelectionConfig,
+    MemoryStrategy, PipelineConfig, PsfModel, SharpeningConfig, StackMethod, StackingConfig,
 };
 use jupiter_core::stack::drizzle::DrizzleConfig;
 use jupiter_core::pipeline::{run_pipeline_reported, PipelineStage, ProgressReporter};
@@ -26,6 +27,19 @@ pub enum DeviceArg {
     Cuda,
 }
 
+#[derive(Clone, clap::ValueEnum)]
+pub enum MemoryArg {
+    Auto,
+    Eager,
+    LowMemory,
+}
+
+#[derive(Clone, clap::ValueEnum)]
+pub enum DebayerMethodArg {
+    Bilinear,
+    Mhc,
+}
+
 #[derive(Args)]
 pub struct RunArgs {
     /// Input SER file
@@ -39,6 +53,18 @@ pub struct RunArgs {
     /// Compute device (auto, cpu, gpu, cuda)
     #[arg(long, value_enum, default_value = "auto")]
     pub device: DeviceArg,
+
+    /// Memory strategy (auto, eager, low-memory)
+    #[arg(long, value_enum, default_value = "auto")]
+    pub memory: MemoryArg,
+
+    /// Debayer method for Bayer-pattern SER files (bilinear, mhc)
+    #[arg(long, value_enum)]
+    pub debayer: Option<DebayerMethodArg>,
+
+    /// Force mono processing even for Bayer/RGB SER files
+    #[arg(long)]
+    pub mono: bool,
 
     /// Percentage of best frames to keep (1-100)
     #[arg(long, default_value = "25")]
@@ -321,10 +347,28 @@ fn build_config_from_args(args: &RunArgs) -> PipelineConfig {
     let input = args.file.clone().unwrap_or_default();
     let output = args.output.clone().unwrap_or_else(|| PathBuf::from("result.tiff"));
 
+    let debayer = if args.mono {
+        None
+    } else {
+        args.debayer.as_ref().map(|method| DebayerConfig {
+            method: match method {
+                DebayerMethodArg::Bilinear => DebayerMethod::Bilinear,
+                DebayerMethodArg::Mhc => DebayerMethod::MalvarHeCutler,
+            },
+        })
+    };
+
     PipelineConfig {
         input,
         output,
         device,
+        memory: match args.memory {
+            MemoryArg::Auto => MemoryStrategy::Auto,
+            MemoryArg::Eager => MemoryStrategy::Eager,
+            MemoryArg::LowMemory => MemoryStrategy::LowMemory,
+        },
+        debayer,
+        force_mono: args.mono,
         frame_selection: FrameSelectionConfig {
             select_percentage: args.select as f32 / 100.0,
             ..Default::default()

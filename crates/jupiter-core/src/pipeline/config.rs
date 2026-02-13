@@ -3,11 +3,34 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::color::debayer::DebayerMethod;
 use crate::compute::DevicePreference;
 use crate::sharpen::wavelet::WaveletParams;
 use crate::stack::drizzle::DrizzleConfig;
 use crate::stack::multi_point::{LocalStackMethod, MultiPointConfig};
 use crate::stack::sigma_clip::SigmaClipParams;
+
+/// Memory usage strategy for the pipeline.
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub enum MemoryStrategy {
+    /// Automatically choose based on estimated decoded data size.
+    #[default]
+    Auto,
+    /// Load all frames at once (fastest, highest memory).
+    Eager,
+    /// Stream frames on demand (lower memory, may re-read from disk).
+    LowMemory,
+}
+
+impl fmt::Display for MemoryStrategy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            MemoryStrategy::Auto => write!(f, "Auto"),
+            MemoryStrategy::Eager => write!(f, "Eager"),
+            MemoryStrategy::LowMemory => write!(f, "Low Memory"),
+        }
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PipelineConfig {
@@ -17,6 +40,16 @@ pub struct PipelineConfig {
     pub output: PathBuf,
     #[serde(default)]
     pub device: DevicePreference,
+    /// Memory usage strategy.
+    #[serde(default)]
+    pub memory: MemoryStrategy,
+    /// Debayering configuration. `None` = auto-detect from SER header.
+    /// Set to `Some(config)` to force a specific method.
+    #[serde(default)]
+    pub debayer: Option<DebayerConfig>,
+    /// When true, force mono processing even for Bayer/RGB sources.
+    #[serde(default)]
+    pub force_mono: bool,
     #[serde(default)]
     pub frame_selection: FrameSelectionConfig,
     #[serde(default)]
@@ -24,6 +57,14 @@ pub struct PipelineConfig {
     pub sharpening: Option<SharpeningConfig>,
     #[serde(default)]
     pub filters: Vec<FilterStep>,
+}
+
+/// Configuration for debayering (demosaicing) raw Bayer data.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DebayerConfig {
+    /// Debayering algorithm.
+    #[serde(default)]
+    pub method: DebayerMethod,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

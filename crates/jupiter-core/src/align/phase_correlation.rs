@@ -8,6 +8,7 @@ use crate::compute::cpu::{fft2d_forward, ifft2d_inverse};
 use crate::compute::ComputeBackend;
 use crate::error::{JupiterError, Result};
 use crate::frame::{AlignmentOffset, Frame};
+use crate::io::ser::SerReader;
 
 use crate::consts::{PARALLEL_FRAME_THRESHOLD, PARALLEL_PIXEL_THRESHOLD};
 
@@ -360,6 +361,74 @@ fn find_peak(data: &Array2<f64>) -> (usize, usize, f64) {
     }
 
     (best_row, best_col, best_val)
+}
+
+/// Compute alignment offsets by streaming frames from the SER reader.
+///
+/// Only the reference frame is held in memory persistently. Each target frame
+/// is loaded, offset-computed, then dropped. Uses Rayon parallelism when
+/// `frame_indices.len() >= PARALLEL_FRAME_THRESHOLD`.
+pub fn compute_offsets_streaming<F>(
+    reader: &SerReader,
+    frame_indices: &[usize],
+    reference_idx: usize,
+    backend: Arc<dyn ComputeBackend>,
+    on_frame_done: F,
+) -> Result<Vec<AlignmentOffset>>
+where
+    F: Fn(usize) + Send + Sync,
+{
+    if frame_indices.is_empty() {
+        return Err(JupiterError::EmptySequence);
+    }
+
+    let reference = reader.read_frame(frame_indices[reference_idx])?;
+    let counter = AtomicUsize::new(0);
+
+    let results: Vec<Result<AlignmentOffset>> = if frame_indices.len() >= PARALLEL_FRAME_THRESHOLD {
+        frame_indices
+            .par_iter()
+            .enumerate()
+            .map(|(i, &frame_idx)| {
+                let offset = if i == reference_idx {
+                    AlignmentOffset::default()
+                } else {
+                    let target = reader.read_frame(frame_idx)?;
+                    if backend.is_gpu() {
+                        compute_offset_gpu(&reference.data, &target.data, backend.as_ref())?
+                    } else {
+                        compute_offset_array(&reference.data, &target.data)?
+                    }
+                    // target dropped here
+                };
+                let done = counter.fetch_add(1, Ordering::Relaxed) + 1;
+                on_frame_done(done);
+                Ok(offset)
+            })
+            .collect()
+    } else {
+        frame_indices
+            .iter()
+            .enumerate()
+            .map(|(i, &frame_idx)| {
+                let offset = if i == reference_idx {
+                    AlignmentOffset::default()
+                } else {
+                    let target = reader.read_frame(frame_idx)?;
+                    if backend.is_gpu() {
+                        compute_offset_gpu(&reference.data, &target.data, backend.as_ref())?
+                    } else {
+                        compute_offset_array(&reference.data, &target.data)?
+                    }
+                };
+                let done = counter.fetch_add(1, Ordering::Relaxed) + 1;
+                on_frame_done(done);
+                Ok(offset)
+            })
+            .collect()
+    };
+
+    results.into_iter().collect()
 }
 
 pub fn bilinear_sample(data: &Array2<f32>, y: f64, x: f64) -> f32 {

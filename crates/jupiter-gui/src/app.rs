@@ -1,8 +1,9 @@
 use std::sync::mpsc;
 
 use jupiter_core::frame::Frame;
+use jupiter_core::pipeline::PipelineOutput;
 
-use crate::convert::frame_to_display_image;
+use crate::convert::{frame_to_display_image, output_to_display_image};
 use crate::messages::{WorkerCommand, WorkerResult};
 use crate::panels;
 use crate::state::{ConfigState, UIState, ViewportState};
@@ -69,21 +70,21 @@ impl JupiterApp {
                     ));
                     self.ui_state.running_stage = None;
                     self.ui_state.stack_params_dirty = false;
-                    self.update_viewport_texture(ctx, &result, "Stacked");
+                    self.update_viewport_from_output(ctx, &result, "Stacked");
                 }
                 WorkerResult::SharpenComplete { result, elapsed } => {
                     self.ui_state.sharpen_status = true;
                     self.ui_state.running_stage = None;
                     self.ui_state.sharpen_params_dirty = false;
                     self.ui_state.add_log(format!("Sharpened in {}", format_duration(elapsed)));
-                    self.update_viewport_texture(ctx, &result, "Sharpened");
+                    self.update_viewport_from_output(ctx, &result, "Sharpened");
                 }
                 WorkerResult::FilterComplete { result, elapsed } => {
                     self.ui_state.filter_status = Some(self.config.filters.len());
                     self.ui_state.running_stage = None;
                     self.ui_state.filter_params_dirty = false;
                     self.ui_state.add_log(format!("Filters applied in {}", format_duration(elapsed)));
-                    self.update_viewport_texture(ctx, &result, "Filtered");
+                    self.update_viewport_from_output(ctx, &result, "Filtered");
                 }
                 WorkerResult::PipelineComplete { result, elapsed } => {
                     self.ui_state.running_stage = None;
@@ -91,7 +92,7 @@ impl JupiterApp {
                         "Pipeline complete in {}",
                         format_duration(elapsed)
                     ));
-                    self.update_viewport_texture(ctx, &result, "Pipeline Result");
+                    self.update_viewport_from_output(ctx, &result, "Pipeline Result");
                 }
                 WorkerResult::Progress {
                     stage: _,
@@ -118,6 +119,19 @@ impl JupiterApp {
 
     fn update_viewport_texture(&mut self, ctx: &egui::Context, frame: &Frame, label: &str) {
         let display = frame_to_display_image(frame);
+        let texture = ctx.load_texture(
+            "viewport",
+            display.image,
+            egui::TextureOptions::NEAREST,
+        );
+        self.viewport.texture = Some(texture);
+        self.viewport.image_size = Some(display.original_size);
+        self.viewport.display_scale = display.display_scale;
+        self.viewport.viewing_label = label.to_string();
+    }
+
+    fn update_viewport_from_output(&mut self, ctx: &egui::Context, output: &PipelineOutput, label: &str) {
+        let display = output_to_display_image(output);
         let texture = ctx.load_texture(
             "viewport",
             display.image,

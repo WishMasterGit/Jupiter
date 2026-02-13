@@ -52,6 +52,21 @@ pub fn print_pipeline_summary(config: &PipelineConfig, device_name: &str) {
         s.label.apply_to("Device"),
         s.method.apply_to(device_name)
     );
+
+    // Debayer
+    if config.force_mono {
+        println!(
+            "  {:<14}{}",
+            s.label.apply_to("Debayer"),
+            s.disabled.apply_to("forced mono")
+        );
+    } else if let Some(ref db) = config.debayer {
+        println!(
+            "  {:<14}{}",
+            s.label.apply_to("Debayer"),
+            s.method.apply_to(&db.method)
+        );
+    }
     println!();
 
     // Frame Selection

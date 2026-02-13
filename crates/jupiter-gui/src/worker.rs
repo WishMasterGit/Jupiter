@@ -1,20 +1,23 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::Instant;
 
 use jupiter_core::align::phase_correlation::{
     align_frames_gpu_with_progress, align_frames_with_progress, compute_offset,
-    compute_offset_gpu,
+    compute_offset_gpu, shift_frame,
 };
+use jupiter_core::color::debayer::{debayer, is_bayer, luminance};
+use jupiter_core::color::process::process_color_parallel;
 use jupiter_core::compute::create_backend;
-use jupiter_core::frame::{AlignmentOffset, Frame, QualityScore};
-use jupiter_core::io::image_io::save_image;
+use jupiter_core::frame::{AlignmentOffset, ColorFrame, ColorMode, Frame, QualityScore};
+use jupiter_core::io::image_io::{save_color_image, save_image};
 use jupiter_core::io::ser::SerReader;
-use jupiter_core::pipeline::config::{QualityMetric, StackMethod};
-use jupiter_core::pipeline::{apply_filter_step, run_pipeline_reported, PipelineStage};
-use jupiter_core::quality::gradient::rank_frames_gradient;
-use jupiter_core::quality::laplacian::rank_frames;
+use jupiter_core::pipeline::config::{DebayerConfig, QualityMetric, StackMethod};
+use jupiter_core::pipeline::{apply_filter_step, run_pipeline_reported, PipelineOutput, PipelineStage};
+use jupiter_core::consts::LOW_MEMORY_THRESHOLD_BYTES;
+use jupiter_core::quality::gradient::{rank_frames_gradient, rank_frames_gradient_streaming};
+use jupiter_core::quality::laplacian::{rank_frames, rank_frames_streaming};
 use jupiter_core::sharpen::deconvolution::{deconvolve, deconvolve_gpu};
 use jupiter_core::sharpen::wavelet;
 use jupiter_core::stack::drizzle::drizzle_stack;
@@ -29,31 +32,57 @@ use crate::progress::ChannelProgressReporter;
 /// Cached intermediate results living on the worker thread.
 struct PipelineCache {
     file_path: Option<PathBuf>,
+    is_color: bool,
     all_frames: Option<Vec<Frame>>,
+    all_color_frames: Option<Vec<ColorFrame>>,
     ranked: Option<Vec<(usize, QualityScore)>>,
     stacked: Option<Frame>,
+    stacked_color: Option<ColorFrame>,
     sharpened: Option<Frame>,
+    sharpened_color: Option<ColorFrame>,
     filtered: Option<Frame>,
+    filtered_color: Option<ColorFrame>,
 }
 
 impl PipelineCache {
     fn new() -> Self {
         Self {
             file_path: None,
+            is_color: false,
             all_frames: None,
+            all_color_frames: None,
             ranked: None,
             stacked: None,
+            stacked_color: None,
             sharpened: None,
+            sharpened_color: None,
             filtered: None,
+            filtered_color: None,
         }
     }
 
-    /// Latest available frame for display/saving.
-    fn latest_frame(&self) -> Option<&Frame> {
-        self.filtered
-            .as_ref()
-            .or(self.sharpened.as_ref())
-            .or(self.stacked.as_ref())
+    /// Latest available output for display/saving.
+    fn latest_output(&self) -> Option<PipelineOutput> {
+        if self.is_color {
+            self.filtered_color.as_ref()
+                .map(|cf| PipelineOutput::Color(cf.clone()))
+                .or_else(|| self.sharpened_color.as_ref().map(|cf| PipelineOutput::Color(cf.clone())))
+                .or_else(|| self.stacked_color.as_ref().map(|cf| PipelineOutput::Color(cf.clone())))
+        } else {
+            self.filtered.as_ref()
+                .map(|f| PipelineOutput::Mono(f.clone()))
+                .or_else(|| self.sharpened.as_ref().map(|f| PipelineOutput::Mono(f.clone())))
+                .or_else(|| self.stacked.as_ref().map(|f| PipelineOutput::Mono(f.clone())))
+        }
+    }
+
+    fn invalidate_downstream(&mut self) {
+        self.stacked = None;
+        self.stacked_color = None;
+        self.sharpened = None;
+        self.sharpened_color = None;
+        self.filtered = None;
+        self.filtered_color = None;
     }
 }
 
@@ -102,8 +131,8 @@ fn worker_loop(
             WorkerCommand::PreviewFrame { path, frame_index } => {
                 handle_preview_frame(&path, frame_index, &tx, &ctx);
             }
-            WorkerCommand::LoadAndScore { path, metric } => {
-                handle_load_and_score(&path, &metric, &mut cache, &tx, &ctx);
+            WorkerCommand::LoadAndScore { path, metric, debayer } => {
+                handle_load_and_score(&path, &metric, &debayer, &mut cache, &tx, &ctx);
             }
             WorkerCommand::Stack {
                 select_percentage,
@@ -129,7 +158,7 @@ fn worker_loop(
 }
 
 fn handle_load_file_info(
-    path: &PathBuf,
+    path: &Path,
     tx: &mpsc::Sender<WorkerResult>,
     ctx: &egui::Context,
 ) {
@@ -137,7 +166,7 @@ fn handle_load_file_info(
         Ok(reader) => {
             let info = reader.source_info(path);
             send(tx, ctx, WorkerResult::FileInfo {
-                path: path.clone(),
+                path: path.to_path_buf(),
                 info,
             });
         }
@@ -146,7 +175,7 @@ fn handle_load_file_info(
 }
 
 fn handle_preview_frame(
-    path: &PathBuf,
+    path: &Path,
     frame_index: usize,
     tx: &mpsc::Sender<WorkerResult>,
     ctx: &egui::Context,
@@ -166,8 +195,9 @@ fn handle_preview_frame(
 }
 
 fn handle_load_and_score(
-    path: &PathBuf,
+    path: &Path,
     metric: &QualityMetric,
+    debayer_config: &Option<DebayerConfig>,
     cache: &mut PipelineCache,
     tx: &mpsc::Sender<WorkerResult>,
     ctx: &egui::Context,
@@ -187,6 +217,61 @@ fn handle_load_and_score(
         }
     };
 
+    let color_mode = reader.header.color_mode();
+    let use_color = debayer_config.is_some()
+        && (is_bayer(&color_mode) || matches!(color_mode, ColorMode::RGB | ColorMode::BGR));
+    let is_rgb_bgr = matches!(color_mode, ColorMode::RGB | ColorMode::BGR);
+    let total = reader.frame_count();
+
+    // Check if we should use streaming mode (mono only, large files)
+    let decoded_bytes = reader.header.width as usize
+        * reader.header.height as usize
+        * std::mem::size_of::<f32>()
+        * total;
+    let use_streaming = !use_color && decoded_bytes > LOW_MEMORY_THRESHOLD_BYTES;
+
+    if use_streaming {
+        // Streaming mode: score frames one-batch-at-a-time, don't load all
+        send_log(tx, ctx, format!("Scoring {total} frames (streaming)..."));
+        send(tx, ctx, WorkerResult::Progress {
+            stage: PipelineStage::QualityAssessment,
+            items_done: Some(0),
+            items_total: Some(total),
+        });
+
+        let ranked = match metric {
+            QualityMetric::Laplacian => match rank_frames_streaming(&reader) {
+                Ok(r) => r,
+                Err(e) => { send_error(tx, ctx, format!("Streaming scoring failed: {e}")); return; }
+            },
+            QualityMetric::Gradient => match rank_frames_gradient_streaming(&reader) {
+                Ok(r) => r,
+                Err(e) => { send_error(tx, ctx, format!("Streaming scoring failed: {e}")); return; }
+            },
+        };
+
+        let ranked_preview: Vec<(usize, f64)> = ranked
+            .iter()
+            .take(20)
+            .map(|(i, s)| (*i, s.composite))
+            .collect();
+
+        cache.file_path = Some(path.to_path_buf());
+        cache.is_color = false;
+        cache.all_frames = None; // streaming: no cached frames
+        cache.all_color_frames = None;
+        cache.ranked = Some(ranked);
+        cache.invalidate_downstream();
+
+        send_log(tx, ctx, format!("Scored {total} frames (streaming mode)"));
+        send(tx, ctx, WorkerResult::LoadAndScoreComplete {
+            frame_count: total,
+            ranked_preview,
+        });
+        return;
+    }
+
+    // Eager mode: load all frames
     let frames: Vec<Frame> = match reader.frames().collect::<jupiter_core::error::Result<_>>() {
         Ok(f) => f,
         Err(e) => {
@@ -195,7 +280,41 @@ fn handle_load_and_score(
         }
     };
 
-    let total = frames.len();
+    // Debayer if needed
+    let (scoring_frames, color_frames) = if use_color {
+        send_log(tx, ctx, format!("Debayering {total} frames..."));
+        send(tx, ctx, WorkerResult::Progress {
+            stage: PipelineStage::Debayering,
+            items_done: None,
+            items_total: Some(total),
+        });
+
+        let debayer_method = debayer_config
+            .as_ref()
+            .map(|c| c.method.clone())
+            .unwrap_or_default();
+
+        let color_frames: Vec<ColorFrame> = if is_rgb_bgr {
+            match (0..total).map(|i| reader.read_frame_rgb(i)).collect::<jupiter_core::error::Result<_>>() {
+                Ok(cf) => cf,
+                Err(e) => {
+                    send_error(tx, ctx, format!("Failed to read RGB frames: {e}"));
+                    return;
+                }
+            }
+        } else {
+            frames.iter().map(|frame| {
+                debayer(&frame.data, &color_mode, &debayer_method, frame.original_bit_depth)
+                    .expect("is_bayer check should guarantee success")
+            }).collect()
+        };
+
+        let lum_frames: Vec<Frame> = color_frames.iter().map(luminance).collect();
+        (lum_frames, Some(color_frames))
+    } else {
+        (frames.clone(), None)
+    };
+
     send_log(tx, ctx, format!("Read {total} frames, scoring quality..."));
     send(tx, ctx, WorkerResult::Progress {
         stage: PipelineStage::QualityAssessment,
@@ -204,8 +323,8 @@ fn handle_load_and_score(
     });
 
     let ranked = match metric {
-        QualityMetric::Laplacian => rank_frames(&frames),
-        QualityMetric::Gradient => rank_frames_gradient(&frames),
+        QualityMetric::Laplacian => rank_frames(&scoring_frames),
+        QualityMetric::Gradient => rank_frames_gradient(&scoring_frames),
     };
 
     let ranked_preview: Vec<(usize, f64)> = ranked
@@ -215,12 +334,12 @@ fn handle_load_and_score(
         .collect();
 
     // Update cache — invalidate downstream
-    cache.file_path = Some(path.clone());
-    cache.all_frames = Some(frames);
+    cache.file_path = Some(path.to_path_buf());
+    cache.is_color = use_color;
+    cache.all_frames = Some(scoring_frames);
+    cache.all_color_frames = color_frames;
     cache.ranked = Some(ranked);
-    cache.stacked = None;
-    cache.sharpened = None;
-    cache.filtered = None;
+    cache.invalidate_downstream();
 
     send_log(tx, ctx, format!("Scored {total} frames"));
     send(tx, ctx, WorkerResult::LoadAndScoreComplete {
@@ -237,7 +356,7 @@ fn handle_stack(
     tx: &mpsc::Sender<WorkerResult>,
     ctx: &egui::Context,
 ) {
-    // Multi-point has its own flow
+    // Multi-point has its own flow (always mono)
     if let StackMethod::MultiPoint(ref mp_config) = method {
         let file_path = match &cache.file_path {
             Some(p) => p.clone(),
@@ -264,23 +383,20 @@ fn handle_stack(
             Ok(result) => {
                 let elapsed = start.elapsed();
                 cache.stacked = Some(result.clone());
+                cache.stacked_color = None;
                 cache.sharpened = None;
+                cache.sharpened_color = None;
                 cache.filtered = None;
+                cache.filtered_color = None;
+                let output = PipelineOutput::Mono(result);
                 send_log(tx, ctx, format!("Multi-point stacking complete in {:.1}s", elapsed.as_secs_f32()));
-                send(tx, ctx, WorkerResult::StackComplete { result, elapsed });
+                send(tx, ctx, WorkerResult::StackComplete { result: output, elapsed });
             }
             Err(e) => send_error(tx, ctx, format!("Multi-point stacking failed: {e}")),
         }
         return;
     }
 
-    let frames = match &cache.all_frames {
-        Some(f) => f,
-        None => {
-            send_error(tx, ctx, "No frames loaded. Run Score Frames first.");
-            return;
-        }
-    };
     let ranked = match &cache.ranked {
         Some(r) => r,
         None => {
@@ -290,12 +406,64 @@ fn handle_stack(
     };
 
     let start = Instant::now();
-    let total = frames.len();
-    let keep = (total as f32 * select_percentage).ceil() as usize;
-    let keep = keep.max(1).min(total);
-    let selected_indices: Vec<usize> = ranked.iter().take(keep).map(|(i, _)| *i).collect();
-    let selected_frames: Vec<Frame> = selected_indices.iter().map(|&i| frames[i].clone()).collect();
-    let frame_count = selected_frames.len();
+
+    // Streaming mode: all_frames is None, must load selected frames from disk
+    let is_streaming = cache.all_frames.is_none();
+
+    let (total, selected_indices) = if is_streaming {
+        // Determine total from ranked scores (all frames were scored)
+        let total = ranked.len();
+        let keep = (total as f32 * select_percentage).ceil() as usize;
+        let keep = keep.max(1).min(total);
+        let indices: Vec<usize> = ranked.iter().take(keep).map(|(i, _)| *i).collect();
+        (total, indices)
+    } else {
+        let total = cache.all_frames.as_ref().unwrap().len();
+        let keep = (total as f32 * select_percentage).ceil() as usize;
+        let keep = keep.max(1).min(total);
+        let indices: Vec<usize> = ranked.iter().take(keep).map(|(i, _)| *i).collect();
+        (total, indices)
+    };
+
+    let frame_count = selected_indices.len();
+
+    // Load selected frames: either from cache or from SER reader
+    let selected_frames: Vec<Frame> = if is_streaming {
+        let file_path = match &cache.file_path {
+            Some(p) => p.clone(),
+            None => {
+                send_error(tx, ctx, "No file loaded. Run Score Frames first.");
+                return;
+            }
+        };
+        let reader = match SerReader::open(&file_path) {
+            Ok(r) => r,
+            Err(e) => {
+                send_error(tx, ctx, format!("Failed to open file: {e}"));
+                return;
+            }
+        };
+        send_log(tx, ctx, format!("Loading {frame_count} selected frames..."));
+        match selected_indices.iter().map(|&i| reader.read_frame(i)).collect::<jupiter_core::error::Result<_>>() {
+            Ok(frames) => frames,
+            Err(e) => {
+                send_error(tx, ctx, format!("Failed to read selected frames: {e}"));
+                return;
+            }
+        }
+    } else {
+        let frames = cache.all_frames.as_ref().unwrap();
+        selected_indices.iter().map(|&i| frames[i].clone()).collect()
+    };
+
+    // Gather selected color frames if in color mode
+    let selected_color: Option<Vec<ColorFrame>> = if cache.is_color {
+        cache.all_color_frames.as_ref().map(|cfs| {
+            selected_indices.iter().map(|&i| cfs[i].clone()).collect()
+        })
+    } else {
+        None
+    };
 
     send_log(tx, ctx, format!("Selected {frame_count}/{total} frames, aligning..."));
     send(tx, ctx, WorkerResult::Progress {
@@ -306,24 +474,25 @@ fn handle_stack(
 
     let backend = create_backend(device);
 
-    // Drizzle path: compute offsets without shifting
-    if let StackMethod::Drizzle(ref drizzle_config) = method {
-        let reference = &selected_frames[0];
-        let offsets: Vec<AlignmentOffset> = selected_frames
-            .iter()
-            .enumerate()
-            .map(|(i, frame)| {
-                if i == 0 {
-                    AlignmentOffset::default()
-                } else if backend.is_gpu() {
-                    compute_offset_gpu(&reference.data, &frame.data, backend.as_ref())
-                        .unwrap_or_default()
-                } else {
-                    compute_offset(reference, frame).unwrap_or_default()
-                }
-            })
-            .collect();
+    // Compute offsets on luminance
+    let reference = &selected_frames[0];
+    let offsets: Vec<AlignmentOffset> = selected_frames
+        .iter()
+        .enumerate()
+        .map(|(i, frame)| {
+            if i == 0 {
+                AlignmentOffset::default()
+            } else if backend.is_gpu() {
+                compute_offset_gpu(&reference.data, &frame.data, backend.as_ref())
+                    .unwrap_or_default()
+            } else {
+                compute_offset(reference, frame).unwrap_or_default()
+            }
+        })
+        .collect();
 
+    // Drizzle path
+    if let StackMethod::Drizzle(ref drizzle_config) = method {
         send_log(tx, ctx, "Drizzle stacking...");
         send(tx, ctx, WorkerResult::Progress {
             stage: PipelineStage::Stacking,
@@ -332,11 +501,8 @@ fn handle_stack(
         });
 
         let quality_scores: Vec<f64> = if drizzle_config.quality_weighted {
-            selected_indices
-                .iter()
-                .map(|&i| {
-                    ranked.iter().find(|(idx, _)| *idx == i).unwrap().1.composite
-                })
+            selected_indices.iter()
+                .map(|&i| ranked.iter().find(|(idx, _)| *idx == i).unwrap().1.composite)
                 .collect()
         } else {
             Vec::new()
@@ -347,83 +513,169 @@ fn handle_stack(
             None
         };
 
-        match drizzle_stack(&selected_frames, &offsets, drizzle_config, scores) {
-            Ok(result) => {
-                let elapsed = start.elapsed();
-                cache.stacked = Some(result.clone());
-                cache.sharpened = None;
-                cache.filtered = None;
-                send_log(tx, ctx, format!("Drizzle stacking complete in {:.1}s", elapsed.as_secs_f32()));
-                send(tx, ctx, WorkerResult::StackComplete { result, elapsed });
+        if let Some(ref color_frames) = selected_color {
+            // Color drizzle: per-channel
+            let red_frames: Vec<Frame> = color_frames.iter().map(|cf| cf.red.clone()).collect();
+            let green_frames: Vec<Frame> = color_frames.iter().map(|cf| cf.green.clone()).collect();
+            let blue_frames: Vec<Frame> = color_frames.iter().map(|cf| cf.blue.clone()).collect();
+
+            let (dr, (dg, db)) = rayon::join(
+                || drizzle_stack(&red_frames, &offsets, drizzle_config, scores),
+                || rayon::join(
+                    || drizzle_stack(&green_frames, &offsets, drizzle_config, scores),
+                    || drizzle_stack(&blue_frames, &offsets, drizzle_config, scores),
+                ),
+            );
+            match (dr, dg, db) {
+                (Ok(r), Ok(g), Ok(b)) => {
+                    let elapsed = start.elapsed();
+                    let cf = ColorFrame { red: r, green: g, blue: b };
+                    cache.stacked_color = Some(cf.clone());
+                    cache.stacked = None;
+                    cache.sharpened = None;
+                    cache.sharpened_color = None;
+                    cache.filtered = None;
+                    cache.filtered_color = None;
+                    let output = PipelineOutput::Color(cf);
+                    send_log(tx, ctx, format!("Color drizzle complete in {:.1}s", elapsed.as_secs_f32()));
+                    send(tx, ctx, WorkerResult::StackComplete { result: output, elapsed });
+                }
+                _ => send_error(tx, ctx, "Color drizzle stacking failed"),
             }
-            Err(e) => send_error(tx, ctx, format!("Drizzle stacking failed: {e}")),
+        } else {
+            match drizzle_stack(&selected_frames, &offsets, drizzle_config, scores) {
+                Ok(result) => {
+                    let elapsed = start.elapsed();
+                    cache.stacked = Some(result.clone());
+                    cache.stacked_color = None;
+                    cache.sharpened = None;
+                    cache.sharpened_color = None;
+                    cache.filtered = None;
+                    cache.filtered_color = None;
+                    let output = PipelineOutput::Mono(result);
+                    send_log(tx, ctx, format!("Drizzle complete in {:.1}s", elapsed.as_secs_f32()));
+                    send(tx, ctx, WorkerResult::StackComplete { result: output, elapsed });
+                }
+                Err(e) => send_error(tx, ctx, format!("Drizzle stacking failed: {e}")),
+            }
         }
         return;
     }
 
-    // Standard path: align then stack
-    let aligned = if frame_count > 1 {
-        let tx_clone = tx.clone();
-        let ctx_clone = ctx.clone();
-        if backend.is_gpu() {
-            match align_frames_gpu_with_progress(&selected_frames, 0, backend.clone(), move |done| {
-                let _ = tx_clone.send(WorkerResult::Progress {
-                    stage: PipelineStage::Alignment,
-                    items_done: Some(done),
-                    items_total: Some(frame_count),
-                });
-                ctx_clone.request_repaint();
-            }) {
-                Ok(a) => a,
-                Err(e) => {
-                    send_error(tx, ctx, format!("Alignment failed: {e}"));
-                    return;
+    // Standard path: shift + stack
+    if let Some(ref color_frames) = selected_color {
+        // Color: shift per-channel, stack per-channel
+        let aligned_color: Vec<ColorFrame> = color_frames.iter().zip(offsets.iter())
+            .map(|(cf, offset)| ColorFrame {
+                red: shift_frame(&cf.red, offset),
+                green: shift_frame(&cf.green, offset),
+                blue: shift_frame(&cf.blue, offset),
+            })
+            .collect();
+
+        send_log(tx, ctx, "Stacking color channels...");
+        send(tx, ctx, WorkerResult::Progress {
+            stage: PipelineStage::Stacking,
+            items_done: None,
+            items_total: None,
+        });
+
+        let red_frames: Vec<Frame> = aligned_color.iter().map(|cf| cf.red.clone()).collect();
+        let green_frames: Vec<Frame> = aligned_color.iter().map(|cf| cf.green.clone()).collect();
+        let blue_frames: Vec<Frame> = aligned_color.iter().map(|cf| cf.blue.clone()).collect();
+
+        let stack_fn = |frames: &[Frame]| -> jupiter_core::error::Result<Frame> {
+            match method {
+                StackMethod::Mean => mean_stack(frames),
+                StackMethod::Median => median_stack(frames),
+                StackMethod::SigmaClip(params) => sigma_clip_stack(frames, params),
+                _ => unreachable!(),
+            }
+        };
+
+        let (sr, (sg, sb)) = rayon::join(
+            || stack_fn(&red_frames),
+            || rayon::join(|| stack_fn(&green_frames), || stack_fn(&blue_frames)),
+        );
+        match (sr, sg, sb) {
+            (Ok(r), Ok(g), Ok(b)) => {
+                let elapsed = start.elapsed();
+                let cf = ColorFrame { red: r, green: g, blue: b };
+                cache.stacked_color = Some(cf.clone());
+                cache.stacked = None;
+                cache.sharpened = None;
+                cache.sharpened_color = None;
+                cache.filtered = None;
+                cache.filtered_color = None;
+                let output = PipelineOutput::Color(cf);
+                send_log(tx, ctx, format!("Color stacking complete in {:.1}s", elapsed.as_secs_f32()));
+                send(tx, ctx, WorkerResult::StackComplete { result: output, elapsed });
+            }
+            _ => send_error(tx, ctx, "Color stacking failed"),
+        }
+    } else {
+        // Mono: align then stack
+        let aligned = if frame_count > 1 {
+            let tx_clone = tx.clone();
+            let ctx_clone = ctx.clone();
+            if backend.is_gpu() {
+                match align_frames_gpu_with_progress(&selected_frames, 0, backend.clone(), move |done| {
+                    let _ = tx_clone.send(WorkerResult::Progress {
+                        stage: PipelineStage::Alignment,
+                        items_done: Some(done),
+                        items_total: Some(frame_count),
+                    });
+                    ctx_clone.request_repaint();
+                }) {
+                    Ok(a) => a,
+                    Err(e) => { send_error(tx, ctx, format!("Alignment failed: {e}")); return; }
+                }
+            } else {
+                match align_frames_with_progress(&selected_frames, 0, move |done| {
+                    let _ = tx_clone.send(WorkerResult::Progress {
+                        stage: PipelineStage::Alignment,
+                        items_done: Some(done),
+                        items_total: Some(frame_count),
+                    });
+                    ctx_clone.request_repaint();
+                }) {
+                    Ok(a) => a,
+                    Err(e) => { send_error(tx, ctx, format!("Alignment failed: {e}")); return; }
                 }
             }
         } else {
-            match align_frames_with_progress(&selected_frames, 0, move |done| {
-                let _ = tx_clone.send(WorkerResult::Progress {
-                    stage: PipelineStage::Alignment,
-                    items_done: Some(done),
-                    items_total: Some(frame_count),
-                });
-                ctx_clone.request_repaint();
-            }) {
-                Ok(a) => a,
-                Err(e) => {
-                    send_error(tx, ctx, format!("Alignment failed: {e}"));
-                    return;
-                }
+            selected_frames
+        };
+
+        send_log(tx, ctx, "Stacking...");
+        send(tx, ctx, WorkerResult::Progress {
+            stage: PipelineStage::Stacking,
+            items_done: None,
+            items_total: None,
+        });
+
+        let result = match method {
+            StackMethod::Mean => mean_stack(&aligned),
+            StackMethod::Median => median_stack(&aligned),
+            StackMethod::SigmaClip(params) => sigma_clip_stack(&aligned, params),
+            _ => unreachable!(),
+        };
+
+        match result {
+            Ok(result) => {
+                let elapsed = start.elapsed();
+                cache.stacked = Some(result.clone());
+                cache.stacked_color = None;
+                cache.sharpened = None;
+                cache.sharpened_color = None;
+                cache.filtered = None;
+                cache.filtered_color = None;
+                let output = PipelineOutput::Mono(result);
+                send_log(tx, ctx, format!("Stacking complete in {:.1}s", elapsed.as_secs_f32()));
+                send(tx, ctx, WorkerResult::StackComplete { result: output, elapsed });
             }
+            Err(e) => send_error(tx, ctx, format!("Stacking failed: {e}")),
         }
-    } else {
-        selected_frames
-    };
-
-    send_log(tx, ctx, "Stacking...");
-    send(tx, ctx, WorkerResult::Progress {
-        stage: PipelineStage::Stacking,
-        items_done: None,
-        items_total: None,
-    });
-
-    let result = match method {
-        StackMethod::Mean => mean_stack(&aligned),
-        StackMethod::Median => median_stack(&aligned),
-        StackMethod::SigmaClip(params) => sigma_clip_stack(&aligned, params),
-        _ => unreachable!(),
-    };
-
-    match result {
-        Ok(result) => {
-            let elapsed = start.elapsed();
-            cache.stacked = Some(result.clone());
-            cache.sharpened = None;
-            cache.filtered = None;
-            send_log(tx, ctx, format!("Stacking complete in {:.1}s", elapsed.as_secs_f32()));
-            send(tx, ctx, WorkerResult::StackComplete { result, elapsed });
-        }
-        Err(e) => send_error(tx, ctx, format!("Stacking failed: {e}")),
     }
 }
 
@@ -434,14 +686,6 @@ fn handle_sharpen(
     tx: &mpsc::Sender<WorkerResult>,
     ctx: &egui::Context,
 ) {
-    let stacked = match &cache.stacked {
-        Some(f) => f.clone(),
-        None => {
-            send_error(tx, ctx, "No stacked frame. Run Stack first.");
-            return;
-        }
-    };
-
     let start = Instant::now();
     send_log(tx, ctx, "Sharpening...");
     send(tx, ctx, WorkerResult::Progress {
@@ -451,24 +695,54 @@ fn handle_sharpen(
     });
 
     let backend = create_backend(device);
-    let mut result = stacked;
 
-    if let Some(ref deconv_config) = config.deconvolution {
-        if backend.is_gpu() {
-            result = deconvolve_gpu(&result, deconv_config, &*backend);
-        } else {
-            result = deconvolve(&result, deconv_config);
+    let sharpen_mono = |frame: &Frame| -> Frame {
+        let mut result = frame.clone();
+        if let Some(ref deconv_config) = config.deconvolution {
+            if backend.is_gpu() {
+                result = deconvolve_gpu(&result, deconv_config, &*backend);
+            } else {
+                result = deconvolve(&result, deconv_config);
+            }
         }
-        send_log(tx, ctx, "Deconvolution complete");
+        wavelet::sharpen(&result, &config.wavelet)
+    };
+
+    if cache.is_color {
+        let stacked_color = match &cache.stacked_color {
+            Some(cf) => cf.clone(),
+            None => {
+                send_error(tx, ctx, "No stacked color frame. Run Stack first.");
+                return;
+            }
+        };
+        let sharpened = process_color_parallel(&stacked_color, |frame| sharpen_mono(frame));
+        let elapsed = start.elapsed();
+        cache.sharpened_color = Some(sharpened.clone());
+        cache.sharpened = None;
+        cache.filtered = None;
+        cache.filtered_color = None;
+        let output = PipelineOutput::Color(sharpened);
+        send_log(tx, ctx, format!("Color sharpening complete in {:.1}s", elapsed.as_secs_f32()));
+        send(tx, ctx, WorkerResult::SharpenComplete { result: output, elapsed });
+    } else {
+        let stacked = match &cache.stacked {
+            Some(f) => f.clone(),
+            None => {
+                send_error(tx, ctx, "No stacked frame. Run Stack first.");
+                return;
+            }
+        };
+        let result = sharpen_mono(&stacked);
+        let elapsed = start.elapsed();
+        cache.sharpened = Some(result.clone());
+        cache.sharpened_color = None;
+        cache.filtered = None;
+        cache.filtered_color = None;
+        let output = PipelineOutput::Mono(result);
+        send_log(tx, ctx, format!("Sharpening complete in {:.1}s", elapsed.as_secs_f32()));
+        send(tx, ctx, WorkerResult::SharpenComplete { result: output, elapsed });
     }
-
-    result = wavelet::sharpen(&result, &config.wavelet);
-
-    let elapsed = start.elapsed();
-    cache.sharpened = Some(result.clone());
-    cache.filtered = None;
-    send_log(tx, ctx, format!("Sharpening complete in {:.1}s", elapsed.as_secs_f32()));
-    send(tx, ctx, WorkerResult::SharpenComplete { result, elapsed });
 }
 
 fn handle_apply_filters(
@@ -477,20 +751,6 @@ fn handle_apply_filters(
     tx: &mpsc::Sender<WorkerResult>,
     ctx: &egui::Context,
 ) {
-    // Start from sharpened if available, else stacked
-    let base = cache
-        .sharpened
-        .as_ref()
-        .or(cache.stacked.as_ref());
-
-    let base = match base {
-        Some(f) => f.clone(),
-        None => {
-            send_error(tx, ctx, "No frame to filter. Run Stack or Sharpen first.");
-            return;
-        }
-    };
-
     let start = Instant::now();
     send_log(tx, ctx, format!("Applying {} filters...", filters.len()));
     send(tx, ctx, WorkerResult::Progress {
@@ -499,20 +759,61 @@ fn handle_apply_filters(
         items_total: Some(filters.len()),
     });
 
-    let mut result = base;
-    for (i, step) in filters.iter().enumerate() {
-        result = apply_filter_step(&result, step);
-        send(tx, ctx, WorkerResult::Progress {
-            stage: PipelineStage::Filtering,
-            items_done: Some(i + 1),
-            items_total: Some(filters.len()),
-        });
-    }
+    if cache.is_color {
+        let base = cache.sharpened_color.as_ref()
+            .or(cache.stacked_color.as_ref());
+        let base = match base {
+            Some(cf) => cf.clone(),
+            None => {
+                send_error(tx, ctx, "No color frame to filter. Run Stack or Sharpen first.");
+                return;
+            }
+        };
 
-    let elapsed = start.elapsed();
-    cache.filtered = Some(result.clone());
-    send_log(tx, ctx, format!("{} filters applied in {:.1}s", filters.len(), elapsed.as_secs_f32()));
-    send(tx, ctx, WorkerResult::FilterComplete { result, elapsed });
+        let mut result = base;
+        for (i, step) in filters.iter().enumerate() {
+            result = process_color_parallel(&result, |frame| apply_filter_step(frame, step));
+            send(tx, ctx, WorkerResult::Progress {
+                stage: PipelineStage::Filtering,
+                items_done: Some(i + 1),
+                items_total: Some(filters.len()),
+            });
+        }
+
+        let elapsed = start.elapsed();
+        cache.filtered_color = Some(result.clone());
+        cache.filtered = None;
+        let output = PipelineOutput::Color(result);
+        send_log(tx, ctx, format!("{} color filters applied in {:.1}s", filters.len(), elapsed.as_secs_f32()));
+        send(tx, ctx, WorkerResult::FilterComplete { result: output, elapsed });
+    } else {
+        let base = cache.sharpened.as_ref()
+            .or(cache.stacked.as_ref());
+        let base = match base {
+            Some(f) => f.clone(),
+            None => {
+                send_error(tx, ctx, "No frame to filter. Run Stack or Sharpen first.");
+                return;
+            }
+        };
+
+        let mut result = base;
+        for (i, step) in filters.iter().enumerate() {
+            result = apply_filter_step(&result, step);
+            send(tx, ctx, WorkerResult::Progress {
+                stage: PipelineStage::Filtering,
+                items_done: Some(i + 1),
+                items_total: Some(filters.len()),
+            });
+        }
+
+        let elapsed = start.elapsed();
+        cache.filtered = Some(result.clone());
+        cache.filtered_color = None;
+        let output = PipelineOutput::Mono(result);
+        send_log(tx, ctx, format!("{} filters applied in {:.1}s", filters.len(), elapsed.as_secs_f32()));
+        send(tx, ctx, WorkerResult::FilterComplete { result: output, elapsed });
+    }
 }
 
 fn handle_run_all(
@@ -528,45 +829,59 @@ fn handle_run_all(
     let reporter = Arc::new(ChannelProgressReporter::new(tx.clone(), ctx.clone()));
 
     match run_pipeline_reported(config, backend, reporter) {
-        Ok(result) => {
+        Ok(output) => {
             let elapsed = start.elapsed();
             cache.file_path = Some(config.input.clone());
-            cache.stacked = Some(result.clone());
-            cache.sharpened = if config.sharpening.is_some() {
-                Some(result.clone())
-            } else {
-                None
-            };
-            cache.filtered = if !config.filters.is_empty() {
-                Some(result.clone())
-            } else {
-                None
-            };
+            match &output {
+                PipelineOutput::Mono(frame) => {
+                    cache.is_color = false;
+                    cache.stacked = Some(frame.clone());
+                    cache.stacked_color = None;
+                    cache.sharpened = if config.sharpening.is_some() { Some(frame.clone()) } else { None };
+                    cache.sharpened_color = None;
+                    cache.filtered = if !config.filters.is_empty() { Some(frame.clone()) } else { None };
+                    cache.filtered_color = None;
+                }
+                PipelineOutput::Color(cf) => {
+                    cache.is_color = true;
+                    cache.stacked_color = Some(cf.clone());
+                    cache.stacked = None;
+                    cache.sharpened_color = if config.sharpening.is_some() { Some(cf.clone()) } else { None };
+                    cache.sharpened = None;
+                    cache.filtered_color = if !config.filters.is_empty() { Some(cf.clone()) } else { None };
+                    cache.filtered = None;
+                }
+            }
             send_log(tx, ctx, format!("Pipeline complete in {:.1}s", elapsed.as_secs_f32()));
-            send(tx, ctx, WorkerResult::PipelineComplete { result, elapsed });
+            send(tx, ctx, WorkerResult::PipelineComplete { result: output, elapsed });
         }
         Err(e) => send_error(tx, ctx, format!("Pipeline failed: {e}")),
     }
 }
 
 fn handle_save_image(
-    path: &PathBuf,
+    path: &Path,
     cache: &PipelineCache,
     tx: &mpsc::Sender<WorkerResult>,
     ctx: &egui::Context,
 ) {
-    let frame = match cache.latest_frame() {
-        Some(f) => f,
+    let output = match cache.latest_output() {
+        Some(o) => o,
         None => {
             send_error(tx, ctx, "No frame to save.");
             return;
         }
     };
 
-    match save_image(frame, path) {
+    let result = match &output {
+        PipelineOutput::Mono(frame) => save_image(frame, path),
+        PipelineOutput::Color(cf) => save_color_image(cf, path),
+    };
+
+    match result {
         Ok(()) => {
             send_log(tx, ctx, format!("Saved to {}", path.display()));
-            send(tx, ctx, WorkerResult::ImageSaved { path: path.clone() });
+            send(tx, ctx, WorkerResult::ImageSaved { path: path.to_path_buf() });
         }
         Err(e) => send_error(tx, ctx, format!("Failed to save: {e}")),
     }

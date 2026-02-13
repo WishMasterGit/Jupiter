@@ -2,9 +2,10 @@ use std::path::PathBuf;
 
 use jupiter_core::compute::DevicePreference;
 use jupiter_core::frame::SourceInfo;
+use jupiter_core::color::debayer::DebayerMethod;
 use jupiter_core::pipeline::config::{
-    DeconvolutionConfig, DeconvolutionMethod, FilterStep, FrameSelectionConfig, PipelineConfig,
-    PsfModel, QualityMetric, SharpeningConfig, StackMethod, StackingConfig,
+    DebayerConfig, DeconvolutionConfig, DeconvolutionMethod, FilterStep, FrameSelectionConfig,
+    PipelineConfig, PsfModel, QualityMetric, SharpeningConfig, StackMethod, StackingConfig,
 };
 use jupiter_core::pipeline::PipelineStage;
 use jupiter_core::sharpen::wavelet::WaveletParams;
@@ -13,6 +14,7 @@ use jupiter_core::stack::multi_point::MultiPointConfig;
 use jupiter_core::stack::sigma_clip::SigmaClipParams;
 
 /// Overall UI state.
+#[derive(Default)]
 pub struct UIState {
     pub file_path: Option<PathBuf>,
     pub source_info: Option<SourceInfo>,
@@ -41,30 +43,6 @@ pub struct UIState {
     pub stack_params_dirty: bool,
     pub sharpen_params_dirty: bool,
     pub filter_params_dirty: bool,
-}
-
-impl Default for UIState {
-    fn default() -> Self {
-        Self {
-            file_path: None,
-            source_info: None,
-            preview_frame_index: 0,
-            output_path: String::new(),
-            running_stage: None,
-            frames_scored: None,
-            ranked_preview: Vec::new(),
-            stack_status: None,
-            sharpen_status: false,
-            filter_status: None,
-            log_messages: Vec::new(),
-            progress_items_done: None,
-            progress_items_total: None,
-            score_params_dirty: false,
-            stack_params_dirty: false,
-            sharpen_params_dirty: false,
-            filter_params_dirty: false,
-        }
-    }
 }
 
 impl UIState {
@@ -102,8 +80,14 @@ impl Default for ViewportState {
     }
 }
 
+pub const DEBAYER_METHOD_NAMES: &[&str] = &["Bilinear", "Malvar-He-Cutler"];
+
 /// All pipeline configuration parameters as editable UI fields.
 pub struct ConfigState {
+    // Debayering
+    pub debayer_enabled: bool,
+    pub debayer_method_index: usize,
+
     // Frame selection
     pub quality_metric: QualityMetric,
     pub select_percentage: f32,
@@ -161,6 +145,9 @@ pub const FILTER_TYPE_NAMES: &[&str] = &[
 impl Default for ConfigState {
     fn default() -> Self {
         Self {
+            debayer_enabled: true,
+            debayer_method_index: 0,
+
             quality_metric: QualityMetric::default(),
             select_percentage: 0.25,
 
@@ -270,11 +257,26 @@ impl ConfigState {
         })
     }
 
+    pub fn debayer_config(&self) -> Option<DebayerConfig> {
+        if self.debayer_enabled {
+            Some(DebayerConfig {
+                method: match self.debayer_method_index {
+                    0 => DebayerMethod::Bilinear,
+                    _ => DebayerMethod::MalvarHeCutler,
+                },
+            })
+        } else {
+            None
+        }
+    }
+
     pub fn to_pipeline_config(&self, input: &std::path::Path, output: &std::path::Path) -> PipelineConfig {
         PipelineConfig {
             input: input.to_path_buf(),
             output: output.to_path_buf(),
             device: self.device_preference(),
+            debayer: self.debayer_config(),
+            force_mono: !self.debayer_enabled,
             frame_selection: FrameSelectionConfig {
                 select_percentage: self.select_percentage,
                 metric: self.quality_metric.clone(),
@@ -284,11 +286,24 @@ impl ConfigState {
             },
             sharpening: self.sharpening_config(),
             filters: self.filters.clone(),
+            memory: Default::default(),
         }
     }
 
     pub fn from_pipeline_config(config: &PipelineConfig) -> Self {
         let mut state = Self::default();
+
+        // Debayer
+        if config.force_mono {
+            state.debayer_enabled = false;
+        } else if let Some(ref db) = config.debayer {
+            state.debayer_enabled = true;
+            state.debayer_method_index = match db.method {
+                DebayerMethod::Bilinear => 0,
+                DebayerMethod::MalvarHeCutler => 1,
+            };
+        }
+
         state.quality_metric = config.frame_selection.metric.clone();
         state.select_percentage = config.frame_selection.select_percentage;
 
