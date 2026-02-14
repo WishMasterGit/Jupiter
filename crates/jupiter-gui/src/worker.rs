@@ -24,7 +24,7 @@ use jupiter_core::sharpen::wavelet;
 use jupiter_core::stack::drizzle::drizzle_stack;
 use jupiter_core::stack::mean::mean_stack;
 use jupiter_core::stack::median::median_stack;
-use jupiter_core::stack::multi_point::multi_point_stack;
+use jupiter_core::stack::multi_point::{multi_point_stack, multi_point_stack_color};
 use jupiter_core::stack::sigma_clip::sigma_clip_stack;
 
 use crate::messages::{WorkerCommand, WorkerResult};
@@ -426,7 +426,7 @@ fn handle_stack(
     tx: &mpsc::Sender<WorkerResult>,
     ctx: &egui::Context,
 ) {
-    // Multi-point has its own flow (always mono)
+    // Multi-point has its own flow (color or mono)
     if let StackMethod::MultiPoint(ref mp_config) = method {
         let file_path = match &cache.file_path {
             Some(p) => p.clone(),
@@ -449,20 +449,47 @@ fn handle_stack(
                 return;
             }
         };
-        match multi_point_stack(&reader, mp_config, |_| {}) {
-            Ok(result) => {
-                let elapsed = start.elapsed();
-                cache.stacked = Some(result.clone());
-                cache.stacked_color = None;
-                cache.sharpened = None;
-                cache.sharpened_color = None;
-                cache.filtered = None;
-                cache.filtered_color = None;
-                let output = PipelineOutput::Mono(result);
-                send_log(tx, ctx, format!("Multi-point stacking complete in {:.1}s", elapsed.as_secs_f32()));
-                send(tx, ctx, WorkerResult::StackComplete { result: output, elapsed });
+
+        if cache.is_color {
+            let color_mode = match reader.header.color_mode() {
+                ColorMode::Mono => {
+                    send_error(tx, ctx, "Expected color source but got mono");
+                    return;
+                }
+                mode => mode,
+            };
+            let debayer_method = cache.debayer_method.clone().unwrap_or_default();
+            match multi_point_stack_color(&reader, mp_config, &color_mode, &debayer_method, |_| {}) {
+                Ok(result) => {
+                    let elapsed = start.elapsed();
+                    cache.stacked_color = Some(result.clone());
+                    cache.stacked = None;
+                    cache.sharpened = None;
+                    cache.sharpened_color = None;
+                    cache.filtered = None;
+                    cache.filtered_color = None;
+                    let output = PipelineOutput::Color(result);
+                    send_log(tx, ctx, format!("Multi-point color stacking complete in {:.1}s", elapsed.as_secs_f32()));
+                    send(tx, ctx, WorkerResult::StackComplete { result: output, elapsed });
+                }
+                Err(e) => send_error(tx, ctx, format!("Multi-point color stacking failed: {e}")),
             }
-            Err(e) => send_error(tx, ctx, format!("Multi-point stacking failed: {e}")),
+        } else {
+            match multi_point_stack(&reader, mp_config, |_| {}) {
+                Ok(result) => {
+                    let elapsed = start.elapsed();
+                    cache.stacked = Some(result.clone());
+                    cache.stacked_color = None;
+                    cache.sharpened = None;
+                    cache.sharpened_color = None;
+                    cache.filtered = None;
+                    cache.filtered_color = None;
+                    let output = PipelineOutput::Mono(result);
+                    send_log(tx, ctx, format!("Multi-point stacking complete in {:.1}s", elapsed.as_secs_f32()));
+                    send(tx, ctx, WorkerResult::StackComplete { result: output, elapsed });
+                }
+                Err(e) => send_error(tx, ctx, format!("Multi-point stacking failed: {e}")),
+            }
         }
         return;
     }

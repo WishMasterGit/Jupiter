@@ -6,9 +6,10 @@ use serde::{Deserialize, Serialize};
 use tracing::info;
 
 use crate::align::phase_correlation::{bilinear_sample, compute_offset_array};
+use crate::color::debayer::{debayer, luminance, DebayerMethod};
 use crate::consts::EPSILON;
 use crate::error::{JupiterError, Result};
-use crate::frame::{AlignmentOffset, Frame};
+use crate::frame::{AlignmentOffset, ColorFrame, ColorMode, Frame};
 use crate::io::ser::SerReader;
 use crate::pipeline::config::QualityMetric;
 use crate::quality::gradient::gradient_score_array;
@@ -577,4 +578,308 @@ where
     on_progress(1.0);
 
     Ok(Frame::new(blended, reference.original_bit_depth))
+}
+
+/// Score all APs across all frames for color input.
+///
+/// For each frame: read → debayer (or split RGB) → luminance → score all APs → drop color.
+/// Returns the same structure as `score_all_aps`: `quality_matrix[ap_index]` = sorted `(frame_index, score)`.
+fn score_all_aps_color(
+    reader: &SerReader,
+    grid: &ApGrid,
+    offsets: &[AlignmentOffset],
+    config: &MultiPointConfig,
+    color_mode: &ColorMode,
+    debayer_method: &DebayerMethod,
+) -> Result<Vec<Vec<(usize, f64)>>> {
+    let total_frames = reader.frame_count();
+    let num_aps = grid.points.len();
+    let half = config.ap_size / 2;
+    let is_rgb_bgr = matches!(color_mode, ColorMode::RGB | ColorMode::BGR);
+
+    let mut quality_matrix: Vec<Vec<f64>> = vec![vec![0.0; total_frames]; num_aps];
+
+    for frame_idx in 0..total_frames {
+        // Read and convert to luminance — only one color frame in memory at a time
+        let lum = if is_rgb_bgr {
+            let cf = reader.read_frame_rgb(frame_idx)?;
+            luminance(&cf)
+        } else {
+            let raw_frame = reader.read_frame(frame_idx)?;
+            let cf = debayer(&raw_frame.data, color_mode, debayer_method, raw_frame.original_bit_depth)
+                .ok_or_else(|| JupiterError::Pipeline("Debayer failed for color mode".into()))?;
+            luminance(&cf)
+        };
+
+        for ap in &grid.points {
+            let region = extract_region_shifted(&lum.data, ap.cy, ap.cx, half, &offsets[frame_idx]);
+
+            let score = match config.quality_metric {
+                QualityMetric::Laplacian => laplacian_variance_array(&region),
+                QualityMetric::Gradient => gradient_score_array(&region),
+            };
+
+            quality_matrix[ap.index][frame_idx] = score;
+        }
+    }
+
+    let keep_count = ((total_frames as f32 * config.select_percentage).ceil() as usize)
+        .max(1)
+        .min(total_frames);
+
+    let mut result = Vec::with_capacity(num_aps);
+    for ap_scores in &quality_matrix {
+        let mut indexed: Vec<(usize, f64)> =
+            ap_scores.iter().enumerate().map(|(i, &s)| (i, s)).collect();
+        indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        indexed.truncate(keep_count);
+        result.push(indexed);
+    }
+
+    Ok(result)
+}
+
+/// Stack one AP using pre-cached color frames.
+///
+/// Local alignment is computed on luminance. R/G/B patches are extracted and
+/// stacked independently using the configured local method.
+fn stack_ap_cached_color(
+    frame_cache: &HashMap<usize, (Frame, ColorFrame)>,
+    ap: &AlignmentPoint,
+    selected_frames: &[(usize, f64)],
+    global_offsets: &[AlignmentOffset],
+    reference_lum: &Array2<f32>,
+    config: &MultiPointConfig,
+) -> (Array2<f32>, Array2<f32>, Array2<f32>) {
+    let half = config.ap_size / 2;
+    let search_half = half + config.search_radius;
+
+    let ref_search = extract_region(reference_lum, ap.cy, ap.cx, search_half);
+
+    let mut red_patches: Vec<Array2<f32>> = Vec::with_capacity(selected_frames.len());
+    let mut green_patches: Vec<Array2<f32>> = Vec::with_capacity(selected_frames.len());
+    let mut blue_patches: Vec<Array2<f32>> = Vec::with_capacity(selected_frames.len());
+
+    for &(frame_idx, _) in selected_frames {
+        let (lum, color) = match frame_cache.get(&frame_idx) {
+            Some(entry) => entry,
+            None => continue,
+        };
+
+        // Local alignment on luminance
+        let tgt_search = extract_region_shifted(
+            &lum.data,
+            ap.cy,
+            ap.cx,
+            search_half,
+            &global_offsets[frame_idx],
+        );
+
+        let local_offset = compute_offset_array(&ref_search, &tgt_search).unwrap_or_default();
+
+        let patch_half = half;
+        let patch_size = patch_half * 2;
+
+        // Combined offset for bilinear sampling from full-size color channels
+        let combined_dy = global_offsets[frame_idx].dy + local_offset.dy;
+        let combined_dx = global_offsets[frame_idx].dx + local_offset.dx;
+
+        let mut r_patch = Array2::<f32>::zeros((patch_size, patch_size));
+        let mut g_patch = Array2::<f32>::zeros((patch_size, patch_size));
+        let mut b_patch = Array2::<f32>::zeros((patch_size, patch_size));
+
+        for dr in 0..patch_size {
+            for dc in 0..patch_size {
+                let src_y = (ap.cy as f64 + dr as f64 - patch_half as f64) - combined_dy;
+                let src_x = (ap.cx as f64 + dc as f64 - patch_half as f64) - combined_dx;
+                r_patch[[dr, dc]] = bilinear_sample(&color.red.data, src_y, src_x);
+                g_patch[[dr, dc]] = bilinear_sample(&color.green.data, src_y, src_x);
+                b_patch[[dr, dc]] = bilinear_sample(&color.blue.data, src_y, src_x);
+            }
+        }
+
+        red_patches.push(r_patch);
+        green_patches.push(g_patch);
+        blue_patches.push(b_patch);
+    }
+
+    let stack_fn = |patches: &[Array2<f32>]| -> Array2<f32> {
+        match config.local_stack_method {
+            LocalStackMethod::Mean => mean_stack_arrays(patches),
+            LocalStackMethod::Median => median_stack_arrays(patches),
+            LocalStackMethod::SigmaClip { sigma, iterations } => {
+                sigma_clip_stack_arrays(patches, sigma, iterations)
+            }
+        }
+    };
+
+    // Stack R/G/B in parallel
+    let (stacked_r, (stacked_g, stacked_b)) = rayon::join(
+        || stack_fn(&red_patches),
+        || rayon::join(|| stack_fn(&green_patches), || stack_fn(&blue_patches)),
+    );
+
+    (stacked_r, stacked_g, stacked_b)
+}
+
+/// Top-level orchestrator for multi-alignment-point stacking with color support.
+///
+/// Pipeline:
+/// 1. Read frame 0 → debayer → luminance as reference
+/// 2. Global alignment on luminance
+/// 3. Build AP grid on reference luminance
+/// 4. Score APs on luminance (frame-major, memory-efficient)
+/// 5. Build frame cache with (luminance, ColorFrame) for needed frames
+/// 6. Per-AP local alignment (on luminance) + stack (R/G/B independently)
+/// 7. Blend AP stacks per channel
+/// 8. Return ColorFrame
+pub fn multi_point_stack_color<F>(
+    reader: &SerReader,
+    config: &MultiPointConfig,
+    color_mode: &ColorMode,
+    debayer_method: &DebayerMethod,
+    mut on_progress: F,
+) -> Result<ColorFrame>
+where
+    F: FnMut(f32),
+{
+    let total_frames = reader.frame_count();
+    if total_frames == 0 {
+        return Err(JupiterError::EmptySequence);
+    }
+
+    let is_rgb_bgr = matches!(color_mode, ColorMode::RGB | ColorMode::BGR);
+
+    // Step 1: Read reference frame and get luminance
+    let ref_color = if is_rgb_bgr {
+        reader.read_frame_rgb(0)?
+    } else {
+        let raw = reader.read_frame(0)?;
+        debayer(&raw.data, color_mode, debayer_method, raw.original_bit_depth)
+            .ok_or_else(|| JupiterError::Pipeline("Debayer failed for reference frame".into()))?
+    };
+    let ref_lum = luminance(&ref_color);
+    let (h, w) = ref_lum.data.dim();
+
+    // Step 2: Global alignment — compute offsets on luminance
+    info!(
+        "Computing global alignment offsets for {} color frames",
+        total_frames
+    );
+    let rest_offsets: Vec<Result<AlignmentOffset>> = (1..total_frames)
+        .into_par_iter()
+        .map(|i| {
+            let lum = if is_rgb_bgr {
+                let cf = reader.read_frame_rgb(i)?;
+                luminance(&cf)
+            } else {
+                let raw = reader.read_frame(i)?;
+                let cf = debayer(&raw.data, color_mode, debayer_method, raw.original_bit_depth)
+                    .ok_or_else(|| JupiterError::Pipeline("Debayer failed".into()))?;
+                luminance(&cf)
+            };
+            crate::align::phase_correlation::compute_offset(&ref_lum, &lum)
+        })
+        .collect();
+
+    let mut global_offsets = Vec::with_capacity(total_frames);
+    global_offsets.push(AlignmentOffset::default());
+    for offset_result in rest_offsets {
+        global_offsets.push(offset_result?);
+    }
+    on_progress(0.1);
+
+    // Step 3: Build AP grid on reference luminance
+    info!("Building alignment point grid (ap_size={})", config.ap_size);
+    let grid = build_ap_grid(&ref_lum.data, config);
+    info!("Created {} alignment points", grid.points.len());
+
+    if grid.points.is_empty() {
+        return Err(JupiterError::Pipeline(
+            "No alignment points created (image may be too dark or too small)".into(),
+        ));
+    }
+
+    // Step 4: Per-AP quality scoring on luminance (frame-major, memory-efficient)
+    info!(
+        "Scoring {} APs across {} color frames",
+        grid.points.len(),
+        total_frames
+    );
+    let ap_selections = score_all_aps_color(reader, &grid, &global_offsets, config, color_mode, debayer_method)?;
+    on_progress(0.4);
+
+    // Step 5: Build frame cache — (luminance, ColorFrame) for needed frames
+    info!("Loading selected color frames into cache");
+    let needed_frames: BTreeSet<usize> = ap_selections
+        .iter()
+        .flat_map(|sel| sel.iter().map(|(idx, _)| *idx))
+        .collect();
+
+    let mut frame_cache: HashMap<usize, (Frame, ColorFrame)> =
+        HashMap::with_capacity(needed_frames.len());
+    for &idx in &needed_frames {
+        let cf = if is_rgb_bgr {
+            reader.read_frame_rgb(idx)?
+        } else {
+            let raw = reader.read_frame(idx)?;
+            debayer(&raw.data, color_mode, debayer_method, raw.original_bit_depth)
+                .ok_or_else(|| JupiterError::Pipeline("Debayer failed for cached frame".into()))?
+        };
+        let lum = luminance(&cf);
+        frame_cache.insert(idx, (lum, cf));
+    }
+
+    // Step 6: Per-AP local alignment + stacking (parallel)
+    info!("Stacking {} alignment points (color)", grid.points.len());
+    let ap_stacks: Vec<(AlignmentPoint, (Array2<f32>, Array2<f32>, Array2<f32>))> = grid
+        .points
+        .par_iter()
+        .map(|ap| {
+            let stacked = stack_ap_cached_color(
+                &frame_cache,
+                ap,
+                &ap_selections[ap.index],
+                &global_offsets,
+                &ref_lum.data,
+                config,
+            );
+            (ap.clone(), stacked)
+        })
+        .collect();
+    on_progress(0.9);
+
+    // Step 7: Blend per channel
+    info!("Blending color alignment point stacks");
+    let bit_depth = ref_color.red.original_bit_depth;
+
+    let red_stacks: Vec<(AlignmentPoint, Array2<f32>)> = ap_stacks
+        .iter()
+        .map(|(ap, (r, _, _))| (ap.clone(), r.clone()))
+        .collect();
+    let green_stacks: Vec<(AlignmentPoint, Array2<f32>)> = ap_stacks
+        .iter()
+        .map(|(ap, (_, g, _))| (ap.clone(), g.clone()))
+        .collect();
+    let blue_stacks: Vec<(AlignmentPoint, Array2<f32>)> = ap_stacks
+        .iter()
+        .map(|(ap, (_, _, b))| (ap.clone(), b.clone()))
+        .collect();
+
+    let (blended_r, (blended_g, blended_b)) = rayon::join(
+        || blend_ap_stacks(&red_stacks, h, w, config.ap_size),
+        || {
+            rayon::join(
+                || blend_ap_stacks(&green_stacks, h, w, config.ap_size),
+                || blend_ap_stacks(&blue_stacks, h, w, config.ap_size),
+            )
+        },
+    );
+    on_progress(1.0);
+
+    Ok(ColorFrame {
+        red: Frame::new(blended_r, bit_depth),
+        green: Frame::new(blended_g, bit_depth),
+        blue: Frame::new(blended_b, bit_depth),
+    })
 }

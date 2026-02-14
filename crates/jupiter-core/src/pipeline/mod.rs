@@ -2,7 +2,7 @@ pub mod config;
 
 use std::sync::Arc;
 
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::align::phase_correlation::{
     align_frames_gpu_with_progress, align_frames_with_progress, compute_offset, compute_offset_gpu,
@@ -26,7 +26,7 @@ use crate::sharpen::wavelet;
 use crate::stack::drizzle::{drizzle_stack, drizzle_stack_streaming};
 use crate::stack::mean::{mean_stack, StreamingMeanStacker};
 use crate::stack::median::median_stack;
-use crate::stack::multi_point::multi_point_stack;
+use crate::stack::multi_point::{multi_point_stack, multi_point_stack_color};
 use crate::stack::sigma_clip::sigma_clip_stack;
 
 use self::config::{FilterStep, MemoryStrategy, PipelineConfig, QualityMetric, StackMethod};
@@ -142,17 +142,26 @@ pub fn run_pipeline_reported(
         info!(mode = ?color_mode, "Color processing enabled");
     }
 
-    // Multi-point: always mono for now
+    // Multi-point: dedicated flow (color or mono)
     if let StackMethod::MultiPoint(ref mp_config) = config.stacking.method {
-        if use_color {
-            warn!("Multi-point stacking does not support color — falling back to mono");
-        }
         reporter.begin_stage(PipelineStage::Stacking, None);
-        let result = multi_point_stack(&reader, mp_config, |_progress| {})?;
-        info!("Multi-point stacking complete");
-        reporter.finish_stage();
-        let output = apply_post_stack_mono(result, config, &backend, &reporter)?;
-        return Ok(output);
+        if use_color {
+            let result = multi_point_stack_color(
+                &reader,
+                mp_config,
+                &color_mode,
+                &debayer_method.unwrap(),
+                |_progress| {},
+            )?;
+            info!("Multi-point color stacking complete");
+            reporter.finish_stage();
+            return apply_post_stack_color(result, config, &backend, &reporter);
+        } else {
+            let result = multi_point_stack(&reader, mp_config, |_progress| {})?;
+            info!("Multi-point stacking complete");
+            reporter.finish_stage();
+            return apply_post_stack_mono(result, config, &backend, &reporter);
+        }
     }
 
     if use_color {
