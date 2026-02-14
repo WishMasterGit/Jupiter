@@ -23,8 +23,8 @@ use crate::quality::gradient::{rank_frames_gradient, rank_frames_gradient_color_
 use crate::quality::laplacian::{rank_frames, rank_frames_color_streaming, rank_frames_streaming};
 use crate::sharpen::deconvolution::{deconvolve, deconvolve_gpu};
 use crate::sharpen::wavelet;
-use crate::stack::drizzle::{drizzle_stack, drizzle_stack_streaming};
-use crate::stack::mean::{mean_stack, StreamingMeanStacker};
+use crate::stack::drizzle::{drizzle_stack_streaming, drizzle_stack_with_progress};
+use crate::stack::mean::{mean_stack_with_progress, StreamingMeanStacker};
 use crate::stack::median::median_stack;
 use crate::stack::multi_point::{multi_point_stack, multi_point_stack_color};
 use crate::stack::sigma_clip::sigma_clip_stack;
@@ -261,8 +261,12 @@ fn run_mono_standard(
     reporter.finish_stage();
 
     // Stacking
-    reporter.begin_stage(PipelineStage::Stacking, None);
-    let result = stack_frames(&aligned, &config.stacking.method)?;
+    let frame_count = aligned.len();
+    reporter.begin_stage(PipelineStage::Stacking, Some(frame_count));
+    let r = reporter.clone();
+    let result = stack_frames_with_progress(&aligned, &config.stacking.method, move |done| {
+        r.advance(done);
+    })?;
     info!(method = ?config.stacking.method, "Stacking complete");
     reporter.finish_stage();
 
@@ -360,8 +364,12 @@ fn run_mono_standard_streaming(
             reporter.finish_stage();
 
             // Stack
-            reporter.begin_stage(PipelineStage::Stacking, None);
-            let result = stack_frames(&aligned, &config.stacking.method)?;
+            let stack_count = aligned.len();
+            reporter.begin_stage(PipelineStage::Stacking, Some(stack_count));
+            let r = reporter.clone();
+            let result = stack_frames_with_progress(&aligned, &config.stacking.method, move |done| {
+                r.advance(done);
+            })?;
             info!(method = ?config.stacking.method, "Streaming stacking complete");
             reporter.finish_stage();
             Ok(result)
@@ -671,18 +679,20 @@ fn color_standard_flow(
         .collect();
 
     // Stack per-channel
-    reporter.begin_stage(PipelineStage::Stacking, None);
+    let stack_count = aligned_color.len();
+    reporter.begin_stage(PipelineStage::Stacking, Some(stack_count));
     let red_frames: Vec<Frame> = aligned_color.iter().map(|cf| cf.red.clone()).collect();
     let green_frames: Vec<Frame> = aligned_color.iter().map(|cf| cf.green.clone()).collect();
     let blue_frames: Vec<Frame> = aligned_color.iter().map(|cf| cf.blue.clone()).collect();
 
     let method = &config.stacking.method;
+    let r = reporter.clone();
     let (stacked_red, (stacked_green, stacked_blue)) = rayon::join(
-        || stack_frames(&red_frames, method).unwrap(),
+        || stack_frames_with_progress(&red_frames, method, |done| r.advance(done)).unwrap(),
         || {
             rayon::join(
-                || stack_frames(&green_frames, method).unwrap(),
-                || stack_frames(&blue_frames, method).unwrap(),
+                || stack_frames_with_progress(&green_frames, method, |_| {}).unwrap(),
+                || stack_frames_with_progress(&blue_frames, method, |_| {}).unwrap(),
             )
         },
     );
@@ -727,7 +737,8 @@ fn color_drizzle_flow(
     reporter.finish_stage();
 
     // Drizzle per channel
-    reporter.begin_stage(PipelineStage::Stacking, None);
+    let drizzle_count = selected_color.len();
+    reporter.begin_stage(PipelineStage::Stacking, Some(drizzle_count));
     let red_frames: Vec<Frame> = selected_color.iter().map(|cf| cf.red.clone()).collect();
     let green_frames: Vec<Frame> = selected_color.iter().map(|cf| cf.green.clone()).collect();
     let blue_frames: Vec<Frame> = selected_color.iter().map(|cf| cf.blue.clone()).collect();
@@ -738,12 +749,13 @@ fn color_drizzle_flow(
         None
     };
 
+    let r = reporter.clone();
     let (drizzled_red, (drizzled_green, drizzled_blue)) = rayon::join(
-        || drizzle_stack(&red_frames, &offsets, drizzle_config, scores).unwrap(),
+        || drizzle_stack_with_progress(&red_frames, &offsets, drizzle_config, scores, |done| r.advance(done)).unwrap(),
         || {
             rayon::join(
-                || drizzle_stack(&green_frames, &offsets, drizzle_config, scores).unwrap(),
-                || drizzle_stack(&blue_frames, &offsets, drizzle_config, scores).unwrap(),
+                || drizzle_stack_with_progress(&green_frames, &offsets, drizzle_config, scores, |_| {}).unwrap(),
+                || drizzle_stack_with_progress(&blue_frames, &offsets, drizzle_config, scores, |_| {}).unwrap(),
             )
         },
     );
@@ -850,11 +862,23 @@ fn select_frames(
     (indices, scores)
 }
 
-fn stack_frames(frames: &[Frame], method: &StackMethod) -> Result<Frame> {
+fn stack_frames_with_progress(
+    frames: &[Frame],
+    method: &StackMethod,
+    on_progress: impl Fn(usize),
+) -> Result<Frame> {
     match method {
-        StackMethod::Mean => mean_stack(frames),
-        StackMethod::Median => median_stack(frames),
-        StackMethod::SigmaClip(params) => sigma_clip_stack(frames, params),
+        StackMethod::Mean => mean_stack_with_progress(frames, on_progress),
+        StackMethod::Median => {
+            let result = median_stack(frames);
+            on_progress(frames.len());
+            result
+        }
+        StackMethod::SigmaClip(params) => {
+            let result = sigma_clip_stack(frames, params);
+            on_progress(frames.len());
+            result
+        }
         StackMethod::MultiPoint(_) | StackMethod::Drizzle(_) => {
             unreachable!("multi-point and drizzle handled separately")
         }
@@ -904,13 +928,17 @@ fn drizzle_flow(
     info!("Alignment offsets computed for drizzle");
     reporter.finish_stage();
 
-    reporter.begin_stage(PipelineStage::Stacking, None);
+    let drizzle_count = selected_frames.len();
+    reporter.begin_stage(PipelineStage::Stacking, Some(drizzle_count));
     let scores = if drizzle_config.quality_weighted {
         Some(quality_scores.as_slice())
     } else {
         None
     };
-    let result = drizzle_stack(&selected_frames, &offsets, drizzle_config, scores)?;
+    let r = reporter.clone();
+    let result = drizzle_stack_with_progress(&selected_frames, &offsets, drizzle_config, scores, move |done| {
+        r.advance(done);
+    })?;
     info!(
         method = "Drizzle",
         scale = drizzle_config.scale,

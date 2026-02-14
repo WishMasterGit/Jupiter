@@ -44,6 +44,43 @@ impl CropRectPixels {
             height: h,
         }
     }
+
+    /// Snap the crop rect to the given aspect ratio (width/height), clamping to image bounds.
+    pub fn snap_to_ratio(&mut self, ratio: f32, img_w: f32, img_h: f32) {
+        let cx = self.x + self.width / 2.0;
+        let cy = self.y + self.height / 2.0;
+
+        // Try keeping width, adjust height
+        let mut w = self.width;
+        let mut h = w / ratio;
+
+        if h > img_h {
+            h = img_h;
+            w = h * ratio;
+        }
+        if w > img_w {
+            w = img_w;
+            h = w / ratio;
+        }
+
+        self.x = (cx - w / 2.0).max(0.0).min(img_w - w);
+        self.y = (cy - h / 2.0).max(0.0).min(img_h - h);
+        self.width = w;
+        self.height = h;
+    }
+}
+
+pub const CROP_ASPECT_NAMES: &[&str] = &["Free", "1:1", "3:4", "4:3", "16:9"];
+
+/// Return the width/height ratio for the given aspect ratio index, or `None` for free.
+pub fn crop_aspect_value(index: usize) -> Option<f32> {
+    match index {
+        1 => Some(1.0),
+        2 => Some(3.0 / 4.0),
+        3 => Some(4.0 / 3.0),
+        4 => Some(16.0 / 9.0),
+        _ => None,
+    }
 }
 
 /// State for crop mode.
@@ -53,10 +90,16 @@ pub struct CropState {
     pub active: bool,
     /// Current selection in image coords.
     pub rect: Option<CropRectPixels>,
-    /// Screen coords of drag start.
+    /// Screen coords of drag start (for creating new selection).
     pub drag_start: Option<egui::Pos2>,
     /// Worker processing flag.
     pub is_saving: bool,
+    /// Selected aspect ratio index into `CROP_ASPECT_NAMES`.
+    pub aspect_ratio_index: usize,
+    /// True when the user is dragging to move an existing crop rect.
+    pub moving: bool,
+    /// Offset from pointer (image coords) to crop rect top-left when move started.
+    pub move_offset: Option<egui::Vec2>,
 }
 
 /// Overall UI state.

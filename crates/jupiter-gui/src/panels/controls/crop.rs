@@ -1,5 +1,6 @@
 use crate::app::JupiterApp;
 use crate::messages::WorkerCommand;
+use crate::state::{CROP_ASPECT_NAMES, crop_aspect_value};
 use jupiter_core::color::debayer::is_bayer;
 use jupiter_core::pipeline::PipelineStage;
 
@@ -15,7 +16,39 @@ pub(super) fn crop_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
         ui.checkbox(&mut app.ui_state.crop_state.active, "Crop mode");
 
         if app.ui_state.crop_state.active {
-            ui.small("Left-drag on viewport to select region");
+            let prev_ratio = app.ui_state.crop_state.aspect_ratio_index;
+            ui.horizontal(|ui| {
+                ui.label("Ratio:");
+                egui::ComboBox::from_id_salt("crop_aspect_ratio")
+                    .selected_text(CROP_ASPECT_NAMES[app.ui_state.crop_state.aspect_ratio_index])
+                    .width(80.0)
+                    .show_ui(ui, |ui| {
+                        for (i, name) in CROP_ASPECT_NAMES.iter().enumerate() {
+                            ui.selectable_value(
+                                &mut app.ui_state.crop_state.aspect_ratio_index,
+                                i,
+                                *name,
+                            );
+                        }
+                    });
+            });
+
+            // Snap existing selection when aspect ratio changes
+            if app.ui_state.crop_state.aspect_ratio_index != prev_ratio {
+                if let Some(ratio) = crop_aspect_value(app.ui_state.crop_state.aspect_ratio_index) {
+                    if let Some(ref mut rect) = app.ui_state.crop_state.rect {
+                        let (iw, ih) = app
+                            .ui_state
+                            .source_info
+                            .as_ref()
+                            .map(|s| (s.width as f32, s.height as f32))
+                            .unwrap_or((1e6, 1e6));
+                        rect.snap_to_ratio(ratio, iw, ih);
+                    }
+                }
+            }
+
+            ui.small("Drag to select, drag inside to move");
         }
     });
 

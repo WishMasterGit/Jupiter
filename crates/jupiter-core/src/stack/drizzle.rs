@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use ndarray::Array2;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -133,6 +135,19 @@ pub fn drizzle_stack(
     config: &DrizzleConfig,
     quality_scores: Option<&[f64]>,
 ) -> Result<Frame> {
+    drizzle_stack_with_progress(frames, offsets, config, quality_scores, |_| {})
+}
+
+/// Stack frames using Drizzle with per-frame progress reporting.
+///
+/// `on_progress` is called with the cumulative number of frames processed.
+pub fn drizzle_stack_with_progress(
+    frames: &[Frame],
+    offsets: &[AlignmentOffset],
+    config: &DrizzleConfig,
+    quality_scores: Option<&[f64]>,
+    on_progress: impl Fn(usize) + Send + Sync,
+) -> Result<Frame> {
     if frames.is_empty() {
         return Err(JupiterError::EmptySequence);
     }
@@ -176,6 +191,7 @@ pub fn drizzle_stack(
 
     let accumulator = if frames.len() >= PARALLEL_FRAME_THRESHOLD {
         // Parallel: each frame gets its own accumulator, then merge.
+        let done = AtomicUsize::new(0);
         let accumulators: Vec<DrizzleAccumulator> = frames
             .par_iter()
             .zip(offsets.par_iter())
@@ -183,6 +199,8 @@ pub fn drizzle_stack(
             .map(|((frame, offset), &weight)| {
                 let mut acc = DrizzleAccumulator::new(h, w, config.scale);
                 drizzle_frame_into(&frame.data, offset, config.scale, config.pixfrac, weight, &mut acc);
+                let completed = done.fetch_add(1, Ordering::Relaxed) + 1;
+                on_progress(completed);
                 acc
             })
             .collect();
@@ -195,9 +213,10 @@ pub fn drizzle_stack(
     } else {
         // Sequential: single accumulator.
         let mut acc = DrizzleAccumulator::new(h, w, config.scale);
-        for ((frame, offset), &weight) in frames.iter().zip(offsets.iter()).zip(frame_weights.iter())
+        for (i, ((frame, offset), &weight)) in frames.iter().zip(offsets.iter()).zip(frame_weights.iter()).enumerate()
         {
             drizzle_frame_into(&frame.data, offset, config.scale, config.pixfrac, weight, &mut acc);
+            on_progress(i + 1);
         }
         acc
     };

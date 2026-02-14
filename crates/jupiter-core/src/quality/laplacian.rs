@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use ndarray::Array2;
 use rayon::prelude::*;
 
@@ -65,6 +67,35 @@ pub fn rank_frames(frames: &[Frame]) -> Vec<(usize, QualityScore)> {
     scores
 }
 
+/// Score all frames with per-frame progress reporting.
+///
+/// Calls `on_progress(items_done)` as each frame is scored.
+pub fn rank_frames_with_progress(
+    frames: &[Frame],
+    on_progress: impl Fn(usize) + Send + Sync,
+) -> Vec<(usize, QualityScore)> {
+    let done = AtomicUsize::new(0);
+    let mut scores: Vec<(usize, QualityScore)> = frames
+        .par_iter()
+        .enumerate()
+        .map(|(i, f)| {
+            let lv = laplacian_variance(f);
+            let completed = done.fetch_add(1, Ordering::Relaxed) + 1;
+            on_progress(completed);
+            (
+                i,
+                QualityScore {
+                    laplacian_variance: lv,
+                    composite: lv,
+                },
+            )
+        })
+        .collect();
+
+    scores.sort_by(|a, b| b.1.composite.partial_cmp(&a.1.composite).unwrap());
+    scores
+}
+
 /// Select indices of the best `percentage` (0.0..1.0) of frames.
 pub fn select_best(frames: &[Frame], percentage: f32) -> Vec<usize> {
     let ranked = rank_frames(frames);
@@ -105,6 +136,44 @@ pub fn rank_frames_streaming(reader: &SerReader) -> Result<Vec<(usize, QualitySc
 
         scores.extend(batch_scores);
         // batch dropped here — memory freed
+    }
+
+    scores.sort_by(|a, b| b.1.composite.partial_cmp(&a.1.composite).unwrap());
+    Ok(scores)
+}
+
+/// Score all frames streaming with per-frame progress reporting.
+///
+/// Calls `on_progress(items_done)` after each batch is scored.
+pub fn rank_frames_streaming_with_progress(
+    reader: &SerReader,
+    on_progress: impl Fn(usize),
+) -> Result<Vec<(usize, QualityScore)>> {
+    let total = reader.frame_count();
+    let mut scores: Vec<(usize, QualityScore)> = Vec::with_capacity(total);
+
+    for batch_start in (0..total).step_by(STREAMING_BATCH_SIZE) {
+        let batch_end = (batch_start + STREAMING_BATCH_SIZE).min(total);
+        let batch: Vec<(usize, Frame)> = (batch_start..batch_end)
+            .map(|i| Ok((i, reader.read_frame(i)?)))
+            .collect::<Result<_>>()?;
+
+        let batch_scores: Vec<(usize, QualityScore)> = batch
+            .par_iter()
+            .map(|(i, frame)| {
+                let lv = laplacian_variance(frame);
+                (
+                    *i,
+                    QualityScore {
+                        laplacian_variance: lv,
+                        composite: lv,
+                    },
+                )
+            })
+            .collect();
+
+        scores.extend(batch_scores);
+        on_progress(scores.len());
     }
 
     scores.sort_by(|a, b| b.1.composite.partial_cmp(&a.1.composite).unwrap());
@@ -154,6 +223,54 @@ pub fn rank_frames_color_streaming(
             .collect();
 
         scores.extend(batch_scores);
+    }
+
+    scores.sort_by(|a, b| b.1.composite.partial_cmp(&a.1.composite).unwrap());
+    Ok(scores)
+}
+
+/// Score color frames streaming with per-frame progress reporting.
+///
+/// Calls `on_progress(items_done)` after each batch is scored.
+pub fn rank_frames_color_streaming_with_progress(
+    reader: &SerReader,
+    color_mode: &ColorMode,
+    debayer_method: &DebayerMethod,
+    on_progress: impl Fn(usize),
+) -> Result<Vec<(usize, QualityScore)>> {
+    let total = reader.frame_count();
+    let is_rgb_bgr = matches!(color_mode, ColorMode::RGB | ColorMode::BGR);
+    let mut scores: Vec<(usize, QualityScore)> = Vec::with_capacity(total);
+
+    for batch_start in (0..total).step_by(STREAMING_BATCH_SIZE) {
+        let batch_end = (batch_start + STREAMING_BATCH_SIZE).min(total);
+        let batch: Vec<(usize, Frame)> = (batch_start..batch_end)
+            .map(|i| {
+                let color_frame = if is_rgb_bgr {
+                    reader.read_frame_rgb(i)?
+                } else {
+                    reader.read_frame_color(i, debayer_method)?
+                };
+                Ok((i, luminance(&color_frame)))
+            })
+            .collect::<Result<_>>()?;
+
+        let batch_scores: Vec<(usize, QualityScore)> = batch
+            .par_iter()
+            .map(|(i, frame)| {
+                let lv = laplacian_variance(frame);
+                (
+                    *i,
+                    QualityScore {
+                        laplacian_variance: lv,
+                        composite: lv,
+                    },
+                )
+            })
+            .collect();
+
+        scores.extend(batch_scores);
+        on_progress(scores.len());
     }
 
     scores.sort_by(|a, b| b.1.composite.partial_cmp(&a.1.composite).unwrap());

@@ -1,5 +1,5 @@
 use crate::app::JupiterApp;
-use crate::state::CropRectPixels;
+use crate::state::{CropRectPixels, crop_aspect_value};
 
 const MIN_ZOOM: f32 = 0.1;
 const MAX_ZOOM: f32 = 20.0;
@@ -56,6 +56,30 @@ pub fn show(ctx: &egui::Context, app: &mut JupiterApp) {
             let crop_active = app.ui_state.crop_state.active;
             if crop_active {
                 handle_crop_drag(&response, ui, app, image_size);
+
+                // Cursor hints for crop interaction
+                let cr_scaled = image_size * app.viewport.zoom;
+                let cr_center = rect.center() + app.viewport.pan_offset;
+                let cr_img_rect = egui::Rect::from_center_size(cr_center, cr_scaled);
+                if app.ui_state.crop_state.moving {
+                    ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+                } else if let Some(hover) = ui.input(|i| i.pointer.hover_pos()) {
+                    if response.rect.contains(hover) {
+                        let img_pos = screen_to_image(hover, cr_img_rect, image_size);
+                        let inside = app.ui_state.crop_state.rect.as_ref().map_or(false, |c| {
+                            egui::Rect::from_min_size(
+                                egui::pos2(c.x, c.y),
+                                egui::vec2(c.width, c.height),
+                            )
+                            .contains(img_pos)
+                        });
+                        if inside {
+                            ctx.set_cursor_icon(egui::CursorIcon::Grab);
+                        } else {
+                            ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
+                        }
+                    }
+                }
             }
 
             // Double-click to fit
@@ -139,38 +163,115 @@ fn handle_crop_drag(
     let no_ctrl = !ui.input(|i| i.modifiers.command);
 
     if is_primary && no_ctrl {
-        // Compute current img_rect for coordinate conversion
         let rect = response.rect;
         let scaled = image_size * app.viewport.zoom;
         let center = rect.center() + app.viewport.pan_offset;
         let img_rect = egui::Rect::from_center_size(center, scaled);
 
-        if app.ui_state.crop_state.drag_start.is_none() {
+        // Detect drag start: move existing rect or create new selection
+        if app.ui_state.crop_state.drag_start.is_none() && !app.ui_state.crop_state.moving {
             if let Some(pos) = response.interact_pointer_pos() {
-                app.ui_state.crop_state.drag_start = Some(pos);
+                let img_pos = screen_to_image(pos, img_rect, image_size);
+
+                let inside = app.ui_state.crop_state.rect.as_ref().map_or(false, |c| {
+                    egui::Rect::from_min_size(
+                        egui::pos2(c.x, c.y),
+                        egui::vec2(c.width, c.height),
+                    )
+                    .contains(img_pos)
+                });
+
+                if inside {
+                    let c = app.ui_state.crop_state.rect.as_ref().unwrap();
+                    app.ui_state.crop_state.moving = true;
+                    app.ui_state.crop_state.move_offset =
+                        Some(img_pos.to_vec2() - egui::vec2(c.x, c.y));
+                } else {
+                    app.ui_state.crop_state.drag_start = Some(pos);
+                }
             }
         }
 
-        if let Some(start) = app.ui_state.crop_state.drag_start {
+        // Move existing crop rect
+        if app.ui_state.crop_state.moving {
+            if let Some(offset) = app.ui_state.crop_state.move_offset {
+                if let Some(current) = ui.input(|i| i.pointer.hover_pos()) {
+                    let img_pos = screen_to_image(current, img_rect, image_size);
+                    if let Some(ref mut crop) = app.ui_state.crop_state.rect {
+                        crop.x = (img_pos.x - offset.x)
+                            .max(0.0)
+                            .min(image_size.x - crop.width);
+                        crop.y = (img_pos.y - offset.y)
+                            .max(0.0)
+                            .min(image_size.y - crop.height);
+                    }
+                }
+            }
+        } else if let Some(start) = app.ui_state.crop_state.drag_start {
+            // Create new selection
             if let Some(current) = ui.input(|i| i.pointer.hover_pos()) {
                 let img_start = screen_to_image(start, img_rect, image_size);
                 let img_current = screen_to_image(current, img_rect, image_size);
 
-                let x_min = img_start.x.min(img_current.x).max(0.0);
-                let y_min = img_start.y.min(img_current.y).max(0.0);
-                let x_max = img_start.x.max(img_current.x).min(image_size.x);
-                let y_max = img_start.y.max(img_current.y).min(image_size.y);
+                let aspect = crop_aspect_value(app.ui_state.crop_state.aspect_ratio_index);
 
-                let w = x_max - x_min;
-                let h = y_max - y_min;
+                if let Some(ratio) = aspect {
+                    // Aspect-constrained selection
+                    let dx = img_current.x - img_start.x;
+                    let dy = img_current.y - img_start.y;
+                    let raw_w = dx.abs();
+                    let raw_h = dy.abs();
 
-                if w > 1.0 && h > 1.0 {
-                    app.ui_state.crop_state.rect = Some(CropRectPixels {
-                        x: x_min,
-                        y: y_min,
-                        width: w,
-                        height: h,
-                    });
+                    let h_from_w = raw_w / ratio;
+                    let (mut w, mut h) = if h_from_w <= raw_h {
+                        (raw_w, h_from_w)
+                    } else {
+                        (raw_h * ratio, raw_h)
+                    };
+
+                    // Clamp to image bounds while preserving ratio
+                    if w > image_size.x {
+                        w = image_size.x;
+                        h = w / ratio;
+                    }
+                    if h > image_size.y {
+                        h = image_size.y;
+                        w = h * ratio;
+                    }
+
+                    // Position based on drag direction
+                    let x = if dx >= 0.0 { img_start.x } else { img_start.x - w };
+                    let y = if dy >= 0.0 { img_start.y } else { img_start.y - h };
+
+                    let x = x.max(0.0).min(image_size.x - w);
+                    let y = y.max(0.0).min(image_size.y - h);
+
+                    if w > 1.0 && h > 1.0 {
+                        app.ui_state.crop_state.rect = Some(CropRectPixels {
+                            x,
+                            y,
+                            width: w,
+                            height: h,
+                        });
+                    }
+                } else {
+                    // Free selection
+                    let x_min = img_start.x.min(img_current.x).max(0.0);
+                    let y_min = img_start.y.min(img_current.y).max(0.0);
+                    let x_max = img_start.x.max(img_current.x).min(image_size.x);
+                    let y_max = img_start.y.max(img_current.y).min(image_size.y);
+
+                    let w = x_max - x_min;
+                    let h = y_max - y_min;
+
+                    if w > 1.0 && h > 1.0 {
+                        app.ui_state.crop_state.rect = Some(CropRectPixels {
+                            x: x_min,
+                            y: y_min,
+                            width: w,
+                            height: h,
+                        });
+                    }
                 }
             }
         }
@@ -178,6 +279,8 @@ fn handle_crop_drag(
 
     if response.drag_stopped_by(egui::PointerButton::Primary) {
         app.ui_state.crop_state.drag_start = None;
+        app.ui_state.crop_state.moving = false;
+        app.ui_state.crop_state.move_offset = None;
     }
 }
 

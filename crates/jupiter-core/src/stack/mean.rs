@@ -5,6 +5,16 @@ use crate::frame::Frame;
 
 /// Stack frames by computing the mean at each pixel.
 pub fn mean_stack(frames: &[Frame]) -> Result<Frame> {
+    mean_stack_with_progress(frames, |_| {})
+}
+
+/// Stack frames by computing the mean at each pixel, with per-frame progress.
+///
+/// `on_progress` is called with the cumulative number of frames accumulated.
+pub fn mean_stack_with_progress(
+    frames: &[Frame],
+    on_progress: impl Fn(usize),
+) -> Result<Frame> {
     if frames.is_empty() {
         return Err(JupiterError::EmptySequence);
     }
@@ -14,8 +24,9 @@ pub fn mean_stack(frames: &[Frame]) -> Result<Frame> {
 
     let mut sum = Array2::<f32>::zeros((h, w));
 
-    for frame in frames {
+    for (i, frame) in frames.iter().enumerate() {
         sum += &frame.data;
+        on_progress(i + 1);
     }
 
     sum /= n;

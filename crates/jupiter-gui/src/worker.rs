@@ -17,12 +17,18 @@ use jupiter_core::io::ser::SerReader;
 use jupiter_core::pipeline::config::{DebayerConfig, QualityMetric, StackMethod};
 use jupiter_core::pipeline::{apply_filter_step, run_pipeline_reported, PipelineOutput, PipelineStage};
 use jupiter_core::consts::{COLOR_CHANNEL_COUNT, LOW_MEMORY_THRESHOLD_BYTES};
-use jupiter_core::quality::gradient::{rank_frames_gradient, rank_frames_gradient_color_streaming, rank_frames_gradient_streaming};
-use jupiter_core::quality::laplacian::{rank_frames, rank_frames_color_streaming, rank_frames_streaming};
+use jupiter_core::quality::gradient::{
+    rank_frames_gradient_color_streaming_with_progress,
+    rank_frames_gradient_streaming_with_progress, rank_frames_gradient_with_progress,
+};
+use jupiter_core::quality::laplacian::{
+    rank_frames_color_streaming_with_progress, rank_frames_streaming_with_progress,
+    rank_frames_with_progress,
+};
 use jupiter_core::sharpen::deconvolution::{deconvolve, deconvolve_gpu};
 use jupiter_core::sharpen::wavelet;
-use jupiter_core::stack::drizzle::drizzle_stack;
-use jupiter_core::stack::mean::mean_stack;
+use jupiter_core::stack::drizzle::drizzle_stack_with_progress;
+use jupiter_core::stack::mean::mean_stack_with_progress;
 use jupiter_core::stack::median::median_stack;
 use jupiter_core::stack::multi_point::{multi_point_stack, multi_point_stack_color};
 use jupiter_core::stack::sigma_clip::sigma_clip_stack;
@@ -290,24 +296,35 @@ fn handle_load_and_score(
             items_total: Some(total),
         });
 
+        let tx_progress = tx.clone();
+        let ctx_progress = ctx.clone();
+        let streaming_progress = move |done: usize| {
+            let _ = tx_progress.send(WorkerResult::Progress {
+                stage: PipelineStage::QualityAssessment,
+                items_done: Some(done),
+                items_total: Some(total),
+            });
+            ctx_progress.request_repaint();
+        };
+
         let ranked = if use_color {
             match metric {
-                QualityMetric::Laplacian => match rank_frames_color_streaming(&reader, &color_mode, &debayer_method) {
+                QualityMetric::Laplacian => match rank_frames_color_streaming_with_progress(&reader, &color_mode, &debayer_method, &streaming_progress) {
                     Ok(r) => r,
                     Err(e) => { send_error(tx, ctx, format!("Streaming color scoring failed: {e}")); return; }
                 },
-                QualityMetric::Gradient => match rank_frames_gradient_color_streaming(&reader, &color_mode, &debayer_method) {
+                QualityMetric::Gradient => match rank_frames_gradient_color_streaming_with_progress(&reader, &color_mode, &debayer_method, &streaming_progress) {
                     Ok(r) => r,
                     Err(e) => { send_error(tx, ctx, format!("Streaming color scoring failed: {e}")); return; }
                 },
             }
         } else {
             match metric {
-                QualityMetric::Laplacian => match rank_frames_streaming(&reader) {
+                QualityMetric::Laplacian => match rank_frames_streaming_with_progress(&reader, &streaming_progress) {
                     Ok(r) => r,
                     Err(e) => { send_error(tx, ctx, format!("Streaming scoring failed: {e}")); return; }
                 },
-                QualityMetric::Gradient => match rank_frames_gradient_streaming(&reader) {
+                QualityMetric::Gradient => match rank_frames_gradient_streaming_with_progress(&reader, &streaming_progress) {
                     Ok(r) => r,
                     Err(e) => { send_error(tx, ctx, format!("Streaming scoring failed: {e}")); return; }
                 },
@@ -389,9 +406,20 @@ fn handle_load_and_score(
         items_total: Some(total),
     });
 
+    let tx_eager = tx.clone();
+    let ctx_eager = ctx.clone();
+    let eager_progress = move |done: usize| {
+        let _ = tx_eager.send(WorkerResult::Progress {
+            stage: PipelineStage::QualityAssessment,
+            items_done: Some(done),
+            items_total: Some(total),
+        });
+        ctx_eager.request_repaint();
+    };
+
     let ranked = match metric {
-        QualityMetric::Laplacian => rank_frames(&scoring_frames),
-        QualityMetric::Gradient => rank_frames_gradient(&scoring_frames),
+        QualityMetric::Laplacian => rank_frames_with_progress(&scoring_frames, &eager_progress),
+        QualityMetric::Gradient => rank_frames_gradient_with_progress(&scoring_frames, &eager_progress),
     };
 
     let ranked_preview: Vec<(usize, f64)> = ranked
@@ -625,8 +653,8 @@ fn handle_stack(
         send_log(tx, ctx, "Drizzle stacking...");
         send(tx, ctx, WorkerResult::Progress {
             stage: PipelineStage::Stacking,
-            items_done: None,
-            items_total: None,
+            items_done: Some(0),
+            items_total: Some(frame_count),
         });
 
         let quality_scores: Vec<f64> = if drizzle_config.quality_weighted {
@@ -642,17 +670,28 @@ fn handle_stack(
             None
         };
 
+        let tx_stack = tx.clone();
+        let ctx_stack = ctx.clone();
+        let drizzle_progress = move |done: usize| {
+            let _ = tx_stack.send(WorkerResult::Progress {
+                stage: PipelineStage::Stacking,
+                items_done: Some(done),
+                items_total: Some(frame_count),
+            });
+            ctx_stack.request_repaint();
+        };
+
         if let Some(ref color_frames) = selected_color {
-            // Color drizzle: per-channel
+            // Color drizzle: per-channel — report progress on red channel
             let red_frames: Vec<Frame> = color_frames.iter().map(|cf| cf.red.clone()).collect();
             let green_frames: Vec<Frame> = color_frames.iter().map(|cf| cf.green.clone()).collect();
             let blue_frames: Vec<Frame> = color_frames.iter().map(|cf| cf.blue.clone()).collect();
 
             let (dr, (dg, db)) = rayon::join(
-                || drizzle_stack(&red_frames, &offsets, drizzle_config, scores),
+                || drizzle_stack_with_progress(&red_frames, &offsets, drizzle_config, scores, drizzle_progress),
                 || rayon::join(
-                    || drizzle_stack(&green_frames, &offsets, drizzle_config, scores),
-                    || drizzle_stack(&blue_frames, &offsets, drizzle_config, scores),
+                    || drizzle_stack_with_progress(&green_frames, &offsets, drizzle_config, scores, |_| {}),
+                    || drizzle_stack_with_progress(&blue_frames, &offsets, drizzle_config, scores, |_| {}),
                 ),
             );
             match (dr, dg, db) {
@@ -672,7 +711,7 @@ fn handle_stack(
                 _ => send_error(tx, ctx, "Color drizzle stacking failed"),
             }
         } else {
-            match drizzle_stack(&selected_frames, &offsets, drizzle_config, scores) {
+            match drizzle_stack_with_progress(&selected_frames, &offsets, drizzle_config, scores, drizzle_progress) {
                 Ok(result) => {
                     let elapsed = start.elapsed();
                     cache.stacked = Some(result.clone());
@@ -703,28 +742,48 @@ fn handle_stack(
             .collect();
 
         send_log(tx, ctx, "Stacking color channels...");
+        let color_frame_count = aligned_color.len();
         send(tx, ctx, WorkerResult::Progress {
             stage: PipelineStage::Stacking,
-            items_done: None,
-            items_total: None,
+            items_done: Some(0),
+            items_total: Some(color_frame_count),
         });
 
         let red_frames: Vec<Frame> = aligned_color.iter().map(|cf| cf.red.clone()).collect();
         let green_frames: Vec<Frame> = aligned_color.iter().map(|cf| cf.green.clone()).collect();
         let blue_frames: Vec<Frame> = aligned_color.iter().map(|cf| cf.blue.clone()).collect();
 
-        let stack_fn = |frames: &[Frame]| -> jupiter_core::error::Result<Frame> {
+        let tx_stack = tx.clone();
+        let ctx_stack = ctx.clone();
+        let color_stack_progress = move |done: usize| {
+            let _ = tx_stack.send(WorkerResult::Progress {
+                stage: PipelineStage::Stacking,
+                items_done: Some(done),
+                items_total: Some(color_frame_count),
+            });
+            ctx_stack.request_repaint();
+        };
+
+        let stack_fn = |frames: &[Frame], on_progress: &dyn Fn(usize)| -> jupiter_core::error::Result<Frame> {
             match method {
-                StackMethod::Mean => mean_stack(frames),
-                StackMethod::Median => median_stack(frames),
-                StackMethod::SigmaClip(params) => sigma_clip_stack(frames, params),
+                StackMethod::Mean => mean_stack_with_progress(frames, on_progress),
+                StackMethod::Median => {
+                    let r = median_stack(frames);
+                    on_progress(frames.len());
+                    r
+                }
+                StackMethod::SigmaClip(params) => {
+                    let r = sigma_clip_stack(frames, params);
+                    on_progress(frames.len());
+                    r
+                }
                 _ => unreachable!(),
             }
         };
 
         let (sr, (sg, sb)) = rayon::join(
-            || stack_fn(&red_frames),
-            || rayon::join(|| stack_fn(&green_frames), || stack_fn(&blue_frames)),
+            || stack_fn(&red_frames, &color_stack_progress),
+            || rayon::join(|| stack_fn(&green_frames, &|_| {}), || stack_fn(&blue_frames, &|_| {})),
         );
         match (sr, sg, sb) {
             (Ok(r), Ok(g), Ok(b)) => {
@@ -777,16 +836,36 @@ fn handle_stack(
         };
 
         send_log(tx, ctx, "Stacking...");
+        let frame_count = aligned.len();
         send(tx, ctx, WorkerResult::Progress {
             stage: PipelineStage::Stacking,
-            items_done: None,
-            items_total: None,
+            items_done: Some(0),
+            items_total: Some(frame_count),
         });
 
+        let tx_clone = tx.clone();
+        let ctx_clone = ctx.clone();
+        let stacking_progress = move |done: usize| {
+            let _ = tx_clone.send(WorkerResult::Progress {
+                stage: PipelineStage::Stacking,
+                items_done: Some(done),
+                items_total: Some(frame_count),
+            });
+            ctx_clone.request_repaint();
+        };
+
         let result = match method {
-            StackMethod::Mean => mean_stack(&aligned),
-            StackMethod::Median => median_stack(&aligned),
-            StackMethod::SigmaClip(params) => sigma_clip_stack(&aligned, params),
+            StackMethod::Mean => mean_stack_with_progress(&aligned, stacking_progress),
+            StackMethod::Median => {
+                let r = median_stack(&aligned);
+                stacking_progress(frame_count);
+                r
+            }
+            StackMethod::SigmaClip(params) => {
+                let r = sigma_clip_stack(&aligned, params);
+                stacking_progress(frame_count);
+                r
+            }
             _ => unreachable!(),
         };
 
