@@ -1,4 +1,5 @@
 mod actions;
+mod alignment;
 mod crop;
 mod debayer;
 mod file;
@@ -24,6 +25,8 @@ pub fn show(ctx: &egui::Context, app: &mut crate::app::JupiterApp) {
                 debayer::debayer_section(ui, app);
                 ui.separator();
                 score::score_section(ui, app);
+                ui.separator();
+                alignment::alignment_section(ui, app);
                 ui.separator();
                 stack::stack_section(ui, app);
                 ui.separator();

@@ -3,10 +3,7 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::Instant;
 
-use jupiter_core::align::phase_correlation::{
-    align_frames_gpu_with_progress, align_frames_with_progress, compute_offset,
-    compute_offset_gpu, shift_frame,
-};
+use jupiter_core::align::{compute_offset_configured, shift_frame};
 use jupiter_core::color::debayer::{debayer, is_bayer, luminance, DebayerMethod};
 use jupiter_core::color::process::process_color_parallel;
 use jupiter_core::compute::create_backend;
@@ -14,7 +11,7 @@ use jupiter_core::frame::{AlignmentOffset, ColorFrame, ColorMode, Frame, Quality
 use jupiter_core::io::crop::crop_ser;
 use jupiter_core::io::image_io::{save_color_image, save_image};
 use jupiter_core::io::ser::SerReader;
-use jupiter_core::pipeline::config::{DebayerConfig, QualityMetric, StackMethod};
+use jupiter_core::pipeline::config::{AlignmentConfig, DebayerConfig, QualityMetric, StackMethod};
 use jupiter_core::pipeline::{apply_filter_step, run_pipeline_reported, PipelineOutput, PipelineStage};
 use jupiter_core::consts::{COLOR_CHANNEL_COUNT, LOW_MEMORY_THRESHOLD_BYTES};
 use jupiter_core::quality::gradient::{
@@ -48,6 +45,12 @@ struct PipelineCache {
     all_frames: Option<Vec<Frame>>,
     all_color_frames: Option<Vec<ColorFrame>>,
     ranked: Option<Vec<(usize, QualityScore)>>,
+    /// Selected + aligned data (from Align stage).
+    selected_frames: Option<Vec<Frame>>,
+    selected_color_frames: Option<Vec<ColorFrame>>,
+    alignment_offsets: Option<Vec<AlignmentOffset>>,
+    /// Quality scores for the selected frames (same order as selected_frames).
+    selected_quality_scores: Option<Vec<f64>>,
     stacked: Option<Frame>,
     stacked_color: Option<ColorFrame>,
     sharpened: Option<Frame>,
@@ -67,6 +70,10 @@ impl PipelineCache {
             all_frames: None,
             all_color_frames: None,
             ranked: None,
+            selected_frames: None,
+            selected_color_frames: None,
+            alignment_offsets: None,
+            selected_quality_scores: None,
             stacked: None,
             stacked_color: None,
             sharpened: None,
@@ -92,6 +99,14 @@ impl PipelineCache {
     }
 
     fn invalidate_downstream(&mut self) {
+        self.selected_frames = None;
+        self.selected_color_frames = None;
+        self.alignment_offsets = None;
+        self.selected_quality_scores = None;
+        self.invalidate_from_stack();
+    }
+
+    fn invalidate_from_stack(&mut self) {
         self.stacked = None;
         self.stacked_color = None;
         self.sharpened = None;
@@ -149,12 +164,17 @@ fn worker_loop(
             WorkerCommand::LoadAndScore { path, metric, debayer } => {
                 handle_load_and_score(&path, &metric, &debayer, &mut cache, &tx, &ctx);
             }
-            WorkerCommand::Stack {
+            WorkerCommand::Align {
                 select_percentage,
-                method,
+                alignment,
                 device,
             } => {
-                handle_stack(select_percentage, &method, &device, &mut cache, &tx, &ctx);
+                handle_align(select_percentage, &alignment, &device, &mut cache, &tx, &ctx);
+            }
+            WorkerCommand::Stack {
+                method,
+            } => {
+                handle_stack(&method, &mut cache, &tx, &ctx);
             }
             WorkerCommand::Sharpen { config, device } => {
                 handle_sharpen(&config, &device, &mut cache, &tx, &ctx);
@@ -446,10 +466,157 @@ fn handle_load_and_score(
     });
 }
 
-fn handle_stack(
+fn handle_align(
     select_percentage: f32,
-    method: &StackMethod,
+    alignment_config: &AlignmentConfig,
     device: &jupiter_core::compute::DevicePreference,
+    cache: &mut PipelineCache,
+    tx: &mpsc::Sender<WorkerResult>,
+    ctx: &egui::Context,
+) {
+    let ranked = match &cache.ranked {
+        Some(r) => r,
+        None => {
+            send_error(tx, ctx, "Frames not scored. Run Score Frames first.");
+            return;
+        }
+    };
+
+    let start = Instant::now();
+    let is_streaming = cache.is_streaming;
+
+    let (total, selected_indices) = if is_streaming {
+        let total = ranked.len();
+        let keep = (total as f32 * select_percentage).ceil() as usize;
+        let keep = keep.max(1).min(total);
+        let indices: Vec<usize> = ranked.iter().take(keep).map(|(i, _)| *i).collect();
+        (total, indices)
+    } else {
+        let total = cache.all_frames.as_ref().unwrap().len();
+        let keep = (total as f32 * select_percentage).ceil() as usize;
+        let keep = keep.max(1).min(total);
+        let indices: Vec<usize> = ranked.iter().take(keep).map(|(i, _)| *i).collect();
+        (total, indices)
+    };
+
+    let frame_count = selected_indices.len();
+
+    // Extract quality scores for the selected frames (for drizzle weighting)
+    let quality_scores: Vec<f64> = ranked.iter()
+        .take(frame_count)
+        .map(|(_, score)| score.composite)
+        .collect();
+
+    // Load selected frames and color frames
+    let (selected_frames, selected_color): (Vec<Frame>, Option<Vec<ColorFrame>>) = if is_streaming {
+        let file_path = match &cache.file_path {
+            Some(p) => p.clone(),
+            None => {
+                send_error(tx, ctx, "No file loaded. Run Score Frames first.");
+                return;
+            }
+        };
+        let reader = match SerReader::open(&file_path) {
+            Ok(r) => r,
+            Err(e) => {
+                send_error(tx, ctx, format!("Failed to open file: {e}"));
+                return;
+            }
+        };
+        send_log(tx, ctx, format!("Loading {frame_count} selected frames from disk..."));
+
+        if cache.is_color {
+            let color_mode = cache.color_mode.as_ref().unwrap();
+            let debayer_method = cache.debayer_method.as_ref().unwrap();
+            let is_rgb_bgr = matches!(color_mode, ColorMode::RGB | ColorMode::BGR);
+
+            let color_frames: Vec<ColorFrame> = match selected_indices.iter().map(|&i| {
+                if is_rgb_bgr {
+                    reader.read_frame_rgb(i)
+                } else {
+                    reader.read_frame_color(i, debayer_method)
+                }
+            }).collect::<jupiter_core::error::Result<_>>() {
+                Ok(cf) => cf,
+                Err(e) => {
+                    send_error(tx, ctx, format!("Failed to read selected color frames: {e}"));
+                    return;
+                }
+            };
+
+            let lum_frames: Vec<Frame> = color_frames.iter().map(luminance).collect();
+            (lum_frames, Some(color_frames))
+        } else {
+            let mono_frames: Vec<Frame> = match selected_indices.iter()
+                .map(|&i| reader.read_frame(i))
+                .collect::<jupiter_core::error::Result<_>>()
+            {
+                Ok(frames) => frames,
+                Err(e) => {
+                    send_error(tx, ctx, format!("Failed to read selected frames: {e}"));
+                    return;
+                }
+            };
+            (mono_frames, None)
+        }
+    } else {
+        let frames = cache.all_frames.as_ref().unwrap();
+        let mono: Vec<Frame> = selected_indices.iter().map(|&i| frames[i].clone()).collect();
+
+        let color = if cache.is_color {
+            cache.all_color_frames.as_ref().map(|cfs| {
+                selected_indices.iter().map(|&i| cfs[i].clone()).collect()
+            })
+        } else {
+            None
+        };
+
+        (mono, color)
+    };
+
+    send_log(tx, ctx, format!("Selected {frame_count}/{total} frames, aligning..."));
+    send(tx, ctx, WorkerResult::Progress {
+        stage: PipelineStage::Alignment,
+        items_done: Some(0),
+        items_total: Some(frame_count),
+    });
+
+    let backend = create_backend(device);
+    let reference = &selected_frames[0];
+
+    // Compute offsets with per-frame progress
+    let mut offsets = Vec::with_capacity(selected_frames.len());
+    offsets.push(AlignmentOffset::default()); // reference frame
+    for i in 1..selected_frames.len() {
+        let offset = compute_offset_configured(
+            &reference.data,
+            &selected_frames[i].data,
+            alignment_config,
+            backend.as_ref(),
+        )
+        .unwrap_or_default();
+        offsets.push(offset);
+        send(tx, ctx, WorkerResult::Progress {
+            stage: PipelineStage::Alignment,
+            items_done: Some(i + 1),
+            items_total: Some(frame_count),
+        });
+    }
+
+    // Cache alignment results
+    cache.selected_frames = Some(selected_frames);
+    cache.selected_color_frames = selected_color;
+    cache.alignment_offsets = Some(offsets);
+    cache.selected_quality_scores = Some(quality_scores);
+    cache.invalidate_from_stack();
+
+    let elapsed = start.elapsed();
+    send_log(tx, ctx, format!("Aligned {frame_count} frames in {:.1}s", elapsed.as_secs_f32()));
+    send(tx, ctx, WorkerResult::AlignComplete { frame_count, elapsed });
+}
+
+fn handle_stack(
+    method: &StackMethod,
     cache: &mut PipelineCache,
     tx: &mpsc::Sender<WorkerResult>,
     ctx: &egui::Context,
@@ -522,133 +689,26 @@ fn handle_stack(
         return;
     }
 
-    let ranked = match &cache.ranked {
-        Some(r) => r,
+    // Non-multi-point: use cached alignment data
+    let selected_frames = match &cache.selected_frames {
+        Some(f) => f,
         None => {
-            send_error(tx, ctx, "Frames not scored. Run Score Frames first.");
+            send_error(tx, ctx, "Frames not aligned. Run Align Frames first.");
+            return;
+        }
+    };
+    let offsets = match &cache.alignment_offsets {
+        Some(o) => o,
+        None => {
+            send_error(tx, ctx, "No alignment offsets. Run Align Frames first.");
             return;
         }
     };
 
     let start = Instant::now();
+    let frame_count = selected_frames.len();
 
-    // Streaming mode: all_frames is None, must load selected frames from disk
-    let is_streaming = cache.is_streaming;
-
-    let (total, selected_indices) = if is_streaming {
-        // Determine total from ranked scores (all frames were scored)
-        let total = ranked.len();
-        let keep = (total as f32 * select_percentage).ceil() as usize;
-        let keep = keep.max(1).min(total);
-        let indices: Vec<usize> = ranked.iter().take(keep).map(|(i, _)| *i).collect();
-        (total, indices)
-    } else {
-        let total = cache.all_frames.as_ref().unwrap().len();
-        let keep = (total as f32 * select_percentage).ceil() as usize;
-        let keep = keep.max(1).min(total);
-        let indices: Vec<usize> = ranked.iter().take(keep).map(|(i, _)| *i).collect();
-        (total, indices)
-    };
-
-    let frame_count = selected_indices.len();
-
-    // Load selected frames and color frames
-    let (selected_frames, selected_color): (Vec<Frame>, Option<Vec<ColorFrame>>) = if is_streaming {
-        let file_path = match &cache.file_path {
-            Some(p) => p.clone(),
-            None => {
-                send_error(tx, ctx, "No file loaded. Run Score Frames first.");
-                return;
-            }
-        };
-        let reader = match SerReader::open(&file_path) {
-            Ok(r) => r,
-            Err(e) => {
-                send_error(tx, ctx, format!("Failed to open file: {e}"));
-                return;
-            }
-        };
-        send_log(tx, ctx, format!("Loading {frame_count} selected frames from disk..."));
-
-        if cache.is_color {
-            // Color streaming: read color frames from disk, derive luminance for alignment
-            let color_mode = cache.color_mode.as_ref().unwrap();
-            let debayer_method = cache.debayer_method.as_ref().unwrap();
-            let is_rgb_bgr = matches!(color_mode, ColorMode::RGB | ColorMode::BGR);
-
-            let color_frames: Vec<ColorFrame> = match selected_indices.iter().map(|&i| {
-                if is_rgb_bgr {
-                    reader.read_frame_rgb(i)
-                } else {
-                    reader.read_frame_color(i, debayer_method)
-                }
-            }).collect::<jupiter_core::error::Result<_>>() {
-                Ok(cf) => cf,
-                Err(e) => {
-                    send_error(tx, ctx, format!("Failed to read selected color frames: {e}"));
-                    return;
-                }
-            };
-
-            let lum_frames: Vec<Frame> = color_frames.iter().map(luminance).collect();
-            (lum_frames, Some(color_frames))
-        } else {
-            // Mono streaming: read mono frames from disk
-            let mono_frames: Vec<Frame> = match selected_indices.iter()
-                .map(|&i| reader.read_frame(i))
-                .collect::<jupiter_core::error::Result<_>>()
-            {
-                Ok(frames) => frames,
-                Err(e) => {
-                    send_error(tx, ctx, format!("Failed to read selected frames: {e}"));
-                    return;
-                }
-            };
-            (mono_frames, None)
-        }
-    } else {
-        // Eager mode: frames already in cache
-        let frames = cache.all_frames.as_ref().unwrap();
-        let mono: Vec<Frame> = selected_indices.iter().map(|&i| frames[i].clone()).collect();
-
-        let color = if cache.is_color {
-            cache.all_color_frames.as_ref().map(|cfs| {
-                selected_indices.iter().map(|&i| cfs[i].clone()).collect()
-            })
-        } else {
-            None
-        };
-
-        (mono, color)
-    };
-
-    send_log(tx, ctx, format!("Selected {frame_count}/{total} frames, aligning..."));
-    send(tx, ctx, WorkerResult::Progress {
-        stage: PipelineStage::Alignment,
-        items_done: Some(0),
-        items_total: Some(frame_count),
-    });
-
-    let backend = create_backend(device);
-
-    // Compute offsets on luminance
-    let reference = &selected_frames[0];
-    let offsets: Vec<AlignmentOffset> = selected_frames
-        .iter()
-        .enumerate()
-        .map(|(i, frame)| {
-            if i == 0 {
-                AlignmentOffset::default()
-            } else if backend.is_gpu() {
-                compute_offset_gpu(&reference.data, &frame.data, backend.as_ref())
-                    .unwrap_or_default()
-            } else {
-                compute_offset(reference, frame).unwrap_or_default()
-            }
-        })
-        .collect();
-
-    // Drizzle path
+    // Drizzle path — uses unshifted frames + offsets
     if let StackMethod::Drizzle(ref drizzle_config) = method {
         send_log(tx, ctx, "Drizzle stacking...");
         send(tx, ctx, WorkerResult::Progress {
@@ -657,15 +717,8 @@ fn handle_stack(
             items_total: Some(frame_count),
         });
 
-        let quality_scores: Vec<f64> = if drizzle_config.quality_weighted {
-            selected_indices.iter()
-                .map(|&i| ranked.iter().find(|(idx, _)| *idx == i).unwrap().1.composite)
-                .collect()
-        } else {
-            Vec::new()
-        };
         let scores = if drizzle_config.quality_weighted {
-            Some(quality_scores.as_slice())
+            cache.selected_quality_scores.as_deref()
         } else {
             None
         };
@@ -681,17 +734,16 @@ fn handle_stack(
             ctx_stack.request_repaint();
         };
 
-        if let Some(ref color_frames) = selected_color {
-            // Color drizzle: per-channel — report progress on red channel
+        if let Some(ref color_frames) = cache.selected_color_frames {
             let red_frames: Vec<Frame> = color_frames.iter().map(|cf| cf.red.clone()).collect();
             let green_frames: Vec<Frame> = color_frames.iter().map(|cf| cf.green.clone()).collect();
             let blue_frames: Vec<Frame> = color_frames.iter().map(|cf| cf.blue.clone()).collect();
 
             let (dr, (dg, db)) = rayon::join(
-                || drizzle_stack_with_progress(&red_frames, &offsets, drizzle_config, scores, drizzle_progress),
+                || drizzle_stack_with_progress(&red_frames, offsets, drizzle_config, scores, drizzle_progress),
                 || rayon::join(
-                    || drizzle_stack_with_progress(&green_frames, &offsets, drizzle_config, scores, |_| {}),
-                    || drizzle_stack_with_progress(&blue_frames, &offsets, drizzle_config, scores, |_| {}),
+                    || drizzle_stack_with_progress(&green_frames, offsets, drizzle_config, scores, |_| {}),
+                    || drizzle_stack_with_progress(&blue_frames, offsets, drizzle_config, scores, |_| {}),
                 ),
             );
             match (dr, dg, db) {
@@ -711,7 +763,7 @@ fn handle_stack(
                 _ => send_error(tx, ctx, "Color drizzle stacking failed"),
             }
         } else {
-            match drizzle_stack_with_progress(&selected_frames, &offsets, drizzle_config, scores, drizzle_progress) {
+            match drizzle_stack_with_progress(selected_frames, offsets, drizzle_config, scores, drizzle_progress) {
                 Ok(result) => {
                     let elapsed = start.elapsed();
                     cache.stacked = Some(result.clone());
@@ -730,8 +782,8 @@ fn handle_stack(
         return;
     }
 
-    // Standard path: shift + stack
-    if let Some(ref color_frames) = selected_color {
+    // Standard path: shift frames using cached offsets, then stack
+    if let Some(ref color_frames) = cache.selected_color_frames {
         // Color: shift per-channel, stack per-channel
         let aligned_color: Vec<ColorFrame> = color_frames.iter().zip(offsets.iter())
             .map(|(cf, offset)| ColorFrame {
@@ -802,38 +854,10 @@ fn handle_stack(
             _ => send_error(tx, ctx, "Color stacking failed"),
         }
     } else {
-        // Mono: align then stack
-        let aligned = if frame_count > 1 {
-            let tx_clone = tx.clone();
-            let ctx_clone = ctx.clone();
-            if backend.is_gpu() {
-                match align_frames_gpu_with_progress(&selected_frames, 0, backend.clone(), move |done| {
-                    let _ = tx_clone.send(WorkerResult::Progress {
-                        stage: PipelineStage::Alignment,
-                        items_done: Some(done),
-                        items_total: Some(frame_count),
-                    });
-                    ctx_clone.request_repaint();
-                }) {
-                    Ok(a) => a,
-                    Err(e) => { send_error(tx, ctx, format!("Alignment failed: {e}")); return; }
-                }
-            } else {
-                match align_frames_with_progress(&selected_frames, 0, move |done| {
-                    let _ = tx_clone.send(WorkerResult::Progress {
-                        stage: PipelineStage::Alignment,
-                        items_done: Some(done),
-                        items_total: Some(frame_count),
-                    });
-                    ctx_clone.request_repaint();
-                }) {
-                    Ok(a) => a,
-                    Err(e) => { send_error(tx, ctx, format!("Alignment failed: {e}")); return; }
-                }
-            }
-        } else {
-            selected_frames
-        };
+        // Mono: shift then stack
+        let aligned: Vec<Frame> = selected_frames.iter().zip(offsets.iter())
+            .map(|(frame, offset)| shift_frame(frame, offset))
+            .collect();
 
         send_log(tx, ctx, "Stacking...");
         let frame_count = aligned.len();

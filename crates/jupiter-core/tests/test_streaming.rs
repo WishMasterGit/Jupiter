@@ -320,6 +320,7 @@ fn test_streaming_pipeline_mean_matches_eager() {
             select_percentage: 0.5,
             ..Default::default()
         },
+        alignment: Default::default(),
         stacking: StackingConfig::default(), // Mean
         sharpening: None,
         filters: vec![],
@@ -339,6 +340,7 @@ fn test_streaming_pipeline_mean_matches_eager() {
             select_percentage: 0.5,
             ..Default::default()
         },
+        alignment: Default::default(),
         stacking: StackingConfig::default(),
         sharpening: None,
         filters: vec![],

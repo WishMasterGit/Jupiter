@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::color::debayer::DebayerMethod;
 use crate::compute::DevicePreference;
+use crate::consts::{DEFAULT_CENTROID_THRESHOLD, DEFAULT_ENHANCED_PHASE_UPSAMPLE, DEFAULT_PYRAMID_LEVELS};
 use crate::sharpen::wavelet::WaveletParams;
 use crate::stack::drizzle::DrizzleConfig;
 use crate::stack::multi_point::{LocalStackMethod, MultiPointConfig};
@@ -52,6 +53,9 @@ pub struct PipelineConfig {
     pub force_mono: bool,
     #[serde(default)]
     pub frame_selection: FrameSelectionConfig,
+    /// Alignment algorithm configuration.
+    #[serde(default)]
+    pub alignment: AlignmentConfig,
     #[serde(default)]
     pub stacking: StackingConfig,
     pub sharpening: Option<SharpeningConfig>,
@@ -90,6 +94,96 @@ pub enum QualityMetric {
     #[default]
     Laplacian,
     Gradient,
+}
+
+/// Alignment algorithm to use for frame registration.
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub enum AlignmentMethod {
+    /// Standard FFT phase correlation with paraboloid sub-pixel fitting.
+    #[default]
+    PhaseCorrelation,
+    /// Enhanced phase correlation with upsampled matrix-multiply DFT
+    /// (Guizar-Sicairos et al., 2008). Sub-pixel accuracy ~0.01 px.
+    EnhancedPhaseCorrelation(EnhancedPhaseConfig),
+    /// Intensity-weighted centroid alignment. Very fast, good for bright
+    /// planetary disks.
+    Centroid(CentroidConfig),
+    /// Sobel gradient preprocessing + phase correlation. More robust
+    /// in noisy conditions.
+    GradientCorrelation,
+    /// Coarse-to-fine Gaussian pyramid alignment. Handles large
+    /// displacements that exceed FFT wrap-around.
+    Pyramid(PyramidConfig),
+}
+
+/// Parameters for enhanced phase correlation (Guizar-Sicairos method).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct EnhancedPhaseConfig {
+    /// Upsampling factor for the matrix-multiply DFT refinement stage.
+    /// Higher = more precise but slower. 20 gives ~0.05 px, 100 gives ~0.01 px.
+    #[serde(default = "default_upsample_factor")]
+    pub upsample_factor: usize,
+}
+
+fn default_upsample_factor() -> usize {
+    DEFAULT_ENHANCED_PHASE_UPSAMPLE
+}
+
+impl Default for EnhancedPhaseConfig {
+    fn default() -> Self {
+        Self {
+            upsample_factor: DEFAULT_ENHANCED_PHASE_UPSAMPLE,
+        }
+    }
+}
+
+/// Parameters for centroid (center-of-gravity) alignment.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CentroidConfig {
+    /// Intensity threshold below which pixels are excluded from centroid
+    /// computation (fraction of max brightness, 0.0-1.0).
+    #[serde(default = "default_centroid_threshold")]
+    pub threshold: f32,
+}
+
+fn default_centroid_threshold() -> f32 {
+    DEFAULT_CENTROID_THRESHOLD
+}
+
+impl Default for CentroidConfig {
+    fn default() -> Self {
+        Self {
+            threshold: DEFAULT_CENTROID_THRESHOLD,
+        }
+    }
+}
+
+/// Parameters for coarse-to-fine pyramid alignment.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PyramidConfig {
+    /// Number of pyramid levels (each level halves dimensions).
+    #[serde(default = "default_pyramid_levels")]
+    pub levels: usize,
+}
+
+fn default_pyramid_levels() -> usize {
+    DEFAULT_PYRAMID_LEVELS
+}
+
+impl Default for PyramidConfig {
+    fn default() -> Self {
+        Self {
+            levels: DEFAULT_PYRAMID_LEVELS,
+        }
+    }
+}
+
+/// Alignment configuration for the pipeline.
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct AlignmentConfig {
+    /// The alignment algorithm to use.
+    #[serde(default)]
+    pub method: AlignmentMethod,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -171,6 +265,24 @@ impl fmt::Display for QualityMetric {
         match self {
             QualityMetric::Laplacian => write!(f, "Laplacian"),
             QualityMetric::Gradient => write!(f, "Gradient"),
+        }
+    }
+}
+
+impl fmt::Display for AlignmentMethod {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AlignmentMethod::PhaseCorrelation => write!(f, "Phase Correlation"),
+            AlignmentMethod::EnhancedPhaseCorrelation(cfg) => {
+                write!(f, "Enhanced Phase (upsample={})", cfg.upsample_factor)
+            }
+            AlignmentMethod::Centroid(cfg) => {
+                write!(f, "Centroid (threshold={})", cfg.threshold)
+            }
+            AlignmentMethod::GradientCorrelation => write!(f, "Gradient Correlation"),
+            AlignmentMethod::Pyramid(cfg) => {
+                write!(f, "Pyramid ({} levels)", cfg.levels)
+            }
         }
     }
 }

@@ -4,8 +4,9 @@ use jupiter_core::compute::DevicePreference;
 use jupiter_core::frame::SourceInfo;
 use jupiter_core::color::debayer::DebayerMethod;
 use jupiter_core::pipeline::config::{
-    DebayerConfig, DeconvolutionConfig, DeconvolutionMethod, FilterStep, FrameSelectionConfig,
-    PipelineConfig, PsfModel, QualityMetric, SharpeningConfig, StackMethod, StackingConfig,
+    AlignmentConfig, AlignmentMethod, CentroidConfig, DebayerConfig, DeconvolutionConfig,
+    DeconvolutionMethod, EnhancedPhaseConfig, FilterStep, FrameSelectionConfig, PipelineConfig,
+    PsfModel, PyramidConfig, QualityMetric, SharpeningConfig, StackMethod, StackingConfig,
 };
 use jupiter_core::pipeline::PipelineStage;
 use jupiter_core::sharpen::wavelet::WaveletParams;
@@ -116,6 +117,7 @@ pub struct UIState {
     /// Cache status indicators.
     pub frames_scored: Option<usize>,
     pub ranked_preview: Vec<(usize, f64)>,
+    pub align_status: Option<String>,
     pub stack_status: Option<String>,
     pub sharpen_status: bool,
     pub filter_status: Option<usize>,
@@ -132,6 +134,7 @@ pub struct UIState {
 
     /// Params changed since last run (stale indicators).
     pub score_params_dirty: bool,
+    pub align_params_dirty: bool,
     pub stack_params_dirty: bool,
     pub sharpen_params_dirty: bool,
     pub filter_params_dirty: bool,
@@ -184,6 +187,12 @@ pub struct ConfigState {
     pub quality_metric: QualityMetric,
     pub select_percentage: f32,
 
+    // Alignment
+    pub align_method_index: usize,
+    pub enhanced_phase_upsample: usize,
+    pub centroid_threshold: f32,
+    pub pyramid_levels: usize,
+
     // Stacking
     pub stack_method_index: usize,
     // Sigma clip params
@@ -220,6 +229,13 @@ pub struct ConfigState {
     pub device_index: usize,
 }
 
+pub const ALIGN_METHOD_NAMES: &[&str] = &[
+    "Phase Correlation",
+    "Enhanced Phase",
+    "Centroid",
+    "Gradient Correlation",
+    "Pyramid",
+];
 pub const STACK_METHOD_NAMES: &[&str] = &["Mean", "Median", "Sigma Clip", "Multi-Point", "Drizzle"];
 pub const DECONV_METHOD_NAMES: &[&str] = &["Richardson-Lucy", "Wiener"];
 pub const PSF_MODEL_NAMES: &[&str] = &["Gaussian", "Kolmogorov", "Airy"];
@@ -242,6 +258,11 @@ impl Default for ConfigState {
 
             quality_metric: QualityMetric::default(),
             select_percentage: 0.25,
+
+            align_method_index: 0,
+            enhanced_phase_upsample: 20,
+            centroid_threshold: 0.1,
+            pyramid_levels: 3,
 
             stack_method_index: 0,
             sigma_clip_sigma: 2.5,
@@ -274,6 +295,24 @@ impl Default for ConfigState {
 }
 
 impl ConfigState {
+    pub fn alignment_config(&self) -> AlignmentConfig {
+        AlignmentConfig {
+            method: match self.align_method_index {
+                1 => AlignmentMethod::EnhancedPhaseCorrelation(EnhancedPhaseConfig {
+                    upsample_factor: self.enhanced_phase_upsample,
+                }),
+                2 => AlignmentMethod::Centroid(CentroidConfig {
+                    threshold: self.centroid_threshold,
+                }),
+                3 => AlignmentMethod::GradientCorrelation,
+                4 => AlignmentMethod::Pyramid(PyramidConfig {
+                    levels: self.pyramid_levels,
+                }),
+                _ => AlignmentMethod::PhaseCorrelation,
+            },
+        }
+    }
+
     pub fn stack_method(&self) -> StackMethod {
         match self.stack_method_index {
             0 => StackMethod::Mean,
@@ -373,6 +412,7 @@ impl ConfigState {
                 select_percentage: self.select_percentage,
                 metric: self.quality_metric.clone(),
             },
+            alignment: self.alignment_config(),
             stacking: StackingConfig {
                 method: self.stack_method(),
             },
@@ -398,6 +438,24 @@ impl ConfigState {
 
         state.quality_metric = config.frame_selection.metric.clone();
         state.select_percentage = config.frame_selection.select_percentage;
+
+        // Alignment
+        match &config.alignment.method {
+            AlignmentMethod::PhaseCorrelation => state.align_method_index = 0,
+            AlignmentMethod::EnhancedPhaseCorrelation(p) => {
+                state.align_method_index = 1;
+                state.enhanced_phase_upsample = p.upsample_factor;
+            }
+            AlignmentMethod::Centroid(p) => {
+                state.align_method_index = 2;
+                state.centroid_threshold = p.threshold;
+            }
+            AlignmentMethod::GradientCorrelation => state.align_method_index = 3,
+            AlignmentMethod::Pyramid(p) => {
+                state.align_method_index = 4;
+                state.pyramid_levels = p.levels;
+            }
+        }
 
         match &config.stacking.method {
             StackMethod::Mean => state.stack_method_index = 0,

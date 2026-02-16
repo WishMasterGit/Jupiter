@@ -25,6 +25,7 @@ pub fn run(args: &ConfigArgs) -> Result<()> {
         debayer: None,
         force_mono: false,
         frame_selection: FrameSelectionConfig::default(),
+        alignment: Default::default(),
         stacking: StackingConfig::default(),
         sharpening: Some(SharpeningConfig {
             wavelet: WaveletParams::default(),

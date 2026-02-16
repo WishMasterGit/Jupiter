@@ -1,5 +1,5 @@
 use crate::app::JupiterApp;
-use crate::messages::WorkerCommand;
+use crate::messages::{WorkerCommand, WorkerResult};
 use crate::state::ConfigState;
 
 pub fn show(ctx: &egui::Context, app: &mut JupiterApp) {
@@ -43,6 +43,11 @@ pub fn show(ctx: &egui::Context, app: &mut JupiterApp) {
                 if ui.button("Reset Defaults").clicked() {
                     ui.close();
                     app.config = ConfigState::default();
+                    app.ui_state.score_params_dirty = true;
+                    app.ui_state.align_params_dirty = true;
+                    app.ui_state.stack_params_dirty = true;
+                    app.ui_state.sharpen_params_dirty = true;
+                    app.ui_state.filter_params_dirty = true;
                     app.ui_state.add_log("Config reset to defaults".into());
                 }
             });
@@ -96,26 +101,19 @@ fn save_file(app: &mut JupiterApp) {
 }
 
 fn import_config(app: &mut JupiterApp) {
-    let result_rx = {
-        let (tx, rx) = std::sync::mpsc::channel::<Option<jupiter_core::pipeline::config::PipelineConfig>>();
-        std::thread::spawn(move || {
-            let config = rfd::FileDialog::new()
-                .add_filter("TOML", &["toml"])
-                .pick_file()
-                .and_then(|path| {
-                    let content = std::fs::read_to_string(&path).ok()?;
-                    toml::from_str(&content).ok()
-                });
-            let _ = tx.send(config);
-        });
-        rx
-    };
-    // Block until the user picks a file (or cancels). This blocks the UI thread but
-    // is acceptable for a config import dialog.
-    if let Ok(Some(config)) = result_rx.recv_timeout(std::time::Duration::from_secs(120)) {
-        app.config = ConfigState::from_pipeline_config(&config);
-        app.ui_state.add_log("Config imported".into());
-    }
+    let result_tx = app.result_tx.clone();
+    std::thread::spawn(move || {
+        let config = rfd::FileDialog::new()
+            .add_filter("TOML", &["toml"])
+            .pick_file()
+            .and_then(|path| {
+                let content = std::fs::read_to_string(&path).ok()?;
+                toml::from_str(&content).ok()
+            });
+        if let Some(config) = config {
+            let _ = result_tx.send(WorkerResult::ConfigImported { config });
+        }
+    });
 }
 
 fn export_config(app: &mut JupiterApp) {

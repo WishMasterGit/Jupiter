@@ -4,9 +4,11 @@ use std::sync::Arc;
 
 use tracing::info;
 
-use crate::align::phase_correlation::{
-    align_frames_gpu_with_progress, align_frames_with_progress, compute_offset, compute_offset_gpu,
-    compute_offsets_streaming, shift_frame,
+use crate::align::{
+    align_frames_configured_with_progress,
+    compute_offset_configured,
+    compute_offsets_streaming_configured,
+    shift_frame,
 };
 use crate::color::debayer::{debayer, is_bayer, luminance, DebayerMethod};
 use crate::color::process::process_color_parallel;
@@ -34,7 +36,7 @@ use self::config::{FilterStep, MemoryStrategy, PipelineConfig, QualityMetric, St
 use crate::consts::{COLOR_CHANNEL_COUNT, LOW_MEMORY_THRESHOLD_BYTES};
 
 /// Pipeline processing stage, used for progress reporting.
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum PipelineStage {
     Reading,
     Debayering,
@@ -246,15 +248,9 @@ fn run_mono_standard(
     reporter.begin_stage(PipelineStage::Alignment, Some(frame_count));
     let aligned = if frame_count > 1 {
         let r = reporter.clone();
-        if backend.is_gpu() {
-            align_frames_gpu_with_progress(&selected_frames, 0, backend.clone(), move |done| {
-                r.advance(done);
-            })?
-        } else {
-            align_frames_with_progress(&selected_frames, 0, move |done| {
-                r.advance(done);
-            })?
-        }
+        align_frames_configured_with_progress(&selected_frames, 0, &config.alignment, backend.clone(), move |done| {
+            r.advance(done);
+        })?
     } else {
         selected_frames
     };
@@ -308,7 +304,7 @@ fn run_mono_standard_streaming(
             reporter.begin_stage(PipelineStage::Alignment, Some(frame_count));
             let r = reporter.clone();
             let offsets =
-                compute_offsets_streaming(reader, &selected_indices, 0, backend.clone(), move |done| {
+                compute_offsets_streaming_configured(reader, &selected_indices, 0, &config.alignment, backend.clone(), move |done| {
                     r.advance(done);
                 })?;
             reporter.finish_stage();
@@ -341,7 +337,7 @@ fn run_mono_standard_streaming(
             reporter.begin_stage(PipelineStage::Alignment, Some(frame_count));
             let r = reporter.clone();
             let offsets =
-                compute_offsets_streaming(reader, &selected_indices, 0, backend.clone(), move |done| {
+                compute_offsets_streaming_configured(reader, &selected_indices, 0, &config.alignment, backend.clone(), move |done| {
                     r.advance(done);
                 })?;
             reporter.finish_stage();
@@ -406,7 +402,7 @@ fn run_mono_drizzle_streaming(
     reporter.begin_stage(PipelineStage::Alignment, Some(frame_count));
     let r = reporter.clone();
     let offsets =
-        compute_offsets_streaming(reader, &selected_indices, 0, backend.clone(), move |done| {
+        compute_offsets_streaming_configured(reader, &selected_indices, 0, &config.alignment, backend.clone(), move |done| {
             r.advance(done);
         })?;
     info!("Alignment offsets computed for drizzle (streaming)");
@@ -572,6 +568,7 @@ fn run_color_pipeline(
             backend,
             reporter,
             drizzle_config,
+            &config.alignment,
         )?
     } else {
         color_standard_flow(&selected_color, &selected_lum, config, backend, reporter)?
@@ -630,6 +627,7 @@ fn run_color_pipeline_streaming(
             backend,
             reporter,
             drizzle_config,
+            &config.alignment,
         )?
     } else {
         color_standard_flow(&selected_color, &selected_lum, config, backend, reporter)?
@@ -657,11 +655,9 @@ fn color_standard_flow(
             reporter.advance(i + 1);
             if i == 0 {
                 AlignmentOffset::default()
-            } else if backend.is_gpu() {
-                compute_offset_gpu(&reference.data, &frame.data, backend.as_ref())
-                    .unwrap_or_default()
             } else {
-                compute_offset(reference, frame).unwrap_or_default()
+                compute_offset_configured(&reference.data, &frame.data, &config.alignment, backend.as_ref())
+                    .unwrap_or_default()
             }
         })
         .collect();
@@ -713,6 +709,7 @@ fn color_drizzle_flow(
     backend: &Arc<dyn ComputeBackend>,
     reporter: &Arc<dyn ProgressReporter>,
     drizzle_config: &crate::stack::drizzle::DrizzleConfig,
+    alignment_config: &config::AlignmentConfig,
 ) -> Result<ColorFrame> {
     let frame_count = selected_lum.len();
 
@@ -726,11 +723,9 @@ fn color_drizzle_flow(
             reporter.advance(i + 1);
             if i == 0 {
                 AlignmentOffset::default()
-            } else if backend.is_gpu() {
-                compute_offset_gpu(&reference.data, &frame.data, backend.as_ref())
-                    .unwrap_or_default()
             } else {
-                compute_offset(reference, frame).unwrap_or_default()
+                compute_offset_configured(&reference.data, &frame.data, alignment_config, backend.as_ref())
+                    .unwrap_or_default()
             }
         })
         .collect();
@@ -917,11 +912,9 @@ fn drizzle_flow(
             reporter.advance(i + 1);
             if i == 0 {
                 AlignmentOffset::default()
-            } else if backend.is_gpu() {
-                compute_offset_gpu(&reference.data, &frame.data, backend.as_ref())
-                    .unwrap_or_default()
             } else {
-                compute_offset(reference, frame).unwrap_or_default()
+                compute_offset_configured(&reference.data, &frame.data, &config.alignment, backend.as_ref())
+                    .unwrap_or_default()
             }
         })
         .collect();

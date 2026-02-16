@@ -86,6 +86,15 @@ pub fn print_pipeline_summary(config: &PipelineConfig, device_name: &str) {
     );
     println!();
 
+    // Alignment
+    println!("  {}", s.header.apply_to("Alignment"));
+    println!(
+        "    {:<12}{}",
+        s.label.apply_to("Method"),
+        s.method.apply_to(&config.alignment.method)
+    );
+    println!();
+
     // Stacking
     println!("  {}", s.header.apply_to("Stacking"));
     println!(

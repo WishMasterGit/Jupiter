@@ -169,6 +169,44 @@ pub fn shift_frame(frame: &Frame, offset: &AlignmentOffset) -> Frame {
     }
 }
 
+/// Shift a raw array by the given offset using bilinear interpolation.
+pub(crate) fn shift_array(data: &Array2<f32>, offset: &AlignmentOffset) -> Array2<f32> {
+    let (h, w) = data.dim();
+
+    if h * w >= PARALLEL_PIXEL_THRESHOLD {
+        let rows: Vec<Vec<f32>> = (0..h)
+            .into_par_iter()
+            .map(|row| {
+                (0..w)
+                    .map(|col| {
+                        let src_y = row as f64 - offset.dy;
+                        let src_x = col as f64 - offset.dx;
+                        bilinear_sample(data, src_y, src_x)
+                    })
+                    .collect()
+            })
+            .collect();
+
+        let mut result = Array2::<f32>::zeros((h, w));
+        for (row, row_data) in rows.into_iter().enumerate() {
+            for (col, val) in row_data.into_iter().enumerate() {
+                result[[row, col]] = val;
+            }
+        }
+        result
+    } else {
+        let mut result = Array2::<f32>::zeros((h, w));
+        for row in 0..h {
+            for col in 0..w {
+                let src_y = row as f64 - offset.dy;
+                let src_x = col as f64 - offset.dx;
+                result[[row, col]] = bilinear_sample(data, src_y, src_x);
+            }
+        }
+        result
+    }
+}
+
 /// Align a sequence of frames to a reference frame.
 ///
 /// Uses parallel processing when there are enough frames to benefit.
@@ -307,7 +345,7 @@ where
     }
 }
 
-fn apply_hann(data: &Array2<f32>) -> Array2<f32> {
+pub(crate) fn apply_hann(data: &Array2<f32>) -> Array2<f32> {
     let (h, w) = data.dim();
     let mut result = Array2::<f32>::zeros((h, w));
 
@@ -322,7 +360,7 @@ fn apply_hann(data: &Array2<f32>) -> Array2<f32> {
     result
 }
 
-fn normalized_cross_power(
+pub(crate) fn normalized_cross_power(
     ref_fft: &Array2<Complex<f64>>,
     tgt_fft: &Array2<Complex<f64>>,
 ) -> Array2<Complex<f64>> {
@@ -344,7 +382,7 @@ fn normalized_cross_power(
     result
 }
 
-fn find_peak(data: &Array2<f64>) -> (usize, usize, f64) {
+pub(crate) fn find_peak(data: &Array2<f64>) -> (usize, usize, f64) {
     let (h, w) = data.dim();
     let mut best_row = 0;
     let mut best_col = 0;

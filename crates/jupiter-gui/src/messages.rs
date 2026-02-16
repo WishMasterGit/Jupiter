@@ -5,7 +5,8 @@ use jupiter_core::compute::DevicePreference;
 use jupiter_core::frame::SourceInfo;
 use jupiter_core::io::crop::CropRect;
 use jupiter_core::pipeline::config::{
-    DebayerConfig, FilterStep, PipelineConfig, QualityMetric, SharpeningConfig, StackMethod,
+    AlignmentConfig, DebayerConfig, FilterStep, PipelineConfig, QualityMetric, SharpeningConfig,
+    StackMethod,
 };
 use jupiter_core::pipeline::{PipelineOutput, PipelineStage};
 
@@ -24,20 +25,25 @@ pub enum WorkerCommand {
         debayer: Option<DebayerConfig>,
     },
 
-    /// Stage 2: Select best frames, align, and stack.
-    Stack {
+    /// Stage 2: Select best frames and compute alignment offsets.
+    Align {
         select_percentage: f32,
-        method: StackMethod,
+        alignment: AlignmentConfig,
         device: DevicePreference,
     },
 
-    /// Stage 3: Apply deconvolution + wavelet sharpening to cached stacked frame.
+    /// Stage 3: Stack using cached aligned frames.
+    Stack {
+        method: StackMethod,
+    },
+
+    /// Stage 4: Apply deconvolution + wavelet sharpening to cached stacked frame.
     Sharpen {
         config: SharpeningConfig,
         device: DevicePreference,
     },
 
-    /// Stage 4: Apply filter chain to cached sharpened (or stacked) frame.
+    /// Stage 5: Apply filter chain to cached sharpened (or stacked) frame.
     ApplyFilters { filters: Vec<FilterStep> },
 
     /// Run all stages in sequence.
@@ -71,7 +77,13 @@ pub enum WorkerResult {
         ranked_preview: Vec<(usize, f64)>,
     },
 
-    /// Stage 2 complete: stacked result ready for preview.
+    /// Stage 2 complete: frames selected and alignment offsets computed.
+    AlignComplete {
+        frame_count: usize,
+        elapsed: Duration,
+    },
+
+    /// Stage 3 complete: stacked result ready for preview.
     StackComplete {
         result: PipelineOutput,
         elapsed: Duration,
@@ -97,7 +109,6 @@ pub enum WorkerResult {
 
     /// Progress update during any stage.
     Progress {
-        #[allow(dead_code)]
         stage: PipelineStage,
         items_done: Option<usize>,
         items_total: Option<usize>,
@@ -112,6 +123,9 @@ pub enum WorkerResult {
     },
     Error {
         message: String,
+    },
+    ConfigImported {
+        config: jupiter_core::pipeline::config::PipelineConfig,
     },
     Log {
         message: String,

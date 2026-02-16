@@ -4,12 +4,13 @@ use crate::state::{DECONV_METHOD_NAMES, PSF_MODEL_NAMES};
 use jupiter_core::pipeline::PipelineStage;
 
 pub(super) fn sharpen_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
-    let status = if app.ui_state.sharpen_status { Some("Done") } else { None };
+    let status = if app.config.sharpen_enabled && app.ui_state.sharpen_status { Some("Done") } else { None };
     super::section_header(ui, "Sharpening", status);
     ui.add_space(4.0);
 
     if ui.checkbox(&mut app.config.sharpen_enabled, "Enable sharpening").changed() {
         app.ui_state.sharpen_params_dirty = true;
+        app.ui_state.filter_params_dirty = true;
     }
 
     if app.config.sharpen_enabled {
@@ -21,6 +22,7 @@ pub(super) fn sharpen_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
             // Resize coefficients to match
             app.config.wavelet_coefficients.resize(layers as usize, 1.0);
             app.ui_state.sharpen_params_dirty = true;
+            app.ui_state.filter_params_dirty = true;
         }
 
         for i in 0..app.config.wavelet_coefficients.len() {
@@ -33,6 +35,7 @@ pub(super) fn sharpen_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
                 .changed()
             {
                 app.ui_state.sharpen_params_dirty = true;
+                app.ui_state.filter_params_dirty = true;
             }
         }
 
@@ -41,6 +44,7 @@ pub(super) fn sharpen_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
         // Deconvolution
         if ui.checkbox(&mut app.config.deconv_enabled, "Deconvolution").changed() {
             app.ui_state.sharpen_params_dirty = true;
+            app.ui_state.filter_params_dirty = true;
         }
 
         if app.config.deconv_enabled {
@@ -52,6 +56,7 @@ pub(super) fn sharpen_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
                 .changed()
             {
                 app.ui_state.sharpen_params_dirty = true;
+                app.ui_state.filter_params_dirty = true;
             }
 
             match app.config.deconv_method_index {
@@ -60,11 +65,13 @@ pub(super) fn sharpen_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
                     if ui.add(egui::Slider::new(&mut iter, 1..=100).text("Iterations")).changed() {
                         app.config.rl_iterations = iter as usize;
                         app.ui_state.sharpen_params_dirty = true;
+                        app.ui_state.filter_params_dirty = true;
                     }
                 }
                 _ => {
                     if ui.add(egui::Slider::new(&mut app.config.wiener_noise_ratio, 0.001..=0.1).text("Noise Ratio").logarithmic(true)).changed() {
                         app.ui_state.sharpen_params_dirty = true;
+                        app.ui_state.filter_params_dirty = true;
                     }
                 }
             }
@@ -78,22 +85,26 @@ pub(super) fn sharpen_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
                 .changed()
             {
                 app.ui_state.sharpen_params_dirty = true;
+                app.ui_state.filter_params_dirty = true;
             }
 
             match app.config.psf_model_index {
                 0 => {
                     if ui.add(egui::Slider::new(&mut app.config.psf_gaussian_sigma, 0.5..=5.0).text("Sigma")).changed() {
                         app.ui_state.sharpen_params_dirty = true;
+                        app.ui_state.filter_params_dirty = true;
                     }
                 }
                 1 => {
                     if ui.add(egui::Slider::new(&mut app.config.psf_kolmogorov_seeing, 0.5..=10.0).text("Seeing")).changed() {
                         app.ui_state.sharpen_params_dirty = true;
+                        app.ui_state.filter_params_dirty = true;
                     }
                 }
                 _ => {
                     if ui.add(egui::Slider::new(&mut app.config.psf_airy_radius, 0.5..=10.0).text("Radius")).changed() {
                         app.ui_state.sharpen_params_dirty = true;
+                        app.ui_state.filter_params_dirty = true;
                     }
                 }
             }

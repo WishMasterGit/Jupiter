@@ -31,18 +31,10 @@ pub(super) fn score_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
             _ => QualityMetric::Gradient,
         };
         app.ui_state.score_params_dirty = true;
-    }
-
-    // Keep percentage
-    if ui
-        .add(
-            egui::Slider::new(&mut app.config.select_percentage, 0.01..=1.0)
-                .text("Keep %")
-                .fixed_decimals(2),
-        )
-        .changed()
-    {
+        app.ui_state.align_params_dirty = true;
         app.ui_state.stack_params_dirty = true;
+        app.ui_state.sharpen_params_dirty = true;
+        app.ui_state.filter_params_dirty = true;
     }
 
     // Score button

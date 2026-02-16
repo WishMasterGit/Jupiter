@@ -14,6 +14,10 @@ pub(super) fn debayer_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
         .changed()
     {
         app.ui_state.score_params_dirty = true;
+        app.ui_state.align_params_dirty = true;
+        app.ui_state.stack_params_dirty = true;
+        app.ui_state.sharpen_params_dirty = true;
+        app.ui_state.filter_params_dirty = true;
     }
 
     if app.config.debayer_enabled
@@ -28,5 +32,9 @@ pub(super) fn debayer_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
             .changed()
     {
         app.ui_state.score_params_dirty = true;
+        app.ui_state.align_params_dirty = true;
+        app.ui_state.stack_params_dirty = true;
+        app.ui_state.sharpen_params_dirty = true;
+        app.ui_state.filter_params_dirty = true;
     }
 }

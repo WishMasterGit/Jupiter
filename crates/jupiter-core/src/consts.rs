@@ -29,3 +29,20 @@ pub const STREAMING_BATCH_SIZE: usize = 8;
 
 /// Number of channels in a color frame (R, G, B).
 pub const COLOR_CHANNEL_COUNT: usize = 3;
+
+/// Default upsampling factor for enhanced phase correlation (Guizar-Sicairos).
+/// 20 gives ~0.05 px accuracy; 100 gives ~0.01 px accuracy.
+pub const DEFAULT_ENHANCED_PHASE_UPSAMPLE: usize = 20;
+
+/// Default intensity threshold for centroid alignment (fraction of max brightness).
+pub const DEFAULT_CENTROID_THRESHOLD: f32 = 0.1;
+
+/// Default number of Gaussian pyramid levels for coarse-to-fine alignment.
+pub const DEFAULT_PYRAMID_LEVELS: usize = 3;
+
+/// Search window (in pixels) around the coarse peak for enhanced phase
+/// correlation upsampled DFT refinement.
+pub const ENHANCED_PHASE_SEARCH_WINDOW: f64 = 1.5;
+
+/// Gaussian blur sigma used for building the pyramid in coarse-to-fine alignment.
+pub const PYRAMID_BLUR_SIGMA: f32 = 1.0;

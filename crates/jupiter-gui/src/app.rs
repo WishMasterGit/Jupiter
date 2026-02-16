@@ -10,6 +10,7 @@ use crate::worker;
 
 pub struct JupiterApp {
     pub cmd_tx: mpsc::Sender<WorkerCommand>,
+    pub result_tx: mpsc::Sender<WorkerResult>,
     pub result_rx: mpsc::Receiver<WorkerResult>,
     pub ui_state: UIState,
     pub viewport: ViewportState,
@@ -20,10 +21,11 @@ pub struct JupiterApp {
 impl JupiterApp {
     pub fn new(ctx: &egui::Context) -> Self {
         let (result_tx, result_rx) = mpsc::channel();
-        let cmd_tx = worker::spawn_worker(result_tx, ctx.clone());
+        let cmd_tx = worker::spawn_worker(result_tx.clone(), ctx.clone());
 
         Self {
             cmd_tx,
+            result_tx,
             result_rx,
             ui_state: UIState::default(),
             viewport: ViewportState::default(),
@@ -48,6 +50,24 @@ impl JupiterApp {
                     self.ui_state.source_info = Some(info);
                     self.ui_state.preview_frame_index = 0;
                     self.ui_state.crop_state = Default::default();
+
+                    // Reset pipeline state from previous file
+                    self.ui_state.frames_scored = None;
+                    self.ui_state.ranked_preview.clear();
+                    self.ui_state.align_status = None;
+                    self.ui_state.stack_status = None;
+                    self.ui_state.sharpen_status = false;
+                    self.ui_state.filter_status = None;
+                    self.ui_state.score_params_dirty = false;
+                    self.ui_state.align_params_dirty = false;
+                    self.ui_state.stack_params_dirty = false;
+                    self.ui_state.sharpen_params_dirty = false;
+                    self.ui_state.filter_params_dirty = false;
+                    self.ui_state.progress_items_done = None;
+                    self.ui_state.progress_items_total = None;
+                    self.viewport.zoom = 1.0;
+                    self.viewport.pan_offset = egui::Vec2::ZERO;
+
                     // Auto-preview frame 0
                     self.send_command(WorkerCommand::PreviewFrame {
                         path: path.clone(),
@@ -68,6 +88,21 @@ impl JupiterApp {
                     self.ui_state.score_params_dirty = false;
                     self.ui_state.add_log(format!("{frame_count} frames scored"));
                 }
+                WorkerResult::AlignComplete { frame_count, elapsed } => {
+                    self.ui_state.align_status = Some(format!(
+                        "{frame_count} aligned ({})",
+                        format_duration(elapsed)
+                    ));
+                    self.ui_state.running_stage = None;
+                    self.ui_state.align_params_dirty = false;
+                    self.ui_state.stack_params_dirty = true;
+                    self.ui_state.progress_items_done = None;
+                    self.ui_state.progress_items_total = None;
+                    self.ui_state.add_log(format!(
+                        "Aligned {frame_count} frames in {}",
+                        format_duration(elapsed)
+                    ));
+                }
                 WorkerResult::StackComplete { result, elapsed } => {
                     self.ui_state.stack_status = Some(format!(
                         "Stacked ({})",
@@ -75,12 +110,16 @@ impl JupiterApp {
                     ));
                     self.ui_state.running_stage = None;
                     self.ui_state.stack_params_dirty = false;
+                    self.ui_state.progress_items_done = None;
+                    self.ui_state.progress_items_total = None;
                     self.update_viewport_from_output(ctx, &result, "Stacked");
                 }
                 WorkerResult::SharpenComplete { result, elapsed } => {
                     self.ui_state.sharpen_status = true;
                     self.ui_state.running_stage = None;
                     self.ui_state.sharpen_params_dirty = false;
+                    self.ui_state.progress_items_done = None;
+                    self.ui_state.progress_items_total = None;
                     self.ui_state.add_log(format!("Sharpened in {}", format_duration(elapsed)));
                     self.update_viewport_from_output(ctx, &result, "Sharpened");
                 }
@@ -88,11 +127,15 @@ impl JupiterApp {
                     self.ui_state.filter_status = Some(self.config.filters.len());
                     self.ui_state.running_stage = None;
                     self.ui_state.filter_params_dirty = false;
+                    self.ui_state.progress_items_done = None;
+                    self.ui_state.progress_items_total = None;
                     self.ui_state.add_log(format!("Filters applied in {}", format_duration(elapsed)));
                     self.update_viewport_from_output(ctx, &result, "Filtered");
                 }
                 WorkerResult::PipelineComplete { result, elapsed } => {
                     self.ui_state.running_stage = None;
+                    self.ui_state.progress_items_done = None;
+                    self.ui_state.progress_items_total = None;
                     self.ui_state.add_log(format!(
                         "Pipeline complete in {}",
                         format_duration(elapsed)
@@ -100,10 +143,11 @@ impl JupiterApp {
                     self.update_viewport_from_output(ctx, &result, "Pipeline Result");
                 }
                 WorkerResult::Progress {
-                    stage: _,
+                    stage,
                     items_done,
                     items_total,
                 } => {
+                    self.ui_state.running_stage = Some(stage);
                     self.ui_state.progress_items_done = items_done;
                     self.ui_state.progress_items_total = items_total;
                 }
@@ -123,6 +167,15 @@ impl JupiterApp {
                 WorkerResult::Error { message } => {
                     self.ui_state.running_stage = None;
                     self.ui_state.add_log(format!("ERROR: {message}"));
+                }
+                WorkerResult::ConfigImported { config } => {
+                    self.config = ConfigState::from_pipeline_config(&config);
+                    self.ui_state.score_params_dirty = true;
+                    self.ui_state.align_params_dirty = true;
+                    self.ui_state.stack_params_dirty = true;
+                    self.ui_state.sharpen_params_dirty = true;
+                    self.ui_state.filter_params_dirty = true;
+                    self.ui_state.add_log("Config imported".into());
                 }
                 WorkerResult::Log { message } => {
                     self.ui_state.add_log(message);

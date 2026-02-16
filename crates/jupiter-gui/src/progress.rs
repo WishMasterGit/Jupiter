@@ -1,5 +1,6 @@
 use std::sync::mpsc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 
 use jupiter_core::pipeline::{PipelineStage, ProgressReporter};
 
@@ -10,6 +11,7 @@ pub struct ChannelProgressReporter {
     tx: mpsc::Sender<WorkerResult>,
     ctx: egui::Context,
     current_total: AtomicUsize,
+    current_stage: Mutex<PipelineStage>,
 }
 
 impl ChannelProgressReporter {
@@ -18,6 +20,7 @@ impl ChannelProgressReporter {
             tx,
             ctx,
             current_total: AtomicUsize::new(0),
+            current_stage: Mutex::new(PipelineStage::Stacking),
         }
     }
 }
@@ -25,6 +28,7 @@ impl ChannelProgressReporter {
 impl ProgressReporter for ChannelProgressReporter {
     fn begin_stage(&self, stage: PipelineStage, total_items: Option<usize>) {
         self.current_total.store(total_items.unwrap_or(0), Ordering::Relaxed);
+        *self.current_stage.lock().unwrap() = stage;
         let _ = self.tx.send(WorkerResult::Progress {
             stage,
             items_done: Some(0),
@@ -35,8 +39,9 @@ impl ProgressReporter for ChannelProgressReporter {
 
     fn advance(&self, items_done: usize) {
         let total = self.current_total.load(Ordering::Relaxed);
+        let stage = *self.current_stage.lock().unwrap();
         let _ = self.tx.send(WorkerResult::Progress {
-            stage: PipelineStage::Stacking, // Generic — the UI knows current stage
+            stage,
             items_done: Some(items_done),
             items_total: if total > 0 { Some(total) } else { None },
         });

@@ -436,6 +436,7 @@ fn test_color_pipeline_end_to_end() {
             select_percentage: 0.5,
             ..Default::default()
         },
+        alignment: Default::default(),
         stacking: StackingConfig::default(),
         sharpening: None,
         filters: vec![],
@@ -476,6 +477,7 @@ fn test_force_mono_ignores_bayer() {
             select_percentage: 0.5,
             ..Default::default()
         },
+        alignment: Default::default(),
         stacking: StackingConfig::default(),
         sharpening: None,
         filters: vec![],

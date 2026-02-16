@@ -9,6 +9,41 @@ use crate::error::Result;
 use crate::frame::{ColorMode, Frame, QualityScore};
 use crate::io::ser::SerReader;
 
+/// Compute Sobel gradient magnitude image.
+///
+/// Returns an `Array2<f32>` of the same dimensions as input. The 1-pixel
+/// border is zero (Sobel kernel needs a 3x3 neighborhood).
+pub fn gradient_magnitude_array(data: &Array2<f32>) -> Array2<f32> {
+    let (h, w) = data.dim();
+    let mut result = Array2::<f32>::zeros((h, w));
+
+    if h < 3 || w < 3 {
+        return result;
+    }
+
+    for row in 1..h - 1 {
+        for col in 1..w - 1 {
+            let gx = -data[[row - 1, col - 1]] as f64
+                + data[[row - 1, col + 1]] as f64
+                - 2.0 * data[[row, col - 1]] as f64
+                + 2.0 * data[[row, col + 1]] as f64
+                - data[[row + 1, col - 1]] as f64
+                + data[[row + 1, col + 1]] as f64;
+
+            let gy = -data[[row - 1, col - 1]] as f64
+                - 2.0 * data[[row - 1, col]] as f64
+                - data[[row - 1, col + 1]] as f64
+                + data[[row + 1, col - 1]] as f64
+                + 2.0 * data[[row + 1, col]] as f64
+                + data[[row + 1, col + 1]] as f64;
+
+            result[[row, col]] = (gx * gx + gy * gy).sqrt() as f32;
+        }
+    }
+
+    result
+}
+
 /// Compute gradient magnitude quality score on raw array data.
 pub fn gradient_score_array(data: &Array2<f32>) -> f64 {
     let (h, w) = data.dim();

@@ -13,6 +13,7 @@ pub(super) fn filter_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
     ui.add_space(4.0);
 
     let mut to_remove = None;
+    let mut any_changed = false;
     for (i, filter) in app.config.filters.iter_mut().enumerate() {
         ui.horizontal(|ui| {
             ui.label(format!("{}.", i + 1));
@@ -22,28 +23,42 @@ pub(super) fn filter_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
                     high_percentile,
                 } => {
                     ui.label("Auto Stretch");
-                    ui.add(egui::DragValue::new(low_percentile).speed(0.001).prefix("lo: "));
-                    ui.add(egui::DragValue::new(high_percentile).speed(0.001).prefix("hi: "));
+                    if ui.add(egui::DragValue::new(low_percentile).speed(0.001).prefix("lo: ")).changed() {
+                        any_changed = true;
+                    }
+                    if ui.add(egui::DragValue::new(high_percentile).speed(0.001).prefix("hi: ")).changed() {
+                        any_changed = true;
+                    }
                 }
                 FilterStep::HistogramStretch {
                     black_point,
                     white_point,
                 } => {
                     ui.label("Hist Stretch");
-                    ui.add(egui::DragValue::new(black_point).speed(0.01).prefix("B: "));
-                    ui.add(egui::DragValue::new(white_point).speed(0.01).prefix("W: "));
+                    if ui.add(egui::DragValue::new(black_point).speed(0.01).prefix("B: ")).changed() {
+                        any_changed = true;
+                    }
+                    if ui.add(egui::DragValue::new(white_point).speed(0.01).prefix("W: ")).changed() {
+                        any_changed = true;
+                    }
                 }
                 FilterStep::Gamma(g) => {
                     ui.label("Gamma");
-                    ui.add(egui::DragValue::new(g).speed(0.05).range(0.1..=5.0));
+                    if ui.add(egui::DragValue::new(g).speed(0.05).range(0.1..=5.0)).changed() {
+                        any_changed = true;
+                    }
                 }
                 FilterStep::BrightnessContrast {
                     brightness,
                     contrast,
                 } => {
                     ui.label("B/C");
-                    ui.add(egui::DragValue::new(brightness).speed(0.01).prefix("B: "));
-                    ui.add(egui::DragValue::new(contrast).speed(0.05).prefix("C: "));
+                    if ui.add(egui::DragValue::new(brightness).speed(0.01).prefix("B: ")).changed() {
+                        any_changed = true;
+                    }
+                    if ui.add(egui::DragValue::new(contrast).speed(0.05).prefix("C: ")).changed() {
+                        any_changed = true;
+                    }
                 }
                 FilterStep::UnsharpMask {
                     radius,
@@ -51,19 +66,31 @@ pub(super) fn filter_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
                     threshold,
                 } => {
                     ui.label("USM");
-                    ui.add(egui::DragValue::new(radius).speed(0.1).prefix("R: "));
-                    ui.add(egui::DragValue::new(amount).speed(0.05).prefix("A: "));
-                    ui.add(egui::DragValue::new(threshold).speed(0.01).prefix("T: "));
+                    if ui.add(egui::DragValue::new(radius).speed(0.1).prefix("R: ")).changed() {
+                        any_changed = true;
+                    }
+                    if ui.add(egui::DragValue::new(amount).speed(0.05).prefix("A: ")).changed() {
+                        any_changed = true;
+                    }
+                    if ui.add(egui::DragValue::new(threshold).speed(0.01).prefix("T: ")).changed() {
+                        any_changed = true;
+                    }
                 }
                 FilterStep::GaussianBlur { sigma } => {
                     ui.label("Blur");
-                    ui.add(egui::DragValue::new(sigma).speed(0.1).prefix("S: "));
+                    if ui.add(egui::DragValue::new(sigma).speed(0.1).prefix("S: ")).changed() {
+                        any_changed = true;
+                    }
                 }
             }
             if ui.small_button("x").clicked() {
                 to_remove = Some(i);
             }
         });
+    }
+
+    if any_changed {
+        app.ui_state.filter_params_dirty = true;
     }
 
     if let Some(i) = to_remove {

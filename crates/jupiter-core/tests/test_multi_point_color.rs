@@ -218,6 +218,7 @@ fn test_multi_point_stack_color_pipeline_integration() {
             select_percentage: 0.5,
             ..Default::default()
         },
+        alignment: Default::default(),
         stacking: StackingConfig {
             method: StackMethod::MultiPoint(MultiPointConfig {
                 ap_size: 32,
@@ -267,6 +268,7 @@ fn test_multi_point_stack_color_force_mono() {
             select_percentage: 0.5,
             ..Default::default()
         },
+        alignment: Default::default(),
         stacking: StackingConfig {
             method: StackMethod::MultiPoint(MultiPointConfig {
                 ap_size: 32,

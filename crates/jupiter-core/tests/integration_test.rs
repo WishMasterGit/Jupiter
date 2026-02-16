@@ -107,6 +107,7 @@ fn test_full_pipeline_end_to_end() {
             select_percentage: 0.5,
             ..Default::default()
         },
+        alignment: Default::default(),
         stacking: StackingConfig::default(),
         sharpening: Some(SharpeningConfig::default()),
         filters: vec![],
@@ -147,6 +148,7 @@ fn test_pipeline_without_sharpening() {
             select_percentage: 0.5,
             ..Default::default()
         },
+        alignment: Default::default(),
         stacking: StackingConfig::default(),
         sharpening: None,
         filters: vec![],

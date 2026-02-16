@@ -8,8 +8,9 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use jupiter_core::compute::{create_backend, DevicePreference};
 use jupiter_core::color::debayer::DebayerMethod;
 use jupiter_core::pipeline::config::{
-    DebayerConfig, DeconvolutionConfig, DeconvolutionMethod, FilterStep, FrameSelectionConfig,
-    MemoryStrategy, PipelineConfig, PsfModel, SharpeningConfig, StackMethod, StackingConfig,
+    AlignmentConfig, AlignmentMethod, CentroidConfig, DebayerConfig, DeconvolutionConfig,
+    DeconvolutionMethod, EnhancedPhaseConfig, FilterStep, FrameSelectionConfig, MemoryStrategy,
+    PipelineConfig, PsfModel, PyramidConfig, SharpeningConfig, StackMethod, StackingConfig,
 };
 use jupiter_core::stack::drizzle::DrizzleConfig;
 use jupiter_core::pipeline::{run_pipeline_reported, PipelineStage, ProgressReporter};
@@ -40,6 +41,15 @@ pub enum DebayerMethodArg {
     Mhc,
 }
 
+#[derive(Clone, clap::ValueEnum)]
+pub enum AlignMethodArg {
+    Phase,
+    EnhancedPhase,
+    Centroid,
+    Gradient,
+    Pyramid,
+}
+
 #[derive(Args)]
 pub struct RunArgs {
     /// Input SER file
@@ -65,6 +75,22 @@ pub struct RunArgs {
     /// Force mono processing even for Bayer/RGB SER files
     #[arg(long)]
     pub mono: bool,
+
+    /// Alignment method
+    #[arg(long, value_enum, default_value = "phase")]
+    pub align_method: AlignMethodArg,
+
+    /// Upsampling factor for enhanced phase correlation (higher = more precise, slower)
+    #[arg(long, default_value = "20")]
+    pub upsample_factor: usize,
+
+    /// Intensity threshold for centroid alignment (0.0-1.0, fraction of max brightness)
+    #[arg(long, default_value = "0.1")]
+    pub centroid_threshold: f32,
+
+    /// Number of pyramid levels for coarse-to-fine alignment
+    #[arg(long, default_value = "3")]
+    pub pyramid_levels: usize,
 
     /// Percentage of best frames to keep (1-100)
     #[arg(long, default_value = "25")]
@@ -372,6 +398,23 @@ fn build_config_from_args(args: &RunArgs) -> PipelineConfig {
         frame_selection: FrameSelectionConfig {
             select_percentage: args.select as f32 / 100.0,
             ..Default::default()
+        },
+        alignment: AlignmentConfig {
+            method: match args.align_method {
+                AlignMethodArg::Phase => AlignmentMethod::PhaseCorrelation,
+                AlignMethodArg::EnhancedPhase => {
+                    AlignmentMethod::EnhancedPhaseCorrelation(EnhancedPhaseConfig {
+                        upsample_factor: args.upsample_factor,
+                    })
+                }
+                AlignMethodArg::Centroid => AlignmentMethod::Centroid(CentroidConfig {
+                    threshold: args.centroid_threshold,
+                }),
+                AlignMethodArg::Gradient => AlignmentMethod::GradientCorrelation,
+                AlignMethodArg::Pyramid => AlignmentMethod::Pyramid(PyramidConfig {
+                    levels: args.pyramid_levels,
+                }),
+            },
         },
         stacking: StackingConfig {
             method: stacking_method,
