@@ -33,10 +33,10 @@ impl CropRect {
 
         // Snap to even for Bayer
         if needs_even {
-            x = x & !1;
-            y = y & !1;
-            w = w & !1;
-            h = h & !1;
+            x &= !1;
+            y &= !1;
+            w &= !1;
+            h &= !1;
         }
 
         if w == 0 || h == 0 {

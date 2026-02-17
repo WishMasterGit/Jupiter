@@ -832,7 +832,8 @@ where
 
     // Step 6: Per-AP local alignment + stacking (parallel)
     info!("Stacking {} alignment points (color)", grid.points.len());
-    let ap_stacks: Vec<(AlignmentPoint, (Array2<f32>, Array2<f32>, Array2<f32>))> = grid
+    type ColorApStack = (AlignmentPoint, (Array2<f32>, Array2<f32>, Array2<f32>));
+    let ap_stacks: Vec<ColorApStack> = grid
         .points
         .par_iter()
         .map(|ap| {

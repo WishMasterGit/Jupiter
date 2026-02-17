@@ -23,7 +23,7 @@ fn main() -> eframe::Result<()> {
     };
 
     eframe::run_native(
-        "Jupiter",
+        "JupiterStack",
         options,
         Box::new(|cc| Ok(Box::new(app::JupiterApp::new(&cc.egui_ctx)))),
     )

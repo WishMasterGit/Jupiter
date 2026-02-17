@@ -249,10 +249,11 @@ impl WgpuBackend {
             adapter_limits.max_buffer_size / (1024 * 1024),
         );
 
-        let mut required_limits = wgpu::Limits::default();
-        required_limits.max_storage_buffer_binding_size =
-            adapter_limits.max_storage_buffer_binding_size;
-        required_limits.max_buffer_size = adapter_limits.max_buffer_size;
+        let required_limits = wgpu::Limits {
+            max_storage_buffer_binding_size: adapter_limits.max_storage_buffer_binding_size,
+            max_buffer_size: adapter_limits.max_buffer_size,
+            ..Default::default()
+        };
 
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("jupiter"),

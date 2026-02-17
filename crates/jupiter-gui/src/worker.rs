@@ -587,10 +587,10 @@ fn handle_align(
     // Compute offsets with per-frame progress
     let mut offsets = Vec::with_capacity(selected_frames.len());
     offsets.push(AlignmentOffset::default()); // reference frame
-    for i in 1..selected_frames.len() {
+    for (i, frame) in selected_frames[1..].iter().enumerate() {
         let offset = compute_offset_configured(
             &reference.data,
-            &selected_frames[i].data,
+            &frame.data,
             alignment_config,
             backend.as_ref(),
         )

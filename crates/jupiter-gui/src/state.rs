@@ -32,10 +32,10 @@ impl CropRectPixels {
         let mut h = self.height.round() as u32;
 
         if is_bayer {
-            x = x & !1;
-            y = y & !1;
-            w = w & !1;
-            h = h & !1;
+            x &= !1;
+            y &= !1;
+            w &= !1;
+            h &= !1;
         }
 
         jupiter_core::io::crop::CropRect {

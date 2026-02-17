@@ -66,7 +66,7 @@ pub fn show(ctx: &egui::Context, app: &mut JupiterApp) {
                 } else if let Some(hover) = ui.input(|i| i.pointer.hover_pos()) {
                     if response.rect.contains(hover) {
                         let img_pos = screen_to_image(hover, cr_img_rect, image_size);
-                        let inside = app.ui_state.crop_state.rect.as_ref().map_or(false, |c| {
+                        let inside = app.ui_state.crop_state.rect.as_ref().is_some_and(|c| {
                             egui::Rect::from_min_size(
                                 egui::pos2(c.x, c.y),
                                 egui::vec2(c.width, c.height),
@@ -173,7 +173,7 @@ fn handle_crop_drag(
             if let Some(pos) = response.interact_pointer_pos() {
                 let img_pos = screen_to_image(pos, img_rect, image_size);
 
-                let inside = app.ui_state.crop_state.rect.as_ref().map_or(false, |c| {
+                let inside = app.ui_state.crop_state.rect.as_ref().is_some_and(|c| {
                     egui::Rect::from_min_size(
                         egui::pos2(c.x, c.y),
                         egui::vec2(c.width, c.height),
