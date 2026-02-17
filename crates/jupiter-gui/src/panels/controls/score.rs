@@ -30,11 +30,7 @@ pub(super) fn score_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
             0 => QualityMetric::Laplacian,
             _ => QualityMetric::Gradient,
         };
-        app.ui_state.score_params_dirty = true;
-        app.ui_state.align_params_dirty = true;
-        app.ui_state.stack_params_dirty = true;
-        app.ui_state.sharpen_params_dirty = true;
-        app.ui_state.filter_params_dirty = true;
+        app.ui_state.mark_dirty_from_score();
     }
 
     // Score button

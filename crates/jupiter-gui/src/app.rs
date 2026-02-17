@@ -58,11 +58,7 @@ impl JupiterApp {
                     self.ui_state.stack_status = None;
                     self.ui_state.sharpen_status = false;
                     self.ui_state.filter_status = None;
-                    self.ui_state.score_params_dirty = false;
-                    self.ui_state.align_params_dirty = false;
-                    self.ui_state.stack_params_dirty = false;
-                    self.ui_state.sharpen_params_dirty = false;
-                    self.ui_state.filter_params_dirty = false;
+                    self.ui_state.clear_all_dirty();
                     self.ui_state.progress_items_done = None;
                     self.ui_state.progress_items_total = None;
                     self.viewport.zoom = 1.0;
@@ -170,11 +166,7 @@ impl JupiterApp {
                 }
                 WorkerResult::ConfigImported { config } => {
                     self.config = ConfigState::from_pipeline_config(&config);
-                    self.ui_state.score_params_dirty = true;
-                    self.ui_state.align_params_dirty = true;
-                    self.ui_state.stack_params_dirty = true;
-                    self.ui_state.sharpen_params_dirty = true;
-                    self.ui_state.filter_params_dirty = true;
+                    self.ui_state.mark_dirty_from_score();
                     self.ui_state.add_log("Config imported".into());
                 }
                 WorkerResult::Log { message } => {

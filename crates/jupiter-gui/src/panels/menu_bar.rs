@@ -43,11 +43,7 @@ pub fn show(ctx: &egui::Context, app: &mut JupiterApp) {
                 if ui.button("Reset Defaults").clicked() {
                     ui.close();
                     app.config = ConfigState::default();
-                    app.ui_state.score_params_dirty = true;
-                    app.ui_state.align_params_dirty = true;
-                    app.ui_state.stack_params_dirty = true;
-                    app.ui_state.sharpen_params_dirty = true;
-                    app.ui_state.filter_params_dirty = true;
+                    app.ui_state.mark_dirty_from_score();
                     app.ui_state.add_log("Config reset to defaults".into());
                 }
             });

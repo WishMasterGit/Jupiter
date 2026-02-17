@@ -20,10 +20,7 @@ pub(super) fn alignment_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
         )
         .changed()
     {
-        app.ui_state.align_params_dirty = true;
-        app.ui_state.stack_params_dirty = true;
-        app.ui_state.sharpen_params_dirty = true;
-        app.ui_state.filter_params_dirty = true;
+        app.ui_state.mark_dirty_from_align();
     }
 
     // Method combo
@@ -37,10 +34,7 @@ pub(super) fn alignment_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
         )
         .changed()
     {
-        app.ui_state.align_params_dirty = true;
-        app.ui_state.stack_params_dirty = true;
-        app.ui_state.sharpen_params_dirty = true;
-        app.ui_state.filter_params_dirty = true;
+        app.ui_state.mark_dirty_from_align();
     }
 
     // Method-specific params
@@ -53,10 +47,7 @@ pub(super) fn alignment_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
                 .changed()
             {
                 app.config.enhanced_phase_upsample = upsample as usize;
-                app.ui_state.align_params_dirty = true;
-                app.ui_state.stack_params_dirty = true;
-                app.ui_state.sharpen_params_dirty = true;
-                app.ui_state.filter_params_dirty = true;
+                app.ui_state.mark_dirty_from_align();
             }
         }
         2 => {
@@ -68,10 +59,7 @@ pub(super) fn alignment_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
                 )
                 .changed()
             {
-                app.ui_state.align_params_dirty = true;
-                app.ui_state.stack_params_dirty = true;
-                app.ui_state.sharpen_params_dirty = true;
-                app.ui_state.filter_params_dirty = true;
+                app.ui_state.mark_dirty_from_align();
             }
         }
         4 => {
@@ -82,10 +70,7 @@ pub(super) fn alignment_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
                 .changed()
             {
                 app.config.pyramid_levels = levels as usize;
-                app.ui_state.align_params_dirty = true;
-                app.ui_state.stack_params_dirty = true;
-                app.ui_state.sharpen_params_dirty = true;
-                app.ui_state.filter_params_dirty = true;
+                app.ui_state.mark_dirty_from_align();
             }
         }
         _ => {}

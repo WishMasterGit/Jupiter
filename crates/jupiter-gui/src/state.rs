@@ -148,6 +148,45 @@ impl UIState {
     pub fn add_log(&mut self, msg: String) {
         self.log_messages.push(msg);
     }
+
+    /// Mark all pipeline stages as stale (e.g., debayer or metric changed).
+    pub fn mark_dirty_from_score(&mut self) {
+        self.score_params_dirty = true;
+        self.align_params_dirty = true;
+        self.stack_params_dirty = true;
+        self.sharpen_params_dirty = true;
+        self.filter_params_dirty = true;
+    }
+
+    /// Mark alignment and all downstream stages as stale.
+    pub fn mark_dirty_from_align(&mut self) {
+        self.align_params_dirty = true;
+        self.stack_params_dirty = true;
+        self.sharpen_params_dirty = true;
+        self.filter_params_dirty = true;
+    }
+
+    /// Mark stacking and all downstream stages as stale.
+    pub fn mark_dirty_from_stack(&mut self) {
+        self.stack_params_dirty = true;
+        self.sharpen_params_dirty = true;
+        self.filter_params_dirty = true;
+    }
+
+    /// Mark sharpening and filter stages as stale.
+    pub fn mark_dirty_from_sharpen(&mut self) {
+        self.sharpen_params_dirty = true;
+        self.filter_params_dirty = true;
+    }
+
+    /// Clear all dirty flags (e.g., after opening a new file).
+    pub fn clear_all_dirty(&mut self) {
+        self.score_params_dirty = false;
+        self.align_params_dirty = false;
+        self.stack_params_dirty = false;
+        self.sharpen_params_dirty = false;
+        self.filter_params_dirty = false;
+    }
 }
 
 /// Viewport display state.

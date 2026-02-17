@@ -19,9 +19,7 @@ pub(super) fn stack_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
         })
         .changed()
     {
-        app.ui_state.stack_params_dirty = true;
-        app.ui_state.sharpen_params_dirty = true;
-        app.ui_state.filter_params_dirty = true;
+        app.ui_state.mark_dirty_from_stack();
     }
 
     // Method-specific params
@@ -29,16 +27,12 @@ pub(super) fn stack_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
         2 => {
             // Sigma clip
             if ui.add(egui::Slider::new(&mut app.config.sigma_clip_sigma, 0.5..=5.0).text("Sigma")).changed() {
-                app.ui_state.stack_params_dirty = true;
-                app.ui_state.sharpen_params_dirty = true;
-                app.ui_state.filter_params_dirty = true;
+                app.ui_state.mark_dirty_from_stack();
             }
             let mut iter = app.config.sigma_clip_iterations as i32;
             if ui.add(egui::Slider::new(&mut iter, 1..=10).text("Iterations")).changed() {
                 app.config.sigma_clip_iterations = iter as usize;
-                app.ui_state.stack_params_dirty = true;
-                app.ui_state.sharpen_params_dirty = true;
-                app.ui_state.filter_params_dirty = true;
+                app.ui_state.mark_dirty_from_stack();
             }
         }
         3 => {
@@ -46,39 +40,27 @@ pub(super) fn stack_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
             let mut ap = app.config.mp_ap_size as i32;
             if ui.add(egui::Slider::new(&mut ap, 16..=256).text("AP Size")).changed() {
                 app.config.mp_ap_size = ap as usize;
-                app.ui_state.stack_params_dirty = true;
-                app.ui_state.sharpen_params_dirty = true;
-                app.ui_state.filter_params_dirty = true;
+                app.ui_state.mark_dirty_from_stack();
             }
             let mut sr = app.config.mp_search_radius as i32;
             if ui.add(egui::Slider::new(&mut sr, 4..=64).text("Search Radius")).changed() {
                 app.config.mp_search_radius = sr as usize;
-                app.ui_state.stack_params_dirty = true;
-                app.ui_state.sharpen_params_dirty = true;
-                app.ui_state.filter_params_dirty = true;
+                app.ui_state.mark_dirty_from_stack();
             }
             if ui.add(egui::Slider::new(&mut app.config.mp_min_brightness, 0.0..=0.5).text("Min Bright")).changed() {
-                app.ui_state.stack_params_dirty = true;
-                app.ui_state.sharpen_params_dirty = true;
-                app.ui_state.filter_params_dirty = true;
+                app.ui_state.mark_dirty_from_stack();
             }
         }
         4 => {
             // Drizzle
             if ui.add(egui::Slider::new(&mut app.config.drizzle_scale, 1.0..=4.0).text("Scale")).changed() {
-                app.ui_state.stack_params_dirty = true;
-                app.ui_state.sharpen_params_dirty = true;
-                app.ui_state.filter_params_dirty = true;
+                app.ui_state.mark_dirty_from_stack();
             }
             if ui.add(egui::Slider::new(&mut app.config.drizzle_pixfrac, 0.1..=1.0).text("Pixfrac")).changed() {
-                app.ui_state.stack_params_dirty = true;
-                app.ui_state.sharpen_params_dirty = true;
-                app.ui_state.filter_params_dirty = true;
+                app.ui_state.mark_dirty_from_stack();
             }
             if ui.checkbox(&mut app.config.drizzle_quality_weighted, "Quality weighted").changed() {
-                app.ui_state.stack_params_dirty = true;
-                app.ui_state.sharpen_params_dirty = true;
-                app.ui_state.filter_params_dirty = true;
+                app.ui_state.mark_dirty_from_stack();
             }
         }
         _ => {}
