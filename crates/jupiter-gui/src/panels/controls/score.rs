@@ -9,7 +9,7 @@ pub(super) fn score_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
         .ui_state
         .frames_scored
         .map(|n| format!("{n} scored"));
-    super::section_header(
+    crate::panels::section_header(
         ui,
         "Frame Selection",
         status.as_deref(),

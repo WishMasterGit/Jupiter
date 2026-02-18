@@ -2,7 +2,7 @@ use crate::app::JupiterApp;
 use crate::state::DEBAYER_METHOD_NAMES;
 
 pub(super) fn debayer_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
-    super::section_header(ui, "Debayer", None);
+    crate::panels::section_header(ui, "Debayer", None);
     ui.add_space(4.0);
 
     if let Some(ref info) = app.ui_state.source_info {

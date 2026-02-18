@@ -201,6 +201,7 @@ impl eframe::App for JupiterApp {
         panels::menu_bar::show(ctx, self);
         panels::status::show(ctx, self);
         panels::controls::show(ctx, self);
+        panels::general_controls_bar::show(ctx, self);
         panels::viewport::show(ctx, self);
 
         // About dialog

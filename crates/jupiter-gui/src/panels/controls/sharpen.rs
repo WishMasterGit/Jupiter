@@ -5,7 +5,7 @@ use jupiter_core::pipeline::PipelineStage;
 
 pub(super) fn sharpen_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
     let status = if app.config.sharpen_enabled && app.ui_state.sharpen_status { Some("Done") } else { None };
-    super::section_header(ui, "Sharpening", status);
+    crate::panels::section_header(ui, "Sharpening", status);
     ui.add_space(4.0);
 
     if ui.checkbox(&mut app.config.sharpen_enabled, "Enable sharpening").changed() {

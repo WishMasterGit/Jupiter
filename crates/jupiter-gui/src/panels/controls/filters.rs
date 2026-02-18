@@ -9,7 +9,7 @@ pub(super) fn filter_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
         .ui_state
         .filter_status
         .map(|n| format!("{n} applied"));
-    super::section_header(ui, "Filters", status.as_deref());
+    crate::panels::section_header(ui, "Filters", status.as_deref());
     ui.add_space(4.0);
 
     let mut to_remove = None;

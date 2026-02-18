@@ -4,7 +4,7 @@ use crate::state::ALIGN_METHOD_NAMES;
 use jupiter_core::pipeline::PipelineStage;
 
 pub(super) fn alignment_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
-    super::section_header(
+    crate::panels::section_header(
         ui,
         "Alignment",
         app.ui_state.align_status.as_deref(),

@@ -4,7 +4,7 @@ use crate::state::STACK_METHOD_NAMES;
 use jupiter_core::pipeline::PipelineStage;
 
 pub(super) fn stack_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
-    super::section_header(
+    crate::panels::section_header(
         ui,
         "Stacking",
         app.ui_state.stack_status.as_deref(),

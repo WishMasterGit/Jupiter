@@ -4,7 +4,7 @@ use crate::state::DEVICE_NAMES;
 use jupiter_core::pipeline::PipelineStage;
 
 pub(super) fn device_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
-    super::section_header(ui, "Compute Device", None);
+    crate::panels::section_header(ui, "Compute Device", None);
     ui.add_space(4.0);
 
     egui::ComboBox::from_label("Device")
@@ -15,7 +15,7 @@ pub(super) fn device_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
 }
 
 pub(super) fn actions_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
-    super::section_header(ui, "Actions", None);
+    crate::panels::section_header(ui, "Actions", None);
     ui.add_space(4.0);
 
     // Output path
