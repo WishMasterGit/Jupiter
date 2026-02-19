@@ -6,12 +6,14 @@ use jupiter_core::pipeline::PipelineStage;
 use super::crop::CropState;
 
 /// Overall UI state.
-#[derive(Default)]
 pub struct UIState {
     pub file_path: Option<PathBuf>,
     pub source_info: Option<SourceInfo>,
     pub preview_frame_index: usize,
     pub output_path: String,
+
+    /// True when a multi-frame video (SER) is loaded; false for single images.
+    pub is_video: bool,
 
     /// Which stage is currently running (None = idle).
     pub running_stage: Option<PipelineStage>,
@@ -40,6 +42,34 @@ pub struct UIState {
     pub stack_params_dirty: bool,
     pub sharpen_params_dirty: bool,
     pub filter_params_dirty: bool,
+}
+
+impl Default for UIState {
+    fn default() -> Self {
+        Self {
+            file_path: None,
+            source_info: None,
+            preview_frame_index: 0,
+            output_path: String::new(),
+            is_video: false,
+            running_stage: None,
+            frames_scored: None,
+            ranked_preview: Vec::new(),
+            align_status: None,
+            stack_status: None,
+            sharpen_status: false,
+            filter_status: None,
+            log_messages: Vec::new(),
+            progress_items_done: None,
+            progress_items_total: None,
+            crop_state: CropState::default(),
+            score_params_dirty: false,
+            align_params_dirty: false,
+            stack_params_dirty: false,
+            sharpen_params_dirty: false,
+            filter_params_dirty: false,
+        }
+    }
 }
 
 impl UIState {

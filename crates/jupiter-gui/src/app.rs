@@ -39,6 +39,7 @@ impl JupiterApp {
         while let Ok(result) = self.result_rx.try_recv() {
             match result {
                 WorkerResult::FileInfo { path, info } => {
+                    self.ui_state.is_video = true;
                     self.ui_state.add_log(format!(
                         "Opened: {} ({}x{}, {} frames, {:?})",
                         path.display(),
@@ -147,14 +148,75 @@ impl JupiterApp {
                     self.ui_state.progress_items_done = items_done;
                     self.ui_state.progress_items_total = items_total;
                 }
+                WorkerResult::ImageLoaded {
+                    path,
+                    output,
+                    width,
+                    height,
+                } => {
+                    self.ui_state.is_video = false;
+                    self.ui_state.file_path = Some(path.clone());
+                    self.ui_state.source_info = Some(jupiter_core::frame::SourceInfo {
+                        filename: path.clone(),
+                        total_frames: 1,
+                        width,
+                        height,
+                        bit_depth: 16,
+                        color_mode: if matches!(output, PipelineOutput::Color(_)) {
+                            jupiter_core::frame::ColorMode::RGB
+                        } else {
+                            jupiter_core::frame::ColorMode::Mono
+                        },
+                        observer: None,
+                        telescope: None,
+                        instrument: None,
+                    });
+                    self.ui_state.crop_state = Default::default();
+                    self.ui_state.frames_scored = None;
+                    self.ui_state.ranked_preview.clear();
+                    self.ui_state.align_status = None;
+                    self.ui_state.stack_status = None;
+                    self.ui_state.sharpen_status = false;
+                    self.ui_state.filter_status = None;
+                    self.ui_state.clear_all_dirty();
+                    self.ui_state.progress_items_done = None;
+                    self.ui_state.progress_items_total = None;
+                    self.viewport.zoom = 1.0;
+                    self.viewport.pan_offset = egui::Vec2::ZERO;
+                    self.ui_state.add_log(format!(
+                        "Opened image: {} ({}x{})",
+                        path.display(),
+                        width,
+                        height,
+                    ));
+                    self.update_viewport_from_output(ctx, &output, "Loaded Image");
+                }
                 WorkerResult::CropComplete { output_path, elapsed } => {
                     self.ui_state.running_stage = None;
                     self.ui_state.crop_state.is_saving = false;
+                    self.ui_state.crop_state.active = false;
+                    self.ui_state.crop_state.rect = None;
                     self.ui_state.add_log(format!(
                         "Crop saved: {} ({})",
                         output_path.display(),
                         format_duration(elapsed)
                     ));
+
+                    // Reopen the cropped file
+                    let cmd = match output_path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .map(|e| e.to_ascii_lowercase())
+                        .as_deref()
+                    {
+                        Some("ser") => WorkerCommand::LoadFileInfo {
+                            path: output_path,
+                        },
+                        _ => WorkerCommand::LoadImageFile {
+                            path: output_path,
+                        },
+                    };
+                    self.send_command(cmd);
                 }
                 WorkerResult::ImageSaved { path } => {
                     self.ui_state.running_stage = None;

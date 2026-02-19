@@ -46,3 +46,15 @@ pub const ENHANCED_PHASE_SEARCH_WINDOW: f64 = 1.5;
 
 /// Gaussian blur sigma used for building the pyramid in coarse-to-fine alignment.
 pub const PYRAMID_BLUR_SIGMA: f32 = 1.0;
+
+/// Default number of frames to sample for auto-crop planet detection.
+pub const DEFAULT_AUTOCROP_SAMPLE_COUNT: usize = 1;
+
+/// Default padding fraction around the detected planet for auto-crop (10%).
+pub const DEFAULT_AUTOCROP_PADDING_FRACTION: f32 = 0.1;
+
+/// Default sigma multiplier for MeanPlusSigma thresholding in auto-crop.
+pub const DEFAULT_AUTOCROP_SIGMA_MULTIPLIER: f32 = 2.0;
+
+/// Number of histogram bins for Otsu's thresholding.
+pub const OTSU_HISTOGRAM_BINS: usize = 256;

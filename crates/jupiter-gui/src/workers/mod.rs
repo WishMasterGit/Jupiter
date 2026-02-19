@@ -207,6 +207,15 @@ fn worker_loop(
             } => {
                 io::handle_crop_and_save(&source_path, &output_path, &crop, &tx, &ctx);
             }
+            WorkerCommand::LoadImageFile { path } => {
+                io::handle_load_image_file(&path, &mut cache, &tx, &ctx);
+            }
+            WorkerCommand::CropAndSaveImage { output_path, crop } => {
+                io::handle_crop_and_save_image(&output_path, &crop, &cache, &tx, &ctx);
+            }
+            WorkerCommand::AutoCropAndSave { source_path } => {
+                io::handle_auto_crop_and_save(&source_path, &tx, &ctx);
+            }
         }
     }
 }

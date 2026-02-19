@@ -12,10 +12,13 @@ this is planet image/video processing tool to achieve crisp results from the ear
   - if there are no libraries, create constants so it is easier to understand the meaning (when it applicable)
 - based on research lets use egui as our UI rendering engine to keep it crossplatform
 - app should be crossplatform Windows/Mac/Linux but not mobile phones
+- write tests for all jupiter-core logic
 
 ## Code Style
 
-For the cases when we need to use "match" to branch the logic, lets avoid numeric indexes in matching and instead use named enums
+- For the cases when we need to use "match" to branch the logic, lets avoid numeric indexes in matching and instead use named enums
+
+- Prefer splitting logic into separate files under the folder, for example when you need to implement multiple different worker handlers, create workers folder and make ##\_hanlder.rs for different handlers instead of putting everything into one file
 
 ## Claude workstream
 

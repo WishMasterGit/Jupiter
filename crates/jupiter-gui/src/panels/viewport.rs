@@ -121,7 +121,7 @@ fn draw_viewing_label(ui: &egui::Ui, rect: egui::Rect, label: &str) {
 fn show_placeholder(ui: &mut egui::Ui) {
     ui.centered_and_justified(|ui| {
         ui.label(
-            egui::RichText::new("Open a SER file to begin")
+            egui::RichText::new("Open video or image to begin")
                 .size(18.0)
                 .color(egui::Color32::from_gray(100)),
         );

@@ -1,3 +1,5 @@
+use std::path::{Path, PathBuf};
+
 use crate::app::JupiterApp;
 use crate::messages::WorkerCommand;
 use crate::states::CropAspect;
@@ -101,30 +103,59 @@ pub(super) fn crop_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
 
             let save_enabled = enabled && !app.ui_state.crop_state.is_saving;
             if ui
-                .add_enabled(save_enabled, egui::Button::new("Save Cropped SER..."))
+                .add_enabled(save_enabled, egui::Button::new("Accept Crop"))
                 .clicked()
             {
                 let source_path = app.ui_state.file_path.clone().unwrap();
+                let output_path = auto_crop_path(&source_path, w, h);
                 let crop = core_crop.clone();
 
-                let cmd_tx = app.cmd_tx.clone();
-                std::thread::spawn(move || {
-                    if let Some(output_path) = rfd::FileDialog::new()
-                        .add_filter("SER files", &["ser"])
-                        .set_file_name("cropped.ser")
-                        .save_file()
-                    {
-                        let _ = cmd_tx.send(WorkerCommand::CropAndSave {
-                            source_path,
-                            output_path,
-                            crop,
-                        });
-                    }
-                });
+                if app.ui_state.is_video {
+                    app.send_command(WorkerCommand::CropAndSave {
+                        source_path,
+                        output_path,
+                        crop,
+                    });
+                } else {
+                    app.send_command(WorkerCommand::CropAndSaveImage {
+                        output_path,
+                        crop,
+                    });
+                }
 
                 app.ui_state.crop_state.is_saving = true;
                 app.ui_state.running_stage = Some(PipelineStage::Cropping);
             }
         });
     }
+
+    // Auto Crop button — only for video (SER) files
+    if app.ui_state.is_video {
+        ui.add_space(4.0);
+        let auto_crop_enabled = enabled && !app.ui_state.crop_state.is_saving;
+        if ui
+            .add_enabled(auto_crop_enabled, egui::Button::new("Auto Crop"))
+            .on_hover_text("Automatically detect the planet and crop")
+            .clicked()
+        {
+            let source_path = app.ui_state.file_path.clone().unwrap();
+            app.send_command(WorkerCommand::AutoCropAndSave { source_path });
+            app.ui_state.crop_state.is_saving = true;
+            app.ui_state.running_stage = Some(PipelineStage::Cropping);
+        }
+    }
+}
+
+/// Generate an output path like `{stem}_crop{W}x{H}.{ext}`.
+fn auto_crop_path(source: &Path, crop_w: u32, crop_h: u32) -> PathBuf {
+    let stem = source
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("output");
+    let ext = source
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("tiff");
+    let parent = source.parent().unwrap_or(Path::new("."));
+    parent.join(format!("{stem}_crop{crop_w}x{crop_h}.{ext}"))
 }

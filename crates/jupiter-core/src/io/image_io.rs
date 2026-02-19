@@ -5,6 +5,7 @@ use ndarray::Array2;
 
 use crate::error::Result;
 use crate::frame::{ColorFrame, Frame};
+use crate::io::crop::CropRect;
 
 /// Save a frame as 16-bit grayscale TIFF.
 pub fn save_tiff(frame: &Frame, path: &Path) -> Result<()> {
@@ -117,4 +118,55 @@ pub fn load_image(path: &Path) -> Result<Frame> {
     }
 
     Ok(Frame::new(data, 16))
+}
+
+/// Load a color image file (TIFF/PNG/JPG) into a ColorFrame.
+pub fn load_color_image(path: &Path) -> Result<ColorFrame> {
+    let img = image::open(path)?;
+    let rgb = img.to_rgb16();
+    let (w, h) = rgb.dimensions();
+
+    let mut r_data = Array2::<f32>::zeros((h as usize, w as usize));
+    let mut g_data = Array2::<f32>::zeros((h as usize, w as usize));
+    let mut b_data = Array2::<f32>::zeros((h as usize, w as usize));
+
+    for row in 0..h as usize {
+        for col in 0..w as usize {
+            let pixel = rgb.get_pixel(col as u32, row as u32);
+            r_data[[row, col]] = pixel.0[0] as f32 / 65535.0;
+            g_data[[row, col]] = pixel.0[1] as f32 / 65535.0;
+            b_data[[row, col]] = pixel.0[2] as f32 / 65535.0;
+        }
+    }
+
+    Ok(ColorFrame {
+        red: Frame::new(r_data, 16),
+        green: Frame::new(g_data, 16),
+        blue: Frame::new(b_data, 16),
+    })
+}
+
+/// Detect whether an image file has color (RGB) content.
+pub fn is_color_image(path: &Path) -> Result<bool> {
+    let img = image::open(path)?;
+    Ok(img.color().has_color())
+}
+
+/// Crop a mono Frame to the given rectangle.
+pub fn crop_frame(frame: &Frame, crop: &CropRect) -> Frame {
+    let x = crop.x as usize;
+    let y = crop.y as usize;
+    let w = crop.width as usize;
+    let h = crop.height as usize;
+    let data = frame.data.slice(ndarray::s![y..y + h, x..x + w]).to_owned();
+    Frame::new(data, frame.original_bit_depth)
+}
+
+/// Crop a ColorFrame to the given rectangle.
+pub fn crop_color_frame(color: &ColorFrame, crop: &CropRect) -> ColorFrame {
+    ColorFrame {
+        red: crop_frame(&color.red, crop),
+        green: crop_frame(&color.green, crop),
+        blue: crop_frame(&color.blue, crop),
+    }
 }

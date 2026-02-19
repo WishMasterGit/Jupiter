@@ -33,6 +33,8 @@ enum Commands {
     Run(commands::pipeline::RunArgs),
     /// Print or save a default pipeline config as TOML
     Config(commands::config::ConfigArgs),
+    /// Auto-detect planet and crop SER file
+    AutoCrop(commands::auto_crop::AutoCropArgs),
 }
 
 fn main() -> Result<()> {
@@ -53,5 +55,6 @@ fn main() -> Result<()> {
         Commands::Filter(args) => commands::filter::run(args),
         Commands::Run(args) => commands::pipeline::run(args),
         Commands::Config(args) => commands::config::run(args),
+        Commands::AutoCrop(args) => commands::auto_crop::run(args),
     }
 }

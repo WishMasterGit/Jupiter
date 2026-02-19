@@ -58,6 +58,18 @@ pub enum WorkerCommand {
         output_path: PathBuf,
         crop: CropRect,
     },
+
+    /// Open and display a single image file (TIFF/PNG/JPG).
+    LoadImageFile { path: PathBuf },
+
+    /// Crop the currently loaded single image, save, and reopen.
+    CropAndSaveImage {
+        output_path: PathBuf,
+        crop: CropRect,
+    },
+
+    /// Auto-detect planet and crop a SER file, then save and reopen.
+    AutoCropAndSave { source_path: PathBuf },
 }
 
 /// Results sent from worker thread back to UI thread.
@@ -117,6 +129,14 @@ pub enum WorkerResult {
     CropComplete {
         output_path: PathBuf,
         elapsed: Duration,
+    },
+
+    /// Single image loaded and ready for editing.
+    ImageLoaded {
+        path: PathBuf,
+        output: PipelineOutput,
+        width: u32,
+        height: u32,
     },
     ImageSaved {
         path: PathBuf,

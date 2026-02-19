@@ -1,3 +1,4 @@
+pub mod auto_crop;
 pub mod config;
 pub mod filter;
 pub mod info;

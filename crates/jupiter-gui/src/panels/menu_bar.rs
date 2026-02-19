@@ -73,11 +73,16 @@ fn open_file(app: &mut JupiterApp) {
     let cmd_tx = app.cmd_tx.clone();
     std::thread::spawn(move || {
         if let Some(path) = rfd::FileDialog::new()
-            .add_filter("SER files", &["ser"])
+            .add_filter("Video files", &["ser"])
+            .add_filter("Image files", &["tiff", "tif", "png", "jpg", "jpeg"])
             .add_filter("All files", &["*"])
             .pick_file()
         {
-            let _ = cmd_tx.send(WorkerCommand::LoadFileInfo { path });
+            let cmd = match path.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref() {
+                Some("ser") => WorkerCommand::LoadFileInfo { path },
+                _ => WorkerCommand::LoadImageFile { path },
+            };
+            let _ = cmd_tx.send(cmd);
         }
     });
 }
