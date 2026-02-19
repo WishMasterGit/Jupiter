@@ -1,5 +1,5 @@
 /target
-#*.ser
+*.ser
 *.avi
 *.tiff
 test-data/
