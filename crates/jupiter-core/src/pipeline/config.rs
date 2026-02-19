@@ -89,7 +89,7 @@ impl Default for FrameSelectionConfig {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, Default)]
 pub enum QualityMetric {
     #[default]
     Laplacian,

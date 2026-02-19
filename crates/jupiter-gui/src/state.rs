@@ -1,8 +1,9 @@
+use std::fmt;
 use std::path::PathBuf;
 
+use jupiter_core::color::debayer::DebayerMethod;
 use jupiter_core::compute::DevicePreference;
 use jupiter_core::frame::SourceInfo;
-use jupiter_core::color::debayer::DebayerMethod;
 use jupiter_core::pipeline::config::{
     AlignmentConfig, AlignmentMethod, CentroidConfig, DebayerConfig, DeconvolutionConfig,
     DeconvolutionMethod, EnhancedPhaseConfig, FilterStep, FrameSelectionConfig, PipelineConfig,
@@ -13,6 +14,10 @@ use jupiter_core::sharpen::wavelet::WaveletParams;
 use jupiter_core::stack::drizzle::DrizzleConfig;
 use jupiter_core::stack::multi_point::MultiPointConfig;
 use jupiter_core::stack::sigma_clip::SigmaClipParams;
+
+// ---------------------------------------------------------------------------
+// Crop types
+// ---------------------------------------------------------------------------
 
 /// Crop rectangle in image pixel coordinates.
 #[derive(Clone, Debug)]
@@ -71,16 +76,47 @@ impl CropRectPixels {
     }
 }
 
-pub const CROP_ASPECT_NAMES: &[&str] = &["Free", "1:1", "3:4", "4:3", "16:9"];
+/// Crop aspect ratio presets.
+#[derive(Clone, Copy, PartialEq, Default)]
+pub enum CropAspect {
+    #[default]
+    Free,
+    Square,
+    ThreeByFour,
+    FourByThree,
+    SixteenByNine,
+}
 
-/// Return the width/height ratio for the given aspect ratio index, or `None` for free.
-pub fn crop_aspect_value(index: usize) -> Option<f32> {
-    match index {
-        1 => Some(1.0),
-        2 => Some(3.0 / 4.0),
-        3 => Some(4.0 / 3.0),
-        4 => Some(16.0 / 9.0),
-        _ => None,
+impl CropAspect {
+    pub const ALL: &[Self] = &[
+        Self::Free,
+        Self::Square,
+        Self::ThreeByFour,
+        Self::FourByThree,
+        Self::SixteenByNine,
+    ];
+
+    /// Return the width/height ratio, or `None` for free.
+    pub fn ratio(&self) -> Option<f32> {
+        match self {
+            Self::Free => None,
+            Self::Square => Some(1.0),
+            Self::ThreeByFour => Some(3.0 / 4.0),
+            Self::FourByThree => Some(4.0 / 3.0),
+            Self::SixteenByNine => Some(16.0 / 9.0),
+        }
+    }
+}
+
+impl fmt::Display for CropAspect {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Free => write!(f, "Free"),
+            Self::Square => write!(f, "1:1"),
+            Self::ThreeByFour => write!(f, "3:4"),
+            Self::FourByThree => write!(f, "4:3"),
+            Self::SixteenByNine => write!(f, "16:9"),
+        }
     }
 }
 
@@ -95,13 +131,191 @@ pub struct CropState {
     pub drag_start: Option<egui::Pos2>,
     /// Worker processing flag.
     pub is_saving: bool,
-    /// Selected aspect ratio index into `CROP_ASPECT_NAMES`.
-    pub aspect_ratio_index: usize,
+    /// Selected aspect ratio.
+    pub aspect_ratio: CropAspect,
     /// True when the user is dragging to move an existing crop rect.
     pub moving: bool,
     /// Offset from pointer (image coords) to crop rect top-left when move started.
     pub move_offset: Option<egui::Vec2>,
 }
+
+// ---------------------------------------------------------------------------
+// GUI choice enums for data-carrying core enums
+// ---------------------------------------------------------------------------
+
+/// Alignment method selector (no associated data — just the discriminant).
+#[derive(Clone, Copy, PartialEq, Default)]
+pub enum AlignMethodChoice {
+    #[default]
+    PhaseCorrelation,
+    EnhancedPhase,
+    Centroid,
+    GradientCorrelation,
+    Pyramid,
+}
+
+impl AlignMethodChoice {
+    pub const ALL: &[Self] = &[
+        Self::PhaseCorrelation,
+        Self::EnhancedPhase,
+        Self::Centroid,
+        Self::GradientCorrelation,
+        Self::Pyramid,
+    ];
+}
+
+impl fmt::Display for AlignMethodChoice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::PhaseCorrelation => write!(f, "Phase Correlation"),
+            Self::EnhancedPhase => write!(f, "Enhanced Phase"),
+            Self::Centroid => write!(f, "Centroid"),
+            Self::GradientCorrelation => write!(f, "Gradient Correlation"),
+            Self::Pyramid => write!(f, "Pyramid"),
+        }
+    }
+}
+
+/// Stacking method selector.
+#[derive(Clone, Copy, PartialEq, Default)]
+pub enum StackMethodChoice {
+    #[default]
+    Mean,
+    Median,
+    SigmaClip,
+    MultiPoint,
+    Drizzle,
+}
+
+impl StackMethodChoice {
+    pub const ALL: &[Self] = &[
+        Self::Mean,
+        Self::Median,
+        Self::SigmaClip,
+        Self::MultiPoint,
+        Self::Drizzle,
+    ];
+}
+
+impl fmt::Display for StackMethodChoice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Mean => write!(f, "Mean"),
+            Self::Median => write!(f, "Median"),
+            Self::SigmaClip => write!(f, "Sigma Clip"),
+            Self::MultiPoint => write!(f, "Multi-Point"),
+            Self::Drizzle => write!(f, "Drizzle"),
+        }
+    }
+}
+
+/// Deconvolution method selector.
+#[derive(Clone, Copy, PartialEq, Default)]
+pub enum DeconvMethodChoice {
+    #[default]
+    RichardsonLucy,
+    Wiener,
+}
+
+impl DeconvMethodChoice {
+    pub const ALL: &[Self] = &[Self::RichardsonLucy, Self::Wiener];
+}
+
+impl fmt::Display for DeconvMethodChoice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::RichardsonLucy => write!(f, "Richardson-Lucy"),
+            Self::Wiener => write!(f, "Wiener"),
+        }
+    }
+}
+
+/// PSF model selector.
+#[derive(Clone, Copy, PartialEq, Default)]
+pub enum PsfModelChoice {
+    #[default]
+    Gaussian,
+    Kolmogorov,
+    Airy,
+}
+
+impl PsfModelChoice {
+    pub const ALL: &[Self] = &[Self::Gaussian, Self::Kolmogorov, Self::Airy];
+}
+
+impl fmt::Display for PsfModelChoice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Gaussian => write!(f, "Gaussian"),
+            Self::Kolmogorov => write!(f, "Kolmogorov"),
+            Self::Airy => write!(f, "Airy"),
+        }
+    }
+}
+
+/// Filter type selector (for the "Add Filter" menu).
+#[derive(Clone, Copy, PartialEq)]
+pub enum FilterType {
+    AutoStretch,
+    HistogramStretch,
+    Gamma,
+    BrightnessContrast,
+    UnsharpMask,
+    GaussianBlur,
+}
+
+impl FilterType {
+    pub const ALL: &[Self] = &[
+        Self::AutoStretch,
+        Self::HistogramStretch,
+        Self::Gamma,
+        Self::BrightnessContrast,
+        Self::UnsharpMask,
+        Self::GaussianBlur,
+    ];
+
+    /// Create a `FilterStep` with default parameters for this filter type.
+    pub fn default_step(&self) -> FilterStep {
+        match self {
+            Self::AutoStretch => FilterStep::AutoStretch {
+                low_percentile: 0.001,
+                high_percentile: 0.999,
+            },
+            Self::HistogramStretch => FilterStep::HistogramStretch {
+                black_point: 0.0,
+                white_point: 1.0,
+            },
+            Self::Gamma => FilterStep::Gamma(1.0),
+            Self::BrightnessContrast => FilterStep::BrightnessContrast {
+                brightness: 0.0,
+                contrast: 1.0,
+            },
+            Self::UnsharpMask => FilterStep::UnsharpMask {
+                radius: 1.5,
+                amount: 0.5,
+                threshold: 0.0,
+            },
+            Self::GaussianBlur => FilterStep::GaussianBlur { sigma: 1.0 },
+        }
+    }
+}
+
+impl fmt::Display for FilterType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AutoStretch => write!(f, "Auto Stretch"),
+            Self::HistogramStretch => write!(f, "Histogram Stretch"),
+            Self::Gamma => write!(f, "Gamma"),
+            Self::BrightnessContrast => write!(f, "Brightness/Contrast"),
+            Self::UnsharpMask => write!(f, "Unsharp Mask"),
+            Self::GaussianBlur => write!(f, "Gaussian Blur"),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// UI State
+// ---------------------------------------------------------------------------
 
 /// Overall UI state.
 #[derive(Default)]
@@ -189,6 +403,10 @@ impl UIState {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Viewport
+// ---------------------------------------------------------------------------
+
 /// Viewport display state.
 pub struct ViewportState {
     pub texture: Option<egui::TextureHandle>,
@@ -214,26 +432,28 @@ impl Default for ViewportState {
     }
 }
 
-pub const DEBAYER_METHOD_NAMES: &[&str] = &["Bilinear", "Malvar-He-Cutler"];
+// ---------------------------------------------------------------------------
+// Config State
+// ---------------------------------------------------------------------------
 
 /// All pipeline configuration parameters as editable UI fields.
 pub struct ConfigState {
     // Debayering
     pub debayer_enabled: bool,
-    pub debayer_method_index: usize,
+    pub debayer_method: DebayerMethod,
 
     // Frame selection
     pub quality_metric: QualityMetric,
     pub select_percentage: f32,
 
     // Alignment
-    pub align_method_index: usize,
+    pub align_method: AlignMethodChoice,
     pub enhanced_phase_upsample: usize,
     pub centroid_threshold: f32,
     pub pyramid_levels: usize,
 
     // Stacking
-    pub stack_method_index: usize,
+    pub stack_method_choice: StackMethodChoice,
     // Sigma clip params
     pub sigma_clip_sigma: f32,
     pub sigma_clip_iterations: usize,
@@ -253,10 +473,10 @@ pub struct ConfigState {
     pub wavelet_denoise: Vec<f32>,
     // Deconvolution
     pub deconv_enabled: bool,
-    pub deconv_method_index: usize,
+    pub deconv_method: DeconvMethodChoice,
     pub rl_iterations: usize,
     pub wiener_noise_ratio: f32,
-    pub psf_model_index: usize,
+    pub psf_model: PsfModelChoice,
     pub psf_gaussian_sigma: f32,
     pub psf_kolmogorov_seeing: f32,
     pub psf_airy_radius: f32,
@@ -265,45 +485,24 @@ pub struct ConfigState {
     pub filters: Vec<FilterStep>,
 
     // Device
-    pub device_index: usize,
+    pub device: DevicePreference,
 }
-
-pub const ALIGN_METHOD_NAMES: &[&str] = &[
-    "Phase Correlation",
-    "Enhanced Phase",
-    "Centroid",
-    "Gradient Correlation",
-    "Pyramid",
-];
-pub const STACK_METHOD_NAMES: &[&str] = &["Mean", "Median", "Sigma Clip", "Multi-Point", "Drizzle"];
-pub const DECONV_METHOD_NAMES: &[&str] = &["Richardson-Lucy", "Wiener"];
-pub const PSF_MODEL_NAMES: &[&str] = &["Gaussian", "Kolmogorov", "Airy"];
-pub const DEVICE_NAMES: &[&str] = &["Auto", "CPU", "GPU", "CUDA"];
-pub const METRIC_NAMES: &[&str] = &["Laplacian", "Gradient"];
-pub const FILTER_TYPE_NAMES: &[&str] = &[
-    "Auto Stretch",
-    "Histogram Stretch",
-    "Gamma",
-    "Brightness/Contrast",
-    "Unsharp Mask",
-    "Gaussian Blur",
-];
 
 impl Default for ConfigState {
     fn default() -> Self {
         Self {
             debayer_enabled: true,
-            debayer_method_index: 0,
+            debayer_method: DebayerMethod::default(),
 
             quality_metric: QualityMetric::default(),
             select_percentage: 0.25,
 
-            align_method_index: 0,
+            align_method: AlignMethodChoice::default(),
             enhanced_phase_upsample: 20,
             centroid_threshold: 0.1,
             pyramid_levels: 3,
 
-            stack_method_index: 0,
+            stack_method_choice: StackMethodChoice::default(),
             sigma_clip_sigma: 2.5,
             sigma_clip_iterations: 2,
             mp_ap_size: 64,
@@ -318,17 +517,17 @@ impl Default for ConfigState {
             wavelet_coefficients: vec![1.5, 1.3, 1.2, 1.1, 1.0, 1.0],
             wavelet_denoise: vec![],
             deconv_enabled: false,
-            deconv_method_index: 0,
+            deconv_method: DeconvMethodChoice::default(),
             rl_iterations: 20,
             wiener_noise_ratio: 0.01,
-            psf_model_index: 0,
+            psf_model: PsfModelChoice::default(),
             psf_gaussian_sigma: 1.5,
             psf_kolmogorov_seeing: 2.0,
             psf_airy_radius: 3.0,
 
             filters: Vec::new(),
 
-            device_index: 0,
+            device: DevicePreference::default(),
         }
     }
 }
@@ -336,56 +535,51 @@ impl Default for ConfigState {
 impl ConfigState {
     pub fn alignment_config(&self) -> AlignmentConfig {
         AlignmentConfig {
-            method: match self.align_method_index {
-                1 => AlignmentMethod::EnhancedPhaseCorrelation(EnhancedPhaseConfig {
-                    upsample_factor: self.enhanced_phase_upsample,
-                }),
-                2 => AlignmentMethod::Centroid(CentroidConfig {
+            method: match self.align_method {
+                AlignMethodChoice::EnhancedPhase => {
+                    AlignmentMethod::EnhancedPhaseCorrelation(EnhancedPhaseConfig {
+                        upsample_factor: self.enhanced_phase_upsample,
+                    })
+                }
+                AlignMethodChoice::Centroid => AlignmentMethod::Centroid(CentroidConfig {
                     threshold: self.centroid_threshold,
                 }),
-                3 => AlignmentMethod::GradientCorrelation,
-                4 => AlignmentMethod::Pyramid(PyramidConfig {
+                AlignMethodChoice::GradientCorrelation => AlignmentMethod::GradientCorrelation,
+                AlignMethodChoice::Pyramid => AlignmentMethod::Pyramid(PyramidConfig {
                     levels: self.pyramid_levels,
                 }),
-                _ => AlignmentMethod::PhaseCorrelation,
+                AlignMethodChoice::PhaseCorrelation => AlignmentMethod::PhaseCorrelation,
             },
         }
     }
 
     pub fn stack_method(&self) -> StackMethod {
-        match self.stack_method_index {
-            0 => StackMethod::Mean,
-            1 => StackMethod::Median,
-            2 => StackMethod::SigmaClip(SigmaClipParams {
+        match self.stack_method_choice {
+            StackMethodChoice::Mean => StackMethod::Mean,
+            StackMethodChoice::Median => StackMethod::Median,
+            StackMethodChoice::SigmaClip => StackMethod::SigmaClip(SigmaClipParams {
                 sigma: self.sigma_clip_sigma,
                 iterations: self.sigma_clip_iterations,
             }),
-            3 => StackMethod::MultiPoint(MultiPointConfig {
+            StackMethodChoice::MultiPoint => StackMethod::MultiPoint(MultiPointConfig {
                 ap_size: self.mp_ap_size,
                 search_radius: self.mp_search_radius,
                 select_percentage: self.select_percentage,
                 min_brightness: self.mp_min_brightness,
-                quality_metric: self.quality_metric.clone(),
+                quality_metric: self.quality_metric,
                 local_stack_method: Default::default(),
             }),
-            4 => StackMethod::Drizzle(DrizzleConfig {
+            StackMethodChoice::Drizzle => StackMethod::Drizzle(DrizzleConfig {
                 scale: self.drizzle_scale,
                 pixfrac: self.drizzle_pixfrac,
                 quality_weighted: self.drizzle_quality_weighted,
                 kernel: Default::default(),
             }),
-            _ => StackMethod::Mean,
         }
     }
 
     pub fn device_preference(&self) -> DevicePreference {
-        match self.device_index {
-            0 => DevicePreference::Auto,
-            1 => DevicePreference::Cpu,
-            2 => DevicePreference::Gpu,
-            3 => DevicePreference::Cuda,
-            _ => DevicePreference::Auto,
-        }
+        self.device
     }
 
     pub fn sharpening_config(&self) -> Option<SharpeningConfig> {
@@ -393,22 +587,22 @@ impl ConfigState {
             return None;
         }
         let deconvolution = if self.deconv_enabled {
-            let method = match self.deconv_method_index {
-                0 => DeconvolutionMethod::RichardsonLucy {
+            let method = match self.deconv_method {
+                DeconvMethodChoice::RichardsonLucy => DeconvolutionMethod::RichardsonLucy {
                     iterations: self.rl_iterations,
                 },
-                _ => DeconvolutionMethod::Wiener {
+                DeconvMethodChoice::Wiener => DeconvolutionMethod::Wiener {
                     noise_ratio: self.wiener_noise_ratio,
                 },
             };
-            let psf = match self.psf_model_index {
-                0 => PsfModel::Gaussian {
+            let psf = match self.psf_model {
+                PsfModelChoice::Gaussian => PsfModel::Gaussian {
                     sigma: self.psf_gaussian_sigma,
                 },
-                1 => PsfModel::Kolmogorov {
+                PsfModelChoice::Kolmogorov => PsfModel::Kolmogorov {
                     seeing: self.psf_kolmogorov_seeing,
                 },
-                _ => PsfModel::Airy {
+                PsfModelChoice::Airy => PsfModel::Airy {
                     radius: self.psf_airy_radius,
                 },
             };
@@ -430,17 +624,18 @@ impl ConfigState {
     pub fn debayer_config(&self) -> Option<DebayerConfig> {
         if self.debayer_enabled {
             Some(DebayerConfig {
-                method: match self.debayer_method_index {
-                    0 => DebayerMethod::Bilinear,
-                    _ => DebayerMethod::MalvarHeCutler,
-                },
+                method: self.debayer_method.clone(),
             })
         } else {
             None
         }
     }
 
-    pub fn to_pipeline_config(&self, input: &std::path::Path, output: &std::path::Path) -> PipelineConfig {
+    pub fn to_pipeline_config(
+        &self,
+        input: &std::path::Path,
+        output: &std::path::Path,
+    ) -> PipelineConfig {
         PipelineConfig {
             input: input.to_path_buf(),
             output: output.to_path_buf(),
@@ -449,7 +644,7 @@ impl ConfigState {
             force_mono: !self.debayer_enabled,
             frame_selection: FrameSelectionConfig {
                 select_percentage: self.select_percentage,
-                metric: self.quality_metric.clone(),
+                metric: self.quality_metric,
             },
             alignment: self.alignment_config(),
             stacking: StackingConfig {
@@ -469,62 +664,61 @@ impl ConfigState {
             state.debayer_enabled = false;
         } else if let Some(ref db) = config.debayer {
             state.debayer_enabled = true;
-            state.debayer_method_index = match db.method {
-                DebayerMethod::Bilinear => 0,
-                DebayerMethod::MalvarHeCutler => 1,
-            };
+            state.debayer_method = db.method.clone();
         }
 
-        state.quality_metric = config.frame_selection.metric.clone();
+        state.quality_metric = config.frame_selection.metric;
         state.select_percentage = config.frame_selection.select_percentage;
 
         // Alignment
         match &config.alignment.method {
-            AlignmentMethod::PhaseCorrelation => state.align_method_index = 0,
+            AlignmentMethod::PhaseCorrelation => {
+                state.align_method = AlignMethodChoice::PhaseCorrelation;
+            }
             AlignmentMethod::EnhancedPhaseCorrelation(p) => {
-                state.align_method_index = 1;
+                state.align_method = AlignMethodChoice::EnhancedPhase;
                 state.enhanced_phase_upsample = p.upsample_factor;
             }
             AlignmentMethod::Centroid(p) => {
-                state.align_method_index = 2;
+                state.align_method = AlignMethodChoice::Centroid;
                 state.centroid_threshold = p.threshold;
             }
-            AlignmentMethod::GradientCorrelation => state.align_method_index = 3,
+            AlignmentMethod::GradientCorrelation => {
+                state.align_method = AlignMethodChoice::GradientCorrelation;
+            }
             AlignmentMethod::Pyramid(p) => {
-                state.align_method_index = 4;
+                state.align_method = AlignMethodChoice::Pyramid;
                 state.pyramid_levels = p.levels;
             }
         }
 
+        // Stacking
         match &config.stacking.method {
-            StackMethod::Mean => state.stack_method_index = 0,
-            StackMethod::Median => state.stack_method_index = 1,
+            StackMethod::Mean => state.stack_method_choice = StackMethodChoice::Mean,
+            StackMethod::Median => state.stack_method_choice = StackMethodChoice::Median,
             StackMethod::SigmaClip(p) => {
-                state.stack_method_index = 2;
+                state.stack_method_choice = StackMethodChoice::SigmaClip;
                 state.sigma_clip_sigma = p.sigma;
                 state.sigma_clip_iterations = p.iterations;
             }
             StackMethod::MultiPoint(p) => {
-                state.stack_method_index = 3;
+                state.stack_method_choice = StackMethodChoice::MultiPoint;
                 state.mp_ap_size = p.ap_size;
                 state.mp_search_radius = p.search_radius;
                 state.mp_min_brightness = p.min_brightness;
             }
             StackMethod::Drizzle(p) => {
-                state.stack_method_index = 4;
+                state.stack_method_choice = StackMethodChoice::Drizzle;
                 state.drizzle_scale = p.scale;
                 state.drizzle_pixfrac = p.pixfrac;
                 state.drizzle_quality_weighted = p.quality_weighted;
             }
         }
 
-        state.device_index = match config.device {
-            DevicePreference::Auto => 0,
-            DevicePreference::Cpu => 1,
-            DevicePreference::Gpu => 2,
-            DevicePreference::Cuda => 3,
-        };
+        // Device
+        state.device = config.device;
 
+        // Sharpening
         if let Some(ref s) = config.sharpening {
             state.sharpen_enabled = true;
             state.wavelet_num_layers = s.wavelet.num_layers;
@@ -534,25 +728,25 @@ impl ConfigState {
                 state.deconv_enabled = true;
                 match &d.method {
                     DeconvolutionMethod::RichardsonLucy { iterations } => {
-                        state.deconv_method_index = 0;
+                        state.deconv_method = DeconvMethodChoice::RichardsonLucy;
                         state.rl_iterations = *iterations;
                     }
                     DeconvolutionMethod::Wiener { noise_ratio } => {
-                        state.deconv_method_index = 1;
+                        state.deconv_method = DeconvMethodChoice::Wiener;
                         state.wiener_noise_ratio = *noise_ratio;
                     }
                 }
                 match &d.psf {
                     PsfModel::Gaussian { sigma } => {
-                        state.psf_model_index = 0;
+                        state.psf_model = PsfModelChoice::Gaussian;
                         state.psf_gaussian_sigma = *sigma;
                     }
                     PsfModel::Kolmogorov { seeing } => {
-                        state.psf_model_index = 1;
+                        state.psf_model = PsfModelChoice::Kolmogorov;
                         state.psf_kolmogorov_seeing = *seeing;
                     }
                     PsfModel::Airy { radius } => {
-                        state.psf_model_index = 2;
+                        state.psf_model = PsfModelChoice::Airy;
                         state.psf_airy_radius = *radius;
                     }
                 }

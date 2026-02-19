@@ -1,6 +1,6 @@
 use crate::app::JupiterApp;
 use crate::messages::WorkerCommand;
-use crate::state::ALIGN_METHOD_NAMES;
+use crate::state::AlignMethodChoice;
 use jupiter_core::pipeline::PipelineStage;
 
 pub(super) fn alignment_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
@@ -24,23 +24,27 @@ pub(super) fn alignment_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
     }
 
     // Method combo
-    if egui::ComboBox::from_label("Align Method")
-        .selected_text(ALIGN_METHOD_NAMES[app.config.align_method_index])
-        .show_index(
-            ui,
-            &mut app.config.align_method_index,
-            ALIGN_METHOD_NAMES.len(),
-            |i| ALIGN_METHOD_NAMES[i].to_string(),
-        )
-        .changed()
-    {
+    let changed = egui::ComboBox::from_label("Align Method")
+        .selected_text(app.config.align_method.to_string())
+        .show_ui(ui, |ui| {
+            let mut changed = false;
+            for &choice in AlignMethodChoice::ALL {
+                if ui
+                    .selectable_value(&mut app.config.align_method, choice, choice.to_string())
+                    .changed()
+                {
+                    changed = true;
+                }
+            }
+            changed
+        });
+    if changed.inner == Some(true) {
         app.ui_state.mark_dirty_from_align();
     }
 
     // Method-specific params
-    match app.config.align_method_index {
-        1 => {
-            // Enhanced phase correlation
+    match app.config.align_method {
+        AlignMethodChoice::EnhancedPhase => {
             let mut upsample = app.config.enhanced_phase_upsample as i32;
             if ui
                 .add(egui::Slider::new(&mut upsample, 2..=100).text("Upsample"))
@@ -50,8 +54,7 @@ pub(super) fn alignment_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
                 app.ui_state.mark_dirty_from_align();
             }
         }
-        2 => {
-            // Centroid
+        AlignMethodChoice::Centroid => {
             if ui
                 .add(
                     egui::Slider::new(&mut app.config.centroid_threshold, 0.0..=0.5)
@@ -62,8 +65,7 @@ pub(super) fn alignment_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
                 app.ui_state.mark_dirty_from_align();
             }
         }
-        4 => {
-            // Pyramid
+        AlignMethodChoice::Pyramid => {
             let mut levels = app.config.pyramid_levels as i32;
             if ui
                 .add(egui::Slider::new(&mut levels, 1..=6).text("Levels"))

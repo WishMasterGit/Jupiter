@@ -5,7 +5,7 @@ use crate::consts::{LUMINANCE_B, LUMINANCE_G, LUMINANCE_R};
 use crate::frame::{ColorFrame, ColorMode, Frame};
 
 /// Debayering (demosaicing) algorithm.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub enum DebayerMethod {
     /// Simple bilinear interpolation — fast, good for planetary stacking.
     #[default]

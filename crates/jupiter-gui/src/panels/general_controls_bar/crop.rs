@@ -1,6 +1,6 @@
 use crate::app::JupiterApp;
 use crate::messages::WorkerCommand;
-use crate::state::{CROP_ASPECT_NAMES, crop_aspect_value};
+use crate::state::CropAspect;
 use jupiter_core::color::debayer::is_bayer;
 use jupiter_core::pipeline::PipelineStage;
 
@@ -13,29 +13,29 @@ pub(super) fn crop_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
     let enabled = file_loaded && !busy;
 
     ui.add_enabled_ui(enabled, |ui| {
-        ui.checkbox(&mut app.ui_state.crop_state.active, "Crop mode");
+        ui.toggle_value(&mut app.ui_state.crop_state.active, "Crop");
 
         if app.ui_state.crop_state.active {
-            let prev_ratio = app.ui_state.crop_state.aspect_ratio_index;
+            let prev_ratio = app.ui_state.crop_state.aspect_ratio;
             ui.horizontal(|ui| {
                 ui.label("Ratio:");
                 egui::ComboBox::from_id_salt("crop_aspect_ratio")
-                    .selected_text(CROP_ASPECT_NAMES[app.ui_state.crop_state.aspect_ratio_index])
+                    .selected_text(app.ui_state.crop_state.aspect_ratio.to_string())
                     .width(80.0)
                     .show_ui(ui, |ui| {
-                        for (i, name) in CROP_ASPECT_NAMES.iter().enumerate() {
+                        for &aspect in CropAspect::ALL {
                             ui.selectable_value(
-                                &mut app.ui_state.crop_state.aspect_ratio_index,
-                                i,
-                                *name,
+                                &mut app.ui_state.crop_state.aspect_ratio,
+                                aspect,
+                                aspect.to_string(),
                             );
                         }
                     });
             });
 
             // Snap existing selection when aspect ratio changes
-            if app.ui_state.crop_state.aspect_ratio_index != prev_ratio {
-                if let Some(ratio) = crop_aspect_value(app.ui_state.crop_state.aspect_ratio_index) {
+            if app.ui_state.crop_state.aspect_ratio != prev_ratio {
+                if let Some(ratio) = app.ui_state.crop_state.aspect_ratio.ratio() {
                     if let Some(ref mut rect) = app.ui_state.crop_state.rect {
                         let (iw, ih) = app
                             .ui_state
@@ -49,6 +49,8 @@ pub(super) fn crop_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
             }
 
             ui.small("Drag to select, drag inside to move");
+        } else {
+            app.ui_state.crop_state.rect = None
         }
     });
 
@@ -85,7 +87,10 @@ pub(super) fn crop_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
 
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            if ui.add_enabled(enabled, egui::Button::new("Clear")).clicked() {
+            if ui
+                .add_enabled(enabled, egui::Button::new("Clear"))
+                .clicked()
+            {
                 app.ui_state.crop_state.rect = None;
             }
 

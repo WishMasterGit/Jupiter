@@ -13,6 +13,10 @@ this is planet image/video processing tool to achieve crisp results from the ear
 - based on research lets use egui as our UI rendering engine to keep it crossplatform
 - app should be crossplatform Windows/Mac/Linux but not mobile phones
 
+## Code Style
+
+For the cases when we need to use "match" to branch the logic, lets avoid numeric indexes in matching and instead use named enums
+
 ## Claude workstream
 
 - make sure to build with features gpu and normally while testing

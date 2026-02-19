@@ -1,6 +1,6 @@
 use crate::app::JupiterApp;
 use crate::messages::WorkerCommand;
-use crate::state::DEVICE_NAMES;
+use jupiter_core::compute::DevicePreference;
 use jupiter_core::pipeline::PipelineStage;
 
 pub(super) fn device_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
@@ -8,9 +8,16 @@ pub(super) fn device_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
     ui.add_space(4.0);
 
     egui::ComboBox::from_label("Device")
-        .selected_text(DEVICE_NAMES[app.config.device_index])
-        .show_index(ui, &mut app.config.device_index, DEVICE_NAMES.len(), |i| {
-            DEVICE_NAMES[i].to_string()
+        .selected_text(app.config.device.to_string())
+        .show_ui(ui, |ui| {
+            for &pref in &[
+                DevicePreference::Auto,
+                DevicePreference::Cpu,
+                DevicePreference::Gpu,
+                DevicePreference::Cuda,
+            ] {
+                ui.selectable_value(&mut app.config.device, pref, pref.to_string());
+            }
         });
 }
 

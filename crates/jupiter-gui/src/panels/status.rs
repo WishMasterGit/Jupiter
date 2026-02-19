@@ -44,8 +44,7 @@ pub fn show(ctx: &egui::Context, app: &mut JupiterApp) {
             }
             ui.small(format!("Zoom: {:.0}%", app.viewport.zoom * 100.0));
             ui.separator();
-            let device_name = crate::state::DEVICE_NAMES[app.config.device_index];
-            ui.small(format!("Device: {device_name}"));
+            ui.small(format!("Device: {}", app.config.device));
         });
 
         ui.add_space(2.0);

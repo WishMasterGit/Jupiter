@@ -1,6 +1,6 @@
 use crate::app::JupiterApp;
 use crate::messages::WorkerCommand;
-use crate::state::FILTER_TYPE_NAMES;
+use crate::state::FilterType;
 use jupiter_core::pipeline::config::FilterStep;
 use jupiter_core::pipeline::PipelineStage;
 
@@ -100,30 +100,9 @@ pub(super) fn filter_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
 
     // Add filter menu
     ui.menu_button("+ Add Filter", |ui| {
-        for (i, name) in FILTER_TYPE_NAMES.iter().enumerate() {
-            if ui.button(*name).clicked() {
-                let filter = match i {
-                    0 => FilterStep::AutoStretch {
-                        low_percentile: 0.001,
-                        high_percentile: 0.999,
-                    },
-                    1 => FilterStep::HistogramStretch {
-                        black_point: 0.0,
-                        white_point: 1.0,
-                    },
-                    2 => FilterStep::Gamma(1.0),
-                    3 => FilterStep::BrightnessContrast {
-                        brightness: 0.0,
-                        contrast: 1.0,
-                    },
-                    4 => FilterStep::UnsharpMask {
-                        radius: 1.5,
-                        amount: 0.5,
-                        threshold: 0.0,
-                    },
-                    _ => FilterStep::GaussianBlur { sigma: 1.0 },
-                };
-                app.config.filters.push(filter);
+        for &filter_type in FilterType::ALL {
+            if ui.button(filter_type.to_string()).clicked() {
+                app.config.filters.push(filter_type.default_step());
                 app.ui_state.filter_params_dirty = true;
                 ui.close();
             }

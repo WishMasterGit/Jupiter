@@ -1,6 +1,6 @@
 use crate::app::JupiterApp;
 use crate::messages::WorkerCommand;
-use crate::state::{DECONV_METHOD_NAMES, PSF_MODEL_NAMES};
+use crate::state::{DeconvMethodChoice, PsfModelChoice};
 use jupiter_core::pipeline::PipelineStage;
 
 pub(super) fn sharpen_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
@@ -44,25 +44,33 @@ pub(super) fn sharpen_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
         }
 
         if app.config.deconv_enabled {
-            if egui::ComboBox::from_label("Deconv")
-                .selected_text(DECONV_METHOD_NAMES[app.config.deconv_method_index])
-                .show_index(ui, &mut app.config.deconv_method_index, DECONV_METHOD_NAMES.len(), |i| {
-                    DECONV_METHOD_NAMES[i].to_string()
-                })
-                .changed()
-            {
+            let changed = egui::ComboBox::from_label("Deconv")
+                .selected_text(app.config.deconv_method.to_string())
+                .show_ui(ui, |ui| {
+                    let mut changed = false;
+                    for &choice in DeconvMethodChoice::ALL {
+                        if ui
+                            .selectable_value(&mut app.config.deconv_method, choice, choice.to_string())
+                            .changed()
+                        {
+                            changed = true;
+                        }
+                    }
+                    changed
+                });
+            if changed.inner == Some(true) {
                 app.ui_state.mark_dirty_from_sharpen();
             }
 
-            match app.config.deconv_method_index {
-                0 => {
+            match app.config.deconv_method {
+                DeconvMethodChoice::RichardsonLucy => {
                     let mut iter = app.config.rl_iterations as i32;
                     if ui.add(egui::Slider::new(&mut iter, 1..=100).text("Iterations")).changed() {
                         app.config.rl_iterations = iter as usize;
                         app.ui_state.mark_dirty_from_sharpen();
                     }
                 }
-                _ => {
+                DeconvMethodChoice::Wiener => {
                     if ui.add(egui::Slider::new(&mut app.config.wiener_noise_ratio, 0.001..=0.1).text("Noise Ratio").logarithmic(true)).changed() {
                         app.ui_state.mark_dirty_from_sharpen();
                     }
@@ -70,28 +78,36 @@ pub(super) fn sharpen_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
             }
 
             // PSF model
-            if egui::ComboBox::from_label("PSF")
-                .selected_text(PSF_MODEL_NAMES[app.config.psf_model_index])
-                .show_index(ui, &mut app.config.psf_model_index, PSF_MODEL_NAMES.len(), |i| {
-                    PSF_MODEL_NAMES[i].to_string()
-                })
-                .changed()
-            {
+            let changed = egui::ComboBox::from_label("PSF")
+                .selected_text(app.config.psf_model.to_string())
+                .show_ui(ui, |ui| {
+                    let mut changed = false;
+                    for &choice in PsfModelChoice::ALL {
+                        if ui
+                            .selectable_value(&mut app.config.psf_model, choice, choice.to_string())
+                            .changed()
+                        {
+                            changed = true;
+                        }
+                    }
+                    changed
+                });
+            if changed.inner == Some(true) {
                 app.ui_state.mark_dirty_from_sharpen();
             }
 
-            match app.config.psf_model_index {
-                0 => {
+            match app.config.psf_model {
+                PsfModelChoice::Gaussian => {
                     if ui.add(egui::Slider::new(&mut app.config.psf_gaussian_sigma, 0.5..=5.0).text("Sigma")).changed() {
                         app.ui_state.mark_dirty_from_sharpen();
                     }
                 }
-                1 => {
+                PsfModelChoice::Kolmogorov => {
                     if ui.add(egui::Slider::new(&mut app.config.psf_kolmogorov_seeing, 0.5..=10.0).text("Seeing")).changed() {
                         app.ui_state.mark_dirty_from_sharpen();
                     }
                 }
-                _ => {
+                PsfModelChoice::Airy => {
                     if ui.add(egui::Slider::new(&mut app.config.psf_airy_radius, 0.5..=10.0).text("Radius")).changed() {
                         app.ui_state.mark_dirty_from_sharpen();
                     }

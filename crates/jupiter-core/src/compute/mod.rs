@@ -9,7 +9,7 @@ pub mod cpu;
 pub mod wgpu_backend;
 
 /// Device preference for compute operations.
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, Default)]
 pub enum DevicePreference {
     #[default]
     Auto,

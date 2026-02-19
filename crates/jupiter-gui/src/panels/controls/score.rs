@@ -1,6 +1,5 @@
 use crate::app::JupiterApp;
 use crate::messages::WorkerCommand;
-use crate::state::METRIC_NAMES;
 use jupiter_core::pipeline::config::QualityMetric;
 use jupiter_core::pipeline::PipelineStage;
 
@@ -17,19 +16,21 @@ pub(super) fn score_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
     ui.add_space(4.0);
 
     // Metric combo
-    let mut metric_idx = match app.config.quality_metric {
-        QualityMetric::Laplacian => 0,
-        QualityMetric::Gradient => 1,
-    };
-    let changed_metric = egui::ComboBox::from_label("Metric")
-        .selected_text(METRIC_NAMES[metric_idx])
-        .show_index(ui, &mut metric_idx, METRIC_NAMES.len(), |i| METRIC_NAMES[i].to_string())
-        .changed();
-    if changed_metric {
-        app.config.quality_metric = match metric_idx {
-            0 => QualityMetric::Laplacian,
-            _ => QualityMetric::Gradient,
-        };
+    let changed = egui::ComboBox::from_label("Metric")
+        .selected_text(app.config.quality_metric.to_string())
+        .show_ui(ui, |ui| {
+            let mut changed = false;
+            for &metric in &[QualityMetric::Laplacian, QualityMetric::Gradient] {
+                if ui
+                    .selectable_value(&mut app.config.quality_metric, metric, metric.to_string())
+                    .changed()
+                {
+                    changed = true;
+                }
+            }
+            changed
+        });
+    if changed.inner == Some(true) {
         app.ui_state.mark_dirty_from_score();
     }
 
@@ -50,7 +51,7 @@ pub(super) fn score_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
             app.ui_state.running_stage = Some(PipelineStage::QualityAssessment);
             app.send_command(WorkerCommand::LoadAndScore {
                 path: path.clone(),
-                metric: app.config.quality_metric.clone(),
+                metric: app.config.quality_metric,
                 debayer: app.config.debayer_config(),
             });
         }

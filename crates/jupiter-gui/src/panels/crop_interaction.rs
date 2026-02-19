@@ -1,5 +1,5 @@
 use crate::app::JupiterApp;
-use crate::state::{CropRectPixels, crop_aspect_value};
+use crate::state::CropRectPixels;
 
 /// Convert screen coordinates to image pixel coordinates.
 pub fn screen_to_image(
@@ -149,7 +149,7 @@ fn create_new_selection(
 
     let img_start = screen_to_image(start, img_rect, image_size);
     let img_current = screen_to_image(current, img_rect, image_size);
-    let aspect = crop_aspect_value(app.ui_state.crop_state.aspect_ratio_index);
+    let aspect = app.ui_state.crop_state.aspect_ratio.ratio();
 
     let new_rect = if let Some(ratio) = aspect {
         compute_aspect_constrained_rect(img_start, img_current, ratio, image_size)

@@ -1,6 +1,6 @@
 use crate::app::JupiterApp;
 use crate::messages::WorkerCommand;
-use crate::state::STACK_METHOD_NAMES;
+use crate::state::StackMethodChoice;
 use jupiter_core::pipeline::PipelineStage;
 
 pub(super) fn stack_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
@@ -12,20 +12,27 @@ pub(super) fn stack_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
     ui.add_space(4.0);
 
     // Method combo
-    if egui::ComboBox::from_label("Method")
-        .selected_text(STACK_METHOD_NAMES[app.config.stack_method_index])
-        .show_index(ui, &mut app.config.stack_method_index, STACK_METHOD_NAMES.len(), |i| {
-            STACK_METHOD_NAMES[i].to_string()
-        })
-        .changed()
-    {
+    let changed = egui::ComboBox::from_label("Method")
+        .selected_text(app.config.stack_method_choice.to_string())
+        .show_ui(ui, |ui| {
+            let mut changed = false;
+            for &choice in StackMethodChoice::ALL {
+                if ui
+                    .selectable_value(&mut app.config.stack_method_choice, choice, choice.to_string())
+                    .changed()
+                {
+                    changed = true;
+                }
+            }
+            changed
+        });
+    if changed.inner == Some(true) {
         app.ui_state.mark_dirty_from_stack();
     }
 
     // Method-specific params
-    match app.config.stack_method_index {
-        2 => {
-            // Sigma clip
+    match app.config.stack_method_choice {
+        StackMethodChoice::SigmaClip => {
             if ui.add(egui::Slider::new(&mut app.config.sigma_clip_sigma, 0.5..=5.0).text("Sigma")).changed() {
                 app.ui_state.mark_dirty_from_stack();
             }
@@ -35,8 +42,7 @@ pub(super) fn stack_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
                 app.ui_state.mark_dirty_from_stack();
             }
         }
-        3 => {
-            // Multi-point
+        StackMethodChoice::MultiPoint => {
             let mut ap = app.config.mp_ap_size as i32;
             if ui.add(egui::Slider::new(&mut ap, 16..=256).text("AP Size")).changed() {
                 app.config.mp_ap_size = ap as usize;
@@ -51,8 +57,7 @@ pub(super) fn stack_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
                 app.ui_state.mark_dirty_from_stack();
             }
         }
-        4 => {
-            // Drizzle
+        StackMethodChoice::Drizzle => {
             if ui.add(egui::Slider::new(&mut app.config.drizzle_scale, 1.0..=4.0).text("Scale")).changed() {
                 app.ui_state.mark_dirty_from_stack();
             }
@@ -68,7 +73,7 @@ pub(super) fn stack_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
 
     // Stack button
     // Multi-point bypasses alignment stage, only needs scored frames
-    let is_multi_point = app.config.stack_method_index == 3;
+    let is_multi_point = app.config.stack_method_choice == StackMethodChoice::MultiPoint;
     let can_stack = if is_multi_point {
         app.ui_state.frames_scored.is_some() && !app.ui_state.is_busy()
     } else {

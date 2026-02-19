@@ -1,5 +1,5 @@
 use crate::app::JupiterApp;
-use crate::state::DEBAYER_METHOD_NAMES;
+use jupiter_core::color::debayer::DebayerMethod;
 
 pub(super) fn debayer_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
     crate::panels::section_header(ui, "Debayer", None);
@@ -16,17 +16,23 @@ pub(super) fn debayer_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
         app.ui_state.mark_dirty_from_score();
     }
 
-    if app.config.debayer_enabled
-        && egui::ComboBox::from_label("Debayer Method")
-            .selected_text(DEBAYER_METHOD_NAMES[app.config.debayer_method_index])
-            .show_index(
-                ui,
-                &mut app.config.debayer_method_index,
-                DEBAYER_METHOD_NAMES.len(),
-                |i| DEBAYER_METHOD_NAMES[i].to_string(),
-            )
-            .changed()
-    {
-        app.ui_state.mark_dirty_from_score();
+    if app.config.debayer_enabled {
+        let changed = egui::ComboBox::from_label("Debayer Method")
+            .selected_text(app.config.debayer_method.to_string())
+            .show_ui(ui, |ui| {
+                let mut changed = false;
+                for &method in &[DebayerMethod::Bilinear, DebayerMethod::MalvarHeCutler] {
+                    if ui
+                        .selectable_value(&mut app.config.debayer_method, method, method.to_string())
+                        .changed()
+                    {
+                        changed = true;
+                    }
+                }
+                changed
+            });
+        if changed.inner == Some(true) {
+            app.ui_state.mark_dirty_from_score();
+        }
     }
 }
