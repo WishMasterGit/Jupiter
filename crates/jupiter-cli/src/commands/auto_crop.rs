@@ -25,11 +25,11 @@ pub struct AutoCropArgs {
     pub output: Option<PathBuf>,
 
     /// Padding around the detected planet as fraction of diameter (0.0-1.0)
-    #[arg(long, default_value = "0.1")]
+    #[arg(long, default_value = "0.15")]
     pub padding: f32,
 
     /// Number of frames to sample for detection
-    #[arg(long, default_value = "1")]
+    #[arg(long, default_value = "30")]
     pub samples: usize,
 
     /// Threshold method
@@ -43,6 +43,14 @@ pub struct AutoCropArgs {
     /// Fixed threshold value in [0.0, 1.0] (overrides --threshold)
     #[arg(long)]
     pub fixed_threshold: Option<f32>,
+
+    /// Gaussian blur sigma for noise suppression before detection
+    #[arg(long, default_value = "2.5")]
+    pub blur_sigma: f32,
+
+    /// Minimum connected component area (pixels) for planet detection
+    #[arg(long, default_value = "100")]
+    pub min_area: usize,
 }
 
 pub fn run(args: &AutoCropArgs) -> Result<()> {
@@ -71,6 +79,9 @@ pub fn run(args: &AutoCropArgs) -> Result<()> {
         padding_fraction: args.padding,
         threshold_method,
         sigma_multiplier: args.sigma,
+        blur_sigma: args.blur_sigma,
+        min_area: args.min_area,
+        align_to_fft: true,
     };
 
     println!("Detecting planet...");

@@ -6,7 +6,17 @@
       "WebSearch",
       "Bash(cargo check:*)",
       "Bash(grep:*)",
-      "Bash(cargo clippy:*)"
+      "Bash(cargo clippy:*)",
+      "WebFetch(domain:sites.google.com)",
+      "WebFetch(domain:www.astrokraai.nl)",
+      "WebFetch(domain:www.lost-infinity.com)",
+      "WebFetch(domain:www.cambridge.org)",
+      "WebFetch(domain:skyinspector.co.uk)",
+      "WebFetch(domain:www.astroshop.eu)",
+      "WebFetch(domain:arxiv.org)",
+      "WebFetch(domain:www.cloudynights.com)",
+      "WebFetch(domain:siril.readthedocs.io)",
+      "WebFetch(domain:astroforumspace.com)"
     ]
   }
 }

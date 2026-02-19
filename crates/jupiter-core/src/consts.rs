@@ -48,13 +48,37 @@ pub const ENHANCED_PHASE_SEARCH_WINDOW: f64 = 1.5;
 pub const PYRAMID_BLUR_SIGMA: f32 = 1.0;
 
 /// Default number of frames to sample for auto-crop planet detection.
-pub const DEFAULT_AUTOCROP_SAMPLE_COUNT: usize = 1;
+pub const DEFAULT_AUTOCROP_SAMPLE_COUNT: usize = 30;
 
-/// Default padding fraction around the detected planet for auto-crop (10%).
-pub const DEFAULT_AUTOCROP_PADDING_FRACTION: f32 = 0.1;
+/// Default padding fraction around the detected planet for auto-crop (15%).
+pub const DEFAULT_AUTOCROP_PADDING_FRACTION: f32 = 0.15;
 
 /// Default sigma multiplier for MeanPlusSigma thresholding in auto-crop.
 pub const DEFAULT_AUTOCROP_SIGMA_MULTIPLIER: f32 = 2.0;
 
 /// Number of histogram bins for Otsu's thresholding.
 pub const OTSU_HISTOGRAM_BINS: usize = 256;
+
+/// Default Gaussian blur sigma for noise suppression before planet detection.
+pub const DEFAULT_AUTOCROP_BLUR_SIGMA: f32 = 2.5;
+
+/// Minimum connected component area (pixels) to be considered a planet candidate.
+pub const DEFAULT_AUTOCROP_MIN_AREA: usize = 100;
+
+/// Sigma threshold for outlier centroid rejection during temporal filtering.
+pub const AUTOCROP_SIGMA_CLIP_THRESHOLD: f64 = 2.5;
+
+/// Number of sigma-clipping iterations for centroid outlier rejection.
+pub const AUTOCROP_SIGMA_CLIP_ITERATIONS: usize = 3;
+
+/// Minimum number of valid detections for multi-frame analysis to proceed.
+pub const AUTOCROP_MIN_VALID_DETECTIONS: usize = 3;
+
+/// Crop size alignment multiple for FFT efficiency.
+pub const AUTOCROP_SIZE_ALIGNMENT: u32 = 32;
+
+/// Width of the border strip (pixels) used for background level estimation.
+pub const AUTOCROP_BORDER_STRIP_WIDTH: usize = 10;
+
+/// Number of center frames to median-combine for fallback detection.
+pub const AUTOCROP_FALLBACK_FRAME_COUNT: usize = 5;
