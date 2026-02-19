@@ -1,12 +1,16 @@
 use std::sync::mpsc;
+use std::time::Duration;
 
-use jupiter_core::pipeline::PipelineOutput;
+use jupiter_core::pipeline::{PipelineOutput, PipelineStage};
 
 use crate::convert::output_to_display_image;
 use crate::messages::{WorkerCommand, WorkerResult};
 use crate::panels;
 use crate::states::{ConfigState, UIState, ViewportState};
 use crate::workers;
+
+/// Debounce delay before auto-triggering sharpening after slider changes.
+const AUTO_SHARPEN_DEBOUNCE: Duration = Duration::from_millis(300);
 
 pub struct JupiterApp {
     pub cmd_tx: mpsc::Sender<WorkerCommand>,
@@ -175,7 +179,7 @@ impl JupiterApp {
                     self.ui_state.frames_scored = None;
                     self.ui_state.ranked_preview.clear();
                     self.ui_state.align_status = None;
-                    self.ui_state.stack_status = None;
+                    self.ui_state.stack_status = Some("Image loaded".to_string());
                     self.ui_state.sharpen_status = false;
                     self.ui_state.filter_status = None;
                     self.ui_state.clear_all_dirty();
@@ -254,11 +258,40 @@ impl JupiterApp {
     pub fn send_command(&self, cmd: WorkerCommand) {
         let _ = self.cmd_tx.send(cmd);
     }
+
+    /// Auto-trigger sharpening after a debounce period when sliders change.
+    fn check_auto_sharpen(&mut self, ctx: &egui::Context) {
+        if let Some(changed_at) = self.ui_state.sharpen_auto_pending {
+            let elapsed = changed_at.elapsed();
+            if elapsed >= AUTO_SHARPEN_DEBOUNCE {
+                let can_sharpen = self.ui_state.stack_status.is_some()
+                    && !self.ui_state.is_busy()
+                    && self.config.sharpen_enabled
+                    && self.ui_state.sharpen_params_dirty;
+
+                if can_sharpen {
+                    if let Some(config) = self.config.sharpening_config() {
+                        self.ui_state.running_stage = Some(PipelineStage::Sharpening);
+                        self.ui_state.sharpen_auto_pending = None;
+                        self.send_command(WorkerCommand::Sharpen {
+                            config,
+                            device: self.config.device_preference(),
+                        });
+                    }
+                } else {
+                    self.ui_state.sharpen_auto_pending = None;
+                }
+            } else {
+                ctx.request_repaint_after(AUTO_SHARPEN_DEBOUNCE - elapsed);
+            }
+        }
+    }
 }
 
 impl eframe::App for JupiterApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll_results(ctx);
+        self.check_auto_sharpen(ctx);
 
         panels::menu_bar::show(ctx, self);
         panels::status::show(ctx, self);

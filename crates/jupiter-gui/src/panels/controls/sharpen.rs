@@ -1,10 +1,15 @@
 use crate::app::JupiterApp;
-use crate::messages::WorkerCommand;
 use crate::states::{DeconvMethodChoice, PsfModelChoice};
 use jupiter_core::pipeline::PipelineStage;
 
 pub(super) fn sharpen_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
-    let status = if app.config.sharpen_enabled && app.ui_state.sharpen_status { Some("Done") } else { None };
+    let status = if matches!(app.ui_state.running_stage, Some(PipelineStage::Sharpening)) {
+        Some("Processing...")
+    } else if app.config.sharpen_enabled && app.ui_state.sharpen_status {
+        Some("Done")
+    } else {
+        None
+    };
     crate::panels::section_header(ui, "Sharpening", status);
     ui.add_space(4.0);
 
@@ -116,27 +121,4 @@ pub(super) fn sharpen_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
         }
     }
 
-    // Sharpen button
-    let can_sharpen = app.ui_state.stack_status.is_some()
-        && !app.ui_state.is_busy()
-        && app.config.sharpen_enabled;
-    let sharpen_color = if app.ui_state.sharpen_params_dirty {
-        Some(egui::Color32::from_rgb(230, 160, 50))
-    } else if app.ui_state.sharpen_status {
-        Some(egui::Color32::from_rgb(80, 180, 80))
-    } else {
-        None
-    };
-
-    let btn = egui::Button::new("Sharpen");
-    let btn = if let Some(c) = sharpen_color { btn.fill(c) } else { btn };
-    if ui.add_enabled(can_sharpen, btn).clicked() {
-        if let Some(config) = app.config.sharpening_config() {
-            app.ui_state.running_stage = Some(PipelineStage::Sharpening);
-            app.send_command(WorkerCommand::Sharpen {
-                config,
-                device: app.config.device_preference(),
-            });
-        }
-    }
 }

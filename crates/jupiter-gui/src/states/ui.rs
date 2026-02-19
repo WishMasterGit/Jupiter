@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::time::Instant;
 
 use jupiter_core::frame::SourceInfo;
 use jupiter_core::pipeline::PipelineStage;
@@ -42,6 +43,9 @@ pub struct UIState {
     pub stack_params_dirty: bool,
     pub sharpen_params_dirty: bool,
     pub filter_params_dirty: bool,
+
+    /// Debounce timer for auto-sharpening on slider changes.
+    pub sharpen_auto_pending: Option<Instant>,
 }
 
 impl Default for UIState {
@@ -68,6 +72,7 @@ impl Default for UIState {
             stack_params_dirty: false,
             sharpen_params_dirty: false,
             filter_params_dirty: false,
+            sharpen_auto_pending: None,
         }
     }
 }
@@ -105,10 +110,11 @@ impl UIState {
         self.filter_params_dirty = true;
     }
 
-    /// Mark sharpening and filter stages as stale.
+    /// Mark sharpening and filter stages as stale, and start debounce timer.
     pub fn mark_dirty_from_sharpen(&mut self) {
         self.sharpen_params_dirty = true;
         self.filter_params_dirty = true;
+        self.sharpen_auto_pending = Some(Instant::now());
     }
 
     /// Clear all dirty flags (e.g., after opening a new file).
@@ -118,5 +124,6 @@ impl UIState {
         self.stack_params_dirty = false;
         self.sharpen_params_dirty = false;
         self.filter_params_dirty = false;
+        self.sharpen_auto_pending = None;
     }
 }

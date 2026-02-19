@@ -23,6 +23,9 @@ pub fn show(ctx: &egui::Context, app: &mut JupiterApp) {
             };
 
             ui.add(egui::ProgressBar::new(fraction).text(detail).animate(true));
+        } else {
+            // Invisible placeholder — same height, no animation
+            ui.add(egui::ProgressBar::new(0.0).text(""));
         }
 
         // Log area (last N messages)
