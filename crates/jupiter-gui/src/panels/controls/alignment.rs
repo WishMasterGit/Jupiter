@@ -1,6 +1,6 @@
 use crate::app::JupiterApp;
 use crate::messages::WorkerCommand;
-use crate::state::AlignMethodChoice;
+use crate::states::AlignMethodChoice;
 use jupiter_core::pipeline::PipelineStage;
 
 pub(super) fn alignment_section(ui: &mut egui::Ui, app: &mut JupiterApp) {

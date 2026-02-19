@@ -1,5 +1,5 @@
 use crate::app::JupiterApp;
-use crate::state::CropRectPixels;
+use crate::states::CropRectPixels;
 
 /// Convert screen coordinates to image pixel coordinates.
 pub fn screen_to_image(

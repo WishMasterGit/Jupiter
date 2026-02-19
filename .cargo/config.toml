@@ -1,0 +1,3 @@
+[alias]
+release_gui = "run -p jupiter-gui --release --features gpu"
+debug_gui = "run -p jupiter-gui --features gpu"

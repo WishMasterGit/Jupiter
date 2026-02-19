@@ -1,11 +1,12 @@
 use crate::app::JupiterApp;
 use crate::messages::WorkerCommand;
-use crate::state::CropAspect;
+use crate::states::CropAspect;
 use jupiter_core::color::debayer::is_bayer;
 use jupiter_core::pipeline::PipelineStage;
 
 pub(super) fn crop_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
-    crate::panels::section_header(ui, "Crop", None);
+    crate::panels::section_header(ui, "Tools", None);
+
     ui.add_space(4.0);
 
     let file_loaded = app.ui_state.file_path.is_some();
@@ -16,6 +17,10 @@ pub(super) fn crop_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
         ui.toggle_value(&mut app.ui_state.crop_state.active, "Crop");
 
         if app.ui_state.crop_state.active {
+            if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                app.ui_state.crop_state.active = false;
+                return;
+            }
             let prev_ratio = app.ui_state.crop_state.aspect_ratio;
             ui.horizontal(|ui| {
                 ui.label("Ratio:");

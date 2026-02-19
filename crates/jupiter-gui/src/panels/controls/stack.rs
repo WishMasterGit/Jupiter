@@ -1,6 +1,6 @@
 use crate::app::JupiterApp;
 use crate::messages::WorkerCommand;
-use crate::state::StackMethodChoice;
+use crate::states::StackMethodChoice;
 use jupiter_core::pipeline::PipelineStage;
 
 pub(super) fn stack_section(ui: &mut egui::Ui, app: &mut JupiterApp) {

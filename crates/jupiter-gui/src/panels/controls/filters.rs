@@ -1,6 +1,6 @@
 use crate::app::JupiterApp;
 use crate::messages::WorkerCommand;
-use crate::state::FilterType;
+use crate::states::FilterType;
 use jupiter_core::pipeline::config::FilterStep;
 use jupiter_core::pipeline::PipelineStage;
 

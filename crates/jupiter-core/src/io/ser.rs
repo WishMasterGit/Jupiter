@@ -260,6 +260,21 @@ impl SerReader {
         })
     }
 
+    /// Read a single frame as a `ColorFrame`, automatically dispatching between
+    /// Bayer (debayer) and RGB/BGR (channel split) based on the SER header.
+    pub fn read_frame_as_color(
+        &self,
+        index: usize,
+        debayer_method: &DebayerMethod,
+    ) -> Result<ColorFrame> {
+        let mode = self.header.color_mode();
+        if matches!(mode, ColorMode::RGB | ColorMode::BGR) {
+            self.read_frame_rgb(index)
+        } else {
+            self.read_frame_color(index, debayer_method)
+        }
+    }
+
     /// Whether this SER file contains color data (Bayer or RGB/BGR).
     pub fn is_color(&self) -> bool {
         !matches!(self.header.color_mode(), ColorMode::Mono)

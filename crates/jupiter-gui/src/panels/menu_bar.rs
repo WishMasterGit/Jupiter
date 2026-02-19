@@ -1,6 +1,6 @@
 use crate::app::JupiterApp;
 use crate::messages::{WorkerCommand, WorkerResult};
-use crate::state::ConfigState;
+use crate::states::ConfigState;
 
 pub fn show(ctx: &egui::Context, app: &mut JupiterApp) {
     egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {

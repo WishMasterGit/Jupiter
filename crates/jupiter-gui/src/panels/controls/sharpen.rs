@@ -1,6 +1,6 @@
 use crate::app::JupiterApp;
 use crate::messages::WorkerCommand;
-use crate::state::{DeconvMethodChoice, PsfModelChoice};
+use crate::states::{DeconvMethodChoice, PsfModelChoice};
 use jupiter_core::pipeline::PipelineStage;
 
 pub(super) fn sharpen_section(ui: &mut egui::Ui, app: &mut JupiterApp) {

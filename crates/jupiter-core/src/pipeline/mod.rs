@@ -511,22 +511,20 @@ fn run_color_pipeline(
     if streaming {
         info!("Using low-memory streaming mode for color");
         return run_color_pipeline_streaming(
-            reader, config, backend, reporter, debayer_method, color_mode, total, is_rgb_bgr,
+            reader, config, backend, reporter, debayer_method, color_mode, total,
         );
     }
 
-    // Read raw frames
+    // Read + debayer (or split RGB)
     reporter.begin_stage(PipelineStage::Reading, Some(total));
-    let raw_frames: Vec<Frame> = reader.frames().collect::<Result<_>>()?;
-    reporter.finish_stage();
-
-    // Debayer (or split RGB)
-    reporter.begin_stage(PipelineStage::Debayering, Some(total));
     let color_frames: Vec<ColorFrame> = if is_rgb_bgr {
         (0..total)
-            .map(|i| reader.read_frame_rgb(i))
+            .map(|i| reader.read_frame_as_color(i, debayer_method))
             .collect::<Result<_>>()?
     } else {
+        let raw_frames: Vec<Frame> = reader.frames().collect::<Result<_>>()?;
+        reporter.finish_stage();
+        reporter.begin_stage(PipelineStage::Debayering, Some(total));
         raw_frames
             .iter()
             .map(|frame| {
@@ -587,7 +585,6 @@ fn run_color_pipeline_streaming(
     debayer_method: &DebayerMethod,
     color_mode: &ColorMode,
     total: usize,
-    is_rgb_bgr: bool,
 ) -> Result<PipelineOutput> {
     // Quality (streaming: read-debayer-luminance-score in batches)
     reporter.begin_stage(PipelineStage::QualityAssessment, Some(total));
@@ -608,13 +605,7 @@ fn run_color_pipeline_streaming(
     reporter.begin_stage(PipelineStage::Reading, Some(selected_indices.len()));
     let selected_color: Vec<ColorFrame> = selected_indices
         .iter()
-        .map(|&i| {
-            if is_rgb_bgr {
-                reader.read_frame_rgb(i)
-            } else {
-                reader.read_frame_color(i, debayer_method)
-            }
-        })
+        .map(|&i| reader.read_frame_as_color(i, debayer_method))
         .collect::<Result<_>>()?;
     let selected_lum: Vec<Frame> = selected_color.iter().map(luminance).collect();
     reporter.finish_stage();
@@ -643,63 +634,24 @@ fn color_standard_flow(
     backend: &Arc<dyn ComputeBackend>,
     reporter: &Arc<dyn ProgressReporter>,
 ) -> Result<ColorFrame> {
-    let frame_count = selected_lum.len();
-
     // Compute alignment offsets on luminance
-    reporter.begin_stage(PipelineStage::Alignment, Some(frame_count));
-    let reference = &selected_lum[0];
-    let offsets: Vec<AlignmentOffset> = selected_lum
-        .iter()
-        .enumerate()
-        .map(|(i, frame)| {
-            reporter.advance(i + 1);
-            if i == 0 {
-                AlignmentOffset::default()
-            } else {
-                compute_offset_configured(&reference.data, &frame.data, &config.alignment, backend.as_ref())
-                    .unwrap_or_default()
-            }
-        })
-        .collect();
-    reporter.finish_stage();
+    let offsets = compute_offsets_with_progress(
+        selected_lum, 0, &config.alignment, backend, reporter,
+    )?;
 
     // Apply offsets to each color channel
-    let aligned_color: Vec<ColorFrame> = selected_color
-        .iter()
-        .zip(offsets.iter())
-        .map(|(cf, offset)| ColorFrame {
-            red: shift_frame(&cf.red, offset),
-            green: shift_frame(&cf.green, offset),
-            blue: shift_frame(&cf.blue, offset),
-        })
-        .collect();
+    let aligned_color = shift_color_frames(selected_color, &offsets);
 
     // Stack per-channel
     let stack_count = aligned_color.len();
     reporter.begin_stage(PipelineStage::Stacking, Some(stack_count));
-    let red_frames: Vec<Frame> = aligned_color.iter().map(|cf| cf.red.clone()).collect();
-    let green_frames: Vec<Frame> = aligned_color.iter().map(|cf| cf.green.clone()).collect();
-    let blue_frames: Vec<Frame> = aligned_color.iter().map(|cf| cf.blue.clone()).collect();
-
+    let (red, green, blue) = split_color_channels(&aligned_color);
     let method = &config.stacking.method;
-    let r = reporter.clone();
-    let (stacked_red, (stacked_green, stacked_blue)) = rayon::join(
-        || stack_frames_with_progress(&red_frames, method, |done| r.advance(done)).unwrap(),
-        || {
-            rayon::join(
-                || stack_frames_with_progress(&green_frames, method, |_| {}).unwrap(),
-                || stack_frames_with_progress(&blue_frames, method, |_| {}).unwrap(),
-            )
-        },
-    );
+    let result = stack_color_channels_parallel(&red, &green, &blue, method, reporter)?;
     info!(method = ?method, "Color stacking complete");
     reporter.finish_stage();
 
-    Ok(ColorFrame {
-        red: stacked_red,
-        green: stacked_green,
-        blue: stacked_blue,
-    })
+    Ok(result)
 }
 
 fn color_drizzle_flow(
@@ -711,49 +663,23 @@ fn color_drizzle_flow(
     drizzle_config: &crate::stack::drizzle::DrizzleConfig,
     alignment_config: &config::AlignmentConfig,
 ) -> Result<ColorFrame> {
-    let frame_count = selected_lum.len();
-
     // Compute offsets on luminance
-    reporter.begin_stage(PipelineStage::Alignment, Some(frame_count));
-    let reference = &selected_lum[0];
-    let offsets: Vec<AlignmentOffset> = selected_lum
-        .iter()
-        .enumerate()
-        .map(|(i, frame)| {
-            reporter.advance(i + 1);
-            if i == 0 {
-                AlignmentOffset::default()
-            } else {
-                compute_offset_configured(&reference.data, &frame.data, alignment_config, backend.as_ref())
-                    .unwrap_or_default()
-            }
-        })
-        .collect();
-    reporter.finish_stage();
+    let offsets = compute_offsets_with_progress(
+        selected_lum, 0, alignment_config, backend, reporter,
+    )?;
 
     // Drizzle per channel
     let drizzle_count = selected_color.len();
     reporter.begin_stage(PipelineStage::Stacking, Some(drizzle_count));
-    let red_frames: Vec<Frame> = selected_color.iter().map(|cf| cf.red.clone()).collect();
-    let green_frames: Vec<Frame> = selected_color.iter().map(|cf| cf.green.clone()).collect();
-    let blue_frames: Vec<Frame> = selected_color.iter().map(|cf| cf.blue.clone()).collect();
-
+    let (red, green, blue) = split_color_channels(selected_color);
     let scores = if drizzle_config.quality_weighted && !quality_scores.is_empty() {
         Some(quality_scores)
     } else {
         None
     };
-
-    let r = reporter.clone();
-    let (drizzled_red, (drizzled_green, drizzled_blue)) = rayon::join(
-        || drizzle_stack_with_progress(&red_frames, &offsets, drizzle_config, scores, |done| r.advance(done)).unwrap(),
-        || {
-            rayon::join(
-                || drizzle_stack_with_progress(&green_frames, &offsets, drizzle_config, scores, |_| {}).unwrap(),
-                || drizzle_stack_with_progress(&blue_frames, &offsets, drizzle_config, scores, |_| {}).unwrap(),
-            )
-        },
-    );
+    let result = drizzle_color_channels_parallel(
+        &red, &green, &blue, &offsets, drizzle_config, scores, reporter,
+    )?;
     info!(
         method = "Drizzle",
         scale = drizzle_config.scale,
@@ -761,11 +687,7 @@ fn color_drizzle_flow(
     );
     reporter.finish_stage();
 
-    Ok(ColorFrame {
-        red: drizzled_red,
-        green: drizzled_green,
-        blue: drizzled_blue,
-    })
+    Ok(result)
 }
 
 /// Post-stacking processing for color path: sharpen → filter → write → return.
@@ -849,11 +771,9 @@ fn select_frames(
 ) -> (Vec<usize>, Vec<f64>) {
     let keep = (total as f32 * select_percentage).ceil() as usize;
     let keep = keep.max(1).min(total);
-    let indices: Vec<usize> = ranked.iter().take(keep).map(|(i, _)| *i).collect();
-    let scores: Vec<f64> = indices
-        .iter()
-        .map(|&i| ranked.iter().find(|(idx, _)| *idx == i).unwrap().1.composite)
-        .collect();
+    let top: Vec<_> = ranked.iter().take(keep).collect();
+    let indices: Vec<usize> = top.iter().map(|(i, _)| *i).collect();
+    let scores: Vec<f64> = top.iter().map(|(_, s)| s.composite).collect();
     (indices, scores)
 }
 
@@ -880,6 +800,114 @@ fn stack_frames_with_progress(
     }
 }
 
+/// Compute alignment offsets for a set of frames against a reference frame.
+///
+/// Reports progress per-frame via the reporter and propagates alignment errors.
+fn compute_offsets_with_progress(
+    frames: &[Frame],
+    reference_idx: usize,
+    alignment_config: &config::AlignmentConfig,
+    backend: &Arc<dyn ComputeBackend>,
+    reporter: &Arc<dyn ProgressReporter>,
+) -> Result<Vec<AlignmentOffset>> {
+    let frame_count = frames.len();
+    reporter.begin_stage(PipelineStage::Alignment, Some(frame_count));
+    let reference = &frames[reference_idx];
+    let mut offsets = Vec::with_capacity(frame_count);
+    for (i, frame) in frames.iter().enumerate() {
+        let offset = if i == reference_idx {
+            AlignmentOffset::default()
+        } else {
+            compute_offset_configured(
+                &reference.data,
+                &frame.data,
+                alignment_config,
+                backend.as_ref(),
+            )?
+        };
+        offsets.push(offset);
+        reporter.advance(i + 1);
+    }
+    reporter.finish_stage();
+    Ok(offsets)
+}
+
+/// Split a slice of color frames into per-channel frame vectors (R, G, B).
+fn split_color_channels(frames: &[ColorFrame]) -> (Vec<Frame>, Vec<Frame>, Vec<Frame>) {
+    let red: Vec<Frame> = frames.iter().map(|cf| cf.red.clone()).collect();
+    let green: Vec<Frame> = frames.iter().map(|cf| cf.green.clone()).collect();
+    let blue: Vec<Frame> = frames.iter().map(|cf| cf.blue.clone()).collect();
+    (red, green, blue)
+}
+
+/// Stack three channel frame lists in parallel using rayon, returning a ColorFrame.
+fn stack_color_channels_parallel(
+    red: &[Frame],
+    green: &[Frame],
+    blue: &[Frame],
+    method: &StackMethod,
+    reporter: &Arc<dyn ProgressReporter>,
+) -> Result<ColorFrame> {
+    let r = reporter.clone();
+    let (sr, (sg, sb)) = rayon::join(
+        || stack_frames_with_progress(red, method, |done| r.advance(done)),
+        || {
+            rayon::join(
+                || stack_frames_with_progress(green, method, |_| {}),
+                || stack_frames_with_progress(blue, method, |_| {}),
+            )
+        },
+    );
+    Ok(ColorFrame {
+        red: sr?,
+        green: sg?,
+        blue: sb?,
+    })
+}
+
+/// Drizzle-stack three channel frame lists in parallel, returning a ColorFrame.
+fn drizzle_color_channels_parallel(
+    red: &[Frame],
+    green: &[Frame],
+    blue: &[Frame],
+    offsets: &[AlignmentOffset],
+    drizzle_config: &crate::stack::drizzle::DrizzleConfig,
+    scores: Option<&[f64]>,
+    reporter: &Arc<dyn ProgressReporter>,
+) -> Result<ColorFrame> {
+    let r = reporter.clone();
+    let (dr, (dg, db)) = rayon::join(
+        || drizzle_stack_with_progress(red, offsets, drizzle_config, scores, move |done| r.advance(done)),
+        || {
+            rayon::join(
+                || drizzle_stack_with_progress(green, offsets, drizzle_config, scores, |_| {}),
+                || drizzle_stack_with_progress(blue, offsets, drizzle_config, scores, |_| {}),
+            )
+        },
+    );
+    Ok(ColorFrame {
+        red: dr?,
+        green: dg?,
+        blue: db?,
+    })
+}
+
+/// Apply alignment offsets to color frames (shift each R/G/B channel).
+fn shift_color_frames(
+    frames: &[ColorFrame],
+    offsets: &[AlignmentOffset],
+) -> Vec<ColorFrame> {
+    frames
+        .iter()
+        .zip(offsets.iter())
+        .map(|(cf, offset)| ColorFrame {
+            red: shift_frame(&cf.red, offset),
+            green: shift_frame(&cf.green, offset),
+            blue: shift_frame(&cf.blue, offset),
+        })
+        .collect()
+}
+
 fn drizzle_flow(
     frames: &[Frame],
     config: &PipelineConfig,
@@ -902,24 +930,11 @@ fn drizzle_flow(
     );
     reporter.finish_stage();
 
-    let frame_count = selected_frames.len();
-    reporter.begin_stage(PipelineStage::Alignment, Some(frame_count));
-    let reference = &selected_frames[0];
-    let offsets: Vec<AlignmentOffset> = selected_frames
-        .iter()
-        .enumerate()
-        .map(|(i, frame)| {
-            reporter.advance(i + 1);
-            if i == 0 {
-                AlignmentOffset::default()
-            } else {
-                compute_offset_configured(&reference.data, &frame.data, &config.alignment, backend.as_ref())
-                    .unwrap_or_default()
-            }
-        })
-        .collect();
+    // Compute alignment offsets
+    let offsets = compute_offsets_with_progress(
+        &selected_frames, 0, &config.alignment, backend, reporter,
+    )?;
     info!("Alignment offsets computed for drizzle");
-    reporter.finish_stage();
 
     let drizzle_count = selected_frames.len();
     reporter.begin_stage(PipelineStage::Stacking, Some(drizzle_count));

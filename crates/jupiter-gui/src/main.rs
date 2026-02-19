@@ -3,8 +3,8 @@ mod convert;
 mod messages;
 mod panels;
 mod progress;
-mod state;
-mod worker;
+mod states;
+mod workers;
 
 fn main() -> eframe::Result<()> {
     tracing_subscriber::fmt()

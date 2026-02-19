@@ -5,8 +5,8 @@ use jupiter_core::pipeline::PipelineOutput;
 use crate::convert::output_to_display_image;
 use crate::messages::{WorkerCommand, WorkerResult};
 use crate::panels;
-use crate::state::{ConfigState, UIState, ViewportState};
-use crate::worker;
+use crate::states::{ConfigState, UIState, ViewportState};
+use crate::workers;
 
 pub struct JupiterApp {
     pub cmd_tx: mpsc::Sender<WorkerCommand>,
@@ -21,7 +21,7 @@ pub struct JupiterApp {
 impl JupiterApp {
     pub fn new(ctx: &egui::Context) -> Self {
         let (result_tx, result_rx) = mpsc::channel();
-        let cmd_tx = worker::spawn_worker(result_tx.clone(), ctx.clone());
+        let cmd_tx = workers::spawn_worker(result_tx.clone(), ctx.clone());
 
         Self {
             cmd_tx,
