@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use clap::{Args, ValueEnum};
 use indicatif::{ProgressBar, ProgressStyle};
-use jupiter_core::io::autocrop::{auto_detect_crop, AutoCropConfig, ThresholdMethod};
+use jupiter_core::detection::{DetectionConfig, ThresholdMethod};
+use jupiter_core::io::autocrop::{auto_detect_crop, AutoCropConfig};
 use jupiter_core::io::crop::crop_ser;
 use jupiter_core::io::ser::SerReader;
 
@@ -77,10 +78,12 @@ pub fn run(args: &AutoCropArgs) -> Result<()> {
     let config = AutoCropConfig {
         sample_count: args.samples,
         padding_fraction: args.padding,
-        threshold_method,
-        sigma_multiplier: args.sigma,
-        blur_sigma: args.blur_sigma,
-        min_area: args.min_area,
+        detection: DetectionConfig {
+            threshold_method,
+            sigma_multiplier: args.sigma,
+            blur_sigma: args.blur_sigma,
+            min_area: args.min_area,
+        },
         align_to_fft: true,
     };
 

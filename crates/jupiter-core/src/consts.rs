@@ -94,3 +94,12 @@ pub const AUTO_AP_SIZE_MAX: usize = 256;
 
 /// Auto AP size is rounded down to this alignment (pixels).
 pub const AUTO_AP_SIZE_ALIGN: usize = 8;
+
+/// Fraction of top-quality frames used to build the mean reference for
+/// multi-point / surface-warp stacking.
+pub const MEAN_REFERENCE_KEEP_FRACTION: f32 = 0.2;
+
+/// Minimum peak-to-mean ratio of the cross-correlation surface required to
+/// accept a local alignment result.  Below this threshold the frame/AP pair
+/// is skipped as unreliable.
+pub const MIN_CORRELATION_CONFIDENCE: f64 = 2.0;

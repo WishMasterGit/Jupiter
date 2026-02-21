@@ -5,11 +5,7 @@ use crate::consts::OTSU_HISTOGRAM_BINS;
 use super::config::ThresholdMethod;
 
 /// Compute the threshold value using the configured method.
-pub(crate) fn compute_threshold(
-    data: &Array2<f32>,
-    method: &ThresholdMethod,
-    sigma_mul: f32,
-) -> f32 {
+pub fn compute_threshold(data: &Array2<f32>, method: &ThresholdMethod, sigma_mul: f32) -> f32 {
     match method {
         ThresholdMethod::MeanPlusSigma => {
             let (mean, std) = compute_mean_stddev(data);
@@ -21,7 +17,7 @@ pub(crate) fn compute_threshold(
 }
 
 /// Compute mean and standard deviation of pixel values.
-pub(crate) fn compute_mean_stddev(data: &Array2<f32>) -> (f64, f64) {
+pub fn compute_mean_stddev(data: &Array2<f32>) -> (f64, f64) {
     let n = data.len() as f64;
     if n == 0.0 {
         return (0.0, 0.0);
@@ -33,7 +29,7 @@ pub(crate) fn compute_mean_stddev(data: &Array2<f32>) -> (f64, f64) {
 }
 
 /// Otsu's thresholding: find the value that minimizes intra-class variance.
-pub(crate) fn otsu_threshold(data: &Array2<f32>) -> f32 {
+pub fn otsu_threshold(data: &Array2<f32>) -> f32 {
     let bins = OTSU_HISTOGRAM_BINS;
     let mut histogram = vec![0u64; bins];
 

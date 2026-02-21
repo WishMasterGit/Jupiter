@@ -5,10 +5,13 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
-use crate::align::phase_correlation::{bilinear_sample, compute_offset_array};
+use crate::align::phase_correlation::{
+    bilinear_sample, compute_offset_with_confidence, shift_array,
+};
 use crate::color::debayer::{debayer, luminance, DebayerMethod};
 use crate::consts::{
     AUTO_AP_DIVISOR, AUTO_AP_SIZE_ALIGN, AUTO_AP_SIZE_MAX, AUTO_AP_SIZE_MIN, EPSILON,
+    MEAN_REFERENCE_KEEP_FRACTION, MIN_CORRELATION_CONFIDENCE,
 };
 use crate::error::{JupiterError, Result};
 use crate::frame::{AlignmentOffset, ColorFrame, ColorMode, Frame};
@@ -167,6 +170,132 @@ pub fn build_ap_grid(reference: &Array2<f32>, config: &MultiPointConfig) -> ApGr
     }
 }
 
+/// Build a mean reference frame from the top-quality frames.
+///
+/// 1. Globally aligns all frames vs frame 0
+/// 2. Scores each frame with the configured quality metric
+/// 3. Selects the top `keep_fraction` by quality
+/// 4. Shifts and averages them to create a synthetic reference
+///
+/// This produces a much cleaner reference than using a single frame,
+/// reducing bias toward one atmospheric state.
+pub fn build_mean_reference(
+    reader: &SerReader,
+    offsets: &[AlignmentOffset],
+    quality_metric: &QualityMetric,
+    keep_fraction: f32,
+) -> Result<Array2<f32>> {
+    let total = reader.frame_count();
+
+    // Score every frame
+    let mut scores: Vec<(usize, f64)> = (0..total)
+        .map(|i| {
+            let frame = reader.read_frame(i).unwrap();
+            let score = match quality_metric {
+                QualityMetric::Laplacian => laplacian_variance_array(&frame.data),
+                QualityMetric::Gradient => gradient_score_array(&frame.data),
+            };
+            (i, score)
+        })
+        .collect();
+
+    scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+
+    let keep = ((total as f32 * keep_fraction).ceil() as usize)
+        .max(1)
+        .min(total);
+    scores.truncate(keep);
+
+    let frame0 = reader.read_frame(0)?;
+    let (h, w) = frame0.data.dim();
+    let mut accumulator = Array2::<f64>::zeros((h, w));
+
+    for &(idx, _) in &scores {
+        let frame = reader.read_frame(idx)?;
+        let shifted = if idx == 0 {
+            frame.data
+        } else {
+            shift_array(&frame.data, &offsets[idx])
+        };
+        accumulator += &shifted.mapv(|v| v as f64);
+    }
+
+    let n = scores.len() as f64;
+    Ok(accumulator.mapv(|v| (v / n) as f32))
+}
+
+/// Build a mean reference from color frames (returns luminance).
+pub fn build_mean_reference_color(
+    reader: &SerReader,
+    offsets: &[AlignmentOffset],
+    quality_metric: &QualityMetric,
+    keep_fraction: f32,
+    color_mode: &ColorMode,
+    debayer_method: &DebayerMethod,
+) -> Result<Array2<f32>> {
+    let total = reader.frame_count();
+    let is_rgb_bgr = matches!(color_mode, ColorMode::RGB | ColorMode::BGR);
+
+    // Score every frame on luminance
+    let mut scores: Vec<(usize, f64)> = Vec::with_capacity(total);
+    for i in 0..total {
+        let lum = if is_rgb_bgr {
+            let cf = reader.read_frame_rgb(i)?;
+            luminance(&cf)
+        } else {
+            let raw = reader.read_frame(i)?;
+            let cf = debayer(&raw.data, color_mode, debayer_method, raw.original_bit_depth)
+                .ok_or_else(|| JupiterError::Pipeline("Debayer failed".into()))?;
+            luminance(&cf)
+        };
+        let score = match quality_metric {
+            QualityMetric::Laplacian => laplacian_variance_array(&lum.data),
+            QualityMetric::Gradient => gradient_score_array(&lum.data),
+        };
+        scores.push((i, score));
+    }
+
+    scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    let keep = ((total as f32 * keep_fraction).ceil() as usize)
+        .max(1)
+        .min(total);
+    scores.truncate(keep);
+
+    // Average luminance of the best frames (shifted)
+    let first_lum = if is_rgb_bgr {
+        let cf = reader.read_frame_rgb(0)?;
+        luminance(&cf)
+    } else {
+        let raw = reader.read_frame(0)?;
+        let cf = debayer(&raw.data, color_mode, debayer_method, raw.original_bit_depth)
+            .ok_or_else(|| JupiterError::Pipeline("Debayer failed".into()))?;
+        luminance(&cf)
+    };
+    let (h, w) = first_lum.data.dim();
+    let mut accumulator = Array2::<f64>::zeros((h, w));
+
+    for &(idx, _) in &scores {
+        let lum = if is_rgb_bgr {
+            let cf = reader.read_frame_rgb(idx)?;
+            luminance(&cf)
+        } else {
+            let raw = reader.read_frame(idx)?;
+            let cf = debayer(&raw.data, color_mode, debayer_method, raw.original_bit_depth)
+                .ok_or_else(|| JupiterError::Pipeline("Debayer failed".into()))?;
+            luminance(&cf)
+        };
+        let shifted = if idx == 0 {
+            lum.data
+        } else {
+            shift_array(&lum.data, &offsets[idx])
+        };
+        accumulator += &shifted.mapv(|v| v as f64);
+    }
+
+    let n = scores.len() as f64;
+    Ok(accumulator.mapv(|v| (v / n) as f32))
+}
+
 /// Score all APs across all frames using frame-major loop (read each frame once).
 /// Returns `quality_matrix[ap_index]` = Vec of (frame_index, score), sorted descending.
 pub fn score_all_aps(
@@ -217,6 +346,10 @@ pub fn score_all_aps(
 }
 
 /// Stack one AP using pre-cached frames (for parallel execution).
+///
+/// Includes correlation confidence check: frames whose local alignment
+/// peak-to-mean ratio is below [`MIN_CORRELATION_CONFIDENCE`] are skipped.
+/// When using Mean stacking, quality weights from `selected_frames` are applied.
 fn stack_ap_cached(
     frame_cache: &HashMap<usize, Frame>,
     ap: &AlignmentPoint,
@@ -231,8 +364,9 @@ fn stack_ap_cached(
     let ref_search = extract_region(reference_data, ap.cy, ap.cx, search_half);
 
     let mut patches: Vec<Array2<f32>> = Vec::with_capacity(selected_frames.len());
+    let mut weights: Vec<f64> = Vec::with_capacity(selected_frames.len());
 
-    for &(frame_idx, _) in selected_frames {
+    for &(frame_idx, quality_score) in selected_frames {
         let frame = match frame_cache.get(&frame_idx) {
             Some(f) => f,
             None => continue,
@@ -246,7 +380,14 @@ fn stack_ap_cached(
             &global_offsets[frame_idx],
         );
 
-        let local_offset = compute_offset_array(&ref_search, &tgt_search).unwrap_or_default();
+        // Local alignment with confidence check
+        let (local_offset, confidence) =
+            compute_offset_with_confidence(&ref_search, &tgt_search)
+                .unwrap_or((AlignmentOffset::default(), 0.0));
+
+        if confidence < MIN_CORRELATION_CONFIDENCE {
+            continue; // skip unreliable alignment
+        }
 
         let search_size = search_half * 2;
         let center = search_size as f64 / 2.0;
@@ -263,10 +404,16 @@ fn stack_ap_cached(
         }
 
         patches.push(patch);
+        weights.push(quality_score);
+    }
+
+    if patches.is_empty() {
+        // All frames rejected by confidence check — fall back to reference region
+        return extract_region(reference_data, ap.cy, ap.cx, half);
     }
 
     match config.local_stack_method {
-        LocalStackMethod::Mean => mean_stack_arrays(&patches),
+        LocalStackMethod::Mean => mean_stack_arrays_weighted(&patches, &weights),
         LocalStackMethod::Median => median_stack_arrays(&patches),
         LocalStackMethod::SigmaClip { sigma, iterations } => {
             sigma_clip_stack_arrays(&patches, sigma, iterations)
@@ -312,6 +459,30 @@ fn mean_stack_arrays(patches: &[Array2<f32>]) -> Array2<f32> {
     }
     sum /= n;
     sum
+}
+
+/// Quality-weighted mean stack. Each patch is weighted by its quality score.
+fn mean_stack_arrays_weighted(patches: &[Array2<f32>], weights: &[f64]) -> Array2<f32> {
+    assert_eq!(patches.len(), weights.len());
+    let (rows, cols) = patches[0].dim();
+    let mut weighted_sum = Array2::<f64>::zeros((rows, cols));
+    let mut total_weight: f64 = 0.0;
+
+    for (p, &wt) in patches.iter().zip(weights.iter()) {
+        let weight = wt.max(0.0);
+        total_weight += weight;
+        for row in 0..rows {
+            for col in 0..cols {
+                weighted_sum[[row, col]] += p[[row, col]] as f64 * weight;
+            }
+        }
+    }
+
+    if total_weight < 1e-15 {
+        return mean_stack_arrays(patches);
+    }
+
+    weighted_sum.mapv(|v| (v / total_weight) as f32)
 }
 
 /// Median-stack a set of Array2 patches.
@@ -499,11 +670,12 @@ fn hann_weight(pos: usize, half_size: usize) -> f32 {
 ///
 /// Pipeline:
 /// 1. Global align all frames vs frame 0 (offsets only, no shifting)
-/// 2. Build AP grid on reference frame
-/// 3. Score quality per-AP per-frame (frame-major loop)
-/// 4. Select best frames per-AP
-/// 5. Local align + stack each AP
-/// 6. Blend AP stacks with cosine weighting
+/// 2. Build mean reference from top-quality frames
+/// 3. Build AP grid on mean reference
+/// 4. Score quality per-AP per-frame (frame-major loop)
+/// 5. Select best frames per-AP
+/// 6. Local align + stack each AP (with confidence check + quality weighting)
+/// 7. Blend AP stacks with cosine weighting
 pub fn multi_point_stack<F>(
     reader: &SerReader,
     config: &MultiPointConfig,
@@ -540,9 +712,19 @@ where
     }
     on_progress(0.1);
 
-    // Step 2: Build AP grid
+    // Step 2: Build mean reference from top-quality frames
+    info!("Building mean reference from top {}% frames", (MEAN_REFERENCE_KEEP_FRACTION * 100.0) as u32);
+    let mean_ref = build_mean_reference(
+        reader,
+        &global_offsets,
+        &config.quality_metric,
+        MEAN_REFERENCE_KEEP_FRACTION,
+    )?;
+    on_progress(0.2);
+
+    // Step 3: Build AP grid on mean reference
     info!("Building alignment point grid (ap_size={})", config.ap_size);
-    let grid = build_ap_grid(&reference.data, config);
+    let grid = build_ap_grid(&mean_ref, config);
     info!("Created {} alignment points", grid.points.len());
 
     if grid.points.is_empty() {
@@ -551,7 +733,7 @@ where
         ));
     }
 
-    // Step 3: Per-AP quality scoring (frame-major)
+    // Step 4: Per-AP quality scoring (frame-major)
     info!(
         "Scoring {} APs across {} frames",
         grid.points.len(),
@@ -560,7 +742,7 @@ where
     let ap_selections = score_all_aps(reader, &grid, &global_offsets, config)?;
     on_progress(0.4);
 
-    // Step 4 & 5: Per-AP local alignment + stacking (parallel)
+    // Step 5 & 6: Per-AP local alignment + stacking (parallel)
     info!("Stacking {} alignment points", grid.points.len());
 
     // Pre-read all frames needed by any AP into a cache for parallel access
@@ -583,7 +765,7 @@ where
                 ap,
                 &ap_selections[ap.index],
                 &global_offsets,
-                &reference.data,
+                &mean_ref,
                 config,
             );
             (ap.clone(), stacked_patch)
@@ -591,7 +773,7 @@ where
         .collect();
     on_progress(0.9);
 
-    // Step 6: Blend
+    // Step 7: Blend
     info!("Blending alignment point stacks");
     let blended = blend_ap_stacks(&ap_stacks, h, w, config.ap_size);
     on_progress(1.0);
@@ -660,8 +842,9 @@ fn score_all_aps_color(
 
 /// Stack one AP using pre-cached color frames.
 ///
-/// Local alignment is computed on luminance. R/G/B patches are extracted and
-/// stacked independently using the configured local method.
+/// Local alignment is computed on luminance with confidence check.
+/// R/G/B patches are extracted and stacked independently using the
+/// configured local method (quality-weighted for Mean).
 fn stack_ap_cached_color(
     frame_cache: &HashMap<usize, (Frame, ColorFrame)>,
     ap: &AlignmentPoint,
@@ -678,14 +861,15 @@ fn stack_ap_cached_color(
     let mut red_patches: Vec<Array2<f32>> = Vec::with_capacity(selected_frames.len());
     let mut green_patches: Vec<Array2<f32>> = Vec::with_capacity(selected_frames.len());
     let mut blue_patches: Vec<Array2<f32>> = Vec::with_capacity(selected_frames.len());
+    let mut weights: Vec<f64> = Vec::with_capacity(selected_frames.len());
 
-    for &(frame_idx, _) in selected_frames {
+    for &(frame_idx, quality_score) in selected_frames {
         let (lum, color) = match frame_cache.get(&frame_idx) {
             Some(entry) => entry,
             None => continue,
         };
 
-        // Local alignment on luminance
+        // Local alignment on luminance with confidence check
         let tgt_search = extract_region_shifted(
             &lum.data,
             ap.cy,
@@ -694,7 +878,13 @@ fn stack_ap_cached_color(
             &global_offsets[frame_idx],
         );
 
-        let local_offset = compute_offset_array(&ref_search, &tgt_search).unwrap_or_default();
+        let (local_offset, confidence) =
+            compute_offset_with_confidence(&ref_search, &tgt_search)
+                .unwrap_or((AlignmentOffset::default(), 0.0));
+
+        if confidence < MIN_CORRELATION_CONFIDENCE {
+            continue; // skip unreliable alignment
+        }
 
         let patch_half = half;
         let patch_size = patch_half * 2;
@@ -720,11 +910,18 @@ fn stack_ap_cached_color(
         red_patches.push(r_patch);
         green_patches.push(g_patch);
         blue_patches.push(b_patch);
+        weights.push(quality_score);
     }
 
-    let stack_fn = |patches: &[Array2<f32>]| -> Array2<f32> {
+    if red_patches.is_empty() {
+        // All frames rejected — fall back to reference region (luminance as proxy)
+        let fallback = extract_region(reference_lum, ap.cy, ap.cx, half);
+        return (fallback.clone(), fallback.clone(), fallback);
+    }
+
+    let stack_fn = |patches: &[Array2<f32>], wts: &[f64]| -> Array2<f32> {
         match config.local_stack_method {
-            LocalStackMethod::Mean => mean_stack_arrays(patches),
+            LocalStackMethod::Mean => mean_stack_arrays_weighted(patches, wts),
             LocalStackMethod::Median => median_stack_arrays(patches),
             LocalStackMethod::SigmaClip { sigma, iterations } => {
                 sigma_clip_stack_arrays(patches, sigma, iterations)
@@ -734,8 +931,13 @@ fn stack_ap_cached_color(
 
     // Stack R/G/B in parallel
     let (stacked_r, (stacked_g, stacked_b)) = rayon::join(
-        || stack_fn(&red_patches),
-        || rayon::join(|| stack_fn(&green_patches), || stack_fn(&blue_patches)),
+        || stack_fn(&red_patches, &weights),
+        || {
+            rayon::join(
+                || stack_fn(&green_patches, &weights),
+                || stack_fn(&blue_patches, &weights),
+            )
+        },
     );
 
     (stacked_r, stacked_g, stacked_b)
@@ -746,12 +948,13 @@ fn stack_ap_cached_color(
 /// Pipeline:
 /// 1. Read frame 0 → debayer → luminance as reference
 /// 2. Global alignment on luminance
-/// 3. Build AP grid on reference luminance
-/// 4. Score APs on luminance (frame-major, memory-efficient)
-/// 5. Build frame cache with (luminance, ColorFrame) for needed frames
-/// 6. Per-AP local alignment (on luminance) + stack (R/G/B independently)
-/// 7. Blend AP stacks per channel
-/// 8. Return ColorFrame
+/// 3. Build mean reference from top-quality frames (luminance)
+/// 4. Build AP grid on mean reference
+/// 5. Score APs on luminance (frame-major, memory-efficient)
+/// 6. Build frame cache with (luminance, ColorFrame) for needed frames
+/// 7. Per-AP local alignment (on luminance) + stack (R/G/B independently)
+/// 8. Blend AP stacks per channel
+/// 9. Return ColorFrame
 pub fn multi_point_stack_color<F>(
     reader: &SerReader,
     config: &MultiPointConfig,
@@ -808,9 +1011,21 @@ where
     }
     on_progress(0.1);
 
-    // Step 3: Build AP grid on reference luminance
+    // Step 3: Build mean reference from top-quality frames (luminance)
+    info!("Building mean reference from top {}% color frames", (MEAN_REFERENCE_KEEP_FRACTION * 100.0) as u32);
+    let mean_ref = build_mean_reference_color(
+        reader,
+        &global_offsets,
+        &config.quality_metric,
+        MEAN_REFERENCE_KEEP_FRACTION,
+        color_mode,
+        debayer_method,
+    )?;
+    on_progress(0.2);
+
+    // Step 4: Build AP grid on mean reference
     info!("Building alignment point grid (ap_size={})", config.ap_size);
-    let grid = build_ap_grid(&ref_lum.data, config);
+    let grid = build_ap_grid(&mean_ref, config);
     info!("Created {} alignment points", grid.points.len());
 
     if grid.points.is_empty() {
@@ -819,7 +1034,7 @@ where
         ));
     }
 
-    // Step 4: Per-AP quality scoring on luminance (frame-major, memory-efficient)
+    // Step 5: Per-AP quality scoring on luminance (frame-major, memory-efficient)
     info!(
         "Scoring {} APs across {} color frames",
         grid.points.len(),
@@ -828,7 +1043,7 @@ where
     let ap_selections = score_all_aps_color(reader, &grid, &global_offsets, config, color_mode, debayer_method)?;
     on_progress(0.4);
 
-    // Step 5: Build frame cache — (luminance, ColorFrame) for needed frames
+    // Step 6: Build frame cache — (luminance, ColorFrame) for needed frames
     info!("Loading selected color frames into cache");
     let needed_frames: BTreeSet<usize> = ap_selections
         .iter()
@@ -849,7 +1064,7 @@ where
         frame_cache.insert(idx, (lum, cf));
     }
 
-    // Step 6: Per-AP local alignment + stacking (parallel)
+    // Step 7: Per-AP local alignment + stacking (parallel)
     info!("Stacking {} alignment points (color)", grid.points.len());
     type ColorApStack = (AlignmentPoint, (Array2<f32>, Array2<f32>, Array2<f32>));
     let ap_stacks: Vec<ColorApStack> = grid
@@ -861,7 +1076,7 @@ where
                 ap,
                 &ap_selections[ap.index],
                 &global_offsets,
-                &ref_lum.data,
+                &mean_ref,
                 config,
             );
             (ap.clone(), stacked)
@@ -869,7 +1084,7 @@ where
         .collect();
     on_progress(0.9);
 
-    // Step 7: Blend per channel
+    // Step 8: Blend per channel
     info!("Blending color alignment point stacks");
     let bit_depth = ref_color.red.original_bit_depth;
 

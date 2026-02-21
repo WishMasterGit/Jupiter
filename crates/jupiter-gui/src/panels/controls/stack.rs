@@ -14,7 +14,8 @@ pub(super) fn stack_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
     ui.add_space(4.0);
 
     let is_multi_point = app.config.stack_method_choice == StackMethodChoice::MultiPoint;
-    let enabled = if is_multi_point {
+    let is_surface_warp = app.config.stack_method_choice == StackMethodChoice::SurfaceWarp;
+    let enabled = if is_multi_point || is_surface_warp {
         app.ui_state.stages.score.is_complete()
     } else {
         app.ui_state.stages.align.is_complete()
@@ -75,6 +76,57 @@ pub(super) fn stack_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
 
                 if app.config.mp_auto_ap_size {
                     // Compute auto AP size from detected planet or fallback to frame dims
+                    let computed = if let Some(diameter) = app.ui_state.detected_planet_diameter {
+                        auto_ap_size(diameter)
+                    } else if let Some(ref info) = app.ui_state.source_info {
+                        auto_ap_size_from_frame(info.width as usize, info.height as usize)
+                    } else {
+                        app.config.mp_ap_size
+                    };
+                    if app.config.mp_ap_size != computed {
+                        app.config.mp_ap_size = computed;
+                        app.ui_state.stages.mark_dirty_from(PipelineStage::Stacking);
+                    }
+                    ui.label(format!("AP Size: {} px", computed));
+                } else {
+                    let mut ap = app.config.mp_ap_size as i32;
+                    if ui
+                        .add(egui::Slider::new(&mut ap, 16..=256).text("AP Size"))
+                        .changed()
+                    {
+                        app.config.mp_ap_size = ap as usize;
+                        app.ui_state.stages.mark_dirty_from(PipelineStage::Stacking);
+                    }
+                }
+
+                let mut sr = app.config.mp_search_radius as i32;
+                if ui
+                    .add(egui::Slider::new(&mut sr, 4..=64).text("Search Radius"))
+                    .changed()
+                {
+                    app.config.mp_search_radius = sr as usize;
+                    app.ui_state.stages.mark_dirty_from(PipelineStage::Stacking);
+                }
+                if ui
+                    .add(
+                        egui::Slider::new(&mut app.config.mp_min_brightness, 0.0..=0.5)
+                            .text("Min Bright"),
+                    )
+                    .changed()
+                {
+                    app.ui_state.stages.mark_dirty_from(PipelineStage::Stacking);
+                }
+            }
+            StackMethodChoice::SurfaceWarp => {
+                // Auto AP size checkbox
+                if ui
+                    .checkbox(&mut app.config.mp_auto_ap_size, "Auto AP Size")
+                    .changed()
+                {
+                    app.ui_state.stages.mark_dirty_from(PipelineStage::Stacking);
+                }
+
+                if app.config.mp_auto_ap_size {
                     let computed = if let Some(diameter) = app.ui_state.detected_planet_diameter {
                         auto_ap_size(diameter)
                     } else if let Some(ref info) = app.ui_state.source_info {

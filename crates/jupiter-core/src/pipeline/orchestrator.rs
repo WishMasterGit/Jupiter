@@ -9,6 +9,7 @@ use crate::error::Result;
 use crate::frame::ColorMode;
 use crate::io::ser::SerReader;
 use crate::stack::multi_point::{multi_point_stack, multi_point_stack_color};
+use crate::stack::surface_warp::{surface_warp_stack, surface_warp_stack_color};
 
 use super::config::{MemoryStrategy, PipelineConfig, StackMethod};
 use super::color::apply_post_stack_color;
@@ -75,6 +76,28 @@ pub fn run_pipeline_reported(
         } else {
             let result = multi_point_stack(&reader, mp_config, |_progress| {})?;
             info!("Multi-point stacking complete");
+            reporter.finish_stage();
+            return apply_post_stack_mono(result, config, &backend, &reporter);
+        }
+    }
+
+    // Surface warp: dedicated flow (color or mono)
+    if let StackMethod::SurfaceWarp(ref sw_config) = config.stacking.method {
+        reporter.begin_stage(PipelineStage::Stacking, None);
+        if use_color {
+            let result = surface_warp_stack_color(
+                &reader,
+                sw_config,
+                &color_mode,
+                &debayer_method.unwrap(),
+                |_progress| {},
+            )?;
+            info!("Surface warp color stacking complete");
+            reporter.finish_stage();
+            return apply_post_stack_color(result, config, &backend, &reporter);
+        } else {
+            let result = surface_warp_stack(&reader, sw_config, |_progress| {})?;
+            info!("Surface warp stacking complete");
             reporter.finish_stage();
             return apply_post_stack_mono(result, config, &backend, &reporter);
         }

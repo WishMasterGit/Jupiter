@@ -28,16 +28,27 @@ pub fn show(ctx: &egui::Context, app: &mut JupiterApp) {
             ui.add(egui::ProgressBar::new(0.0).text(""));
         }
 
-        // Log area (last N messages)
-        let max_visible = 4;
-        let start = app
-            .ui_state
-            .log_messages
-            .len()
-            .saturating_sub(max_visible);
-        for msg in &app.ui_state.log_messages[start..] {
-            ui.label(msg);
-        }
+        // Log area — fixed height for 4 lines, scrollable.
+        let line_height = ui.text_style_height(&egui::TextStyle::Body);
+        let spacing = ui.spacing().item_spacing.y;
+        let log_height = line_height * 4.0 + spacing * 3.0;
+
+        egui::ScrollArea::vertical()
+            .max_height(log_height)
+            .min_scrolled_height(log_height)
+            .stick_to_bottom(true)
+            .show(ui, |ui| {
+                if app.ui_state.log_messages.is_empty() {
+                    // Reserve space for 4 empty lines to prevent layout jump.
+                    for _ in 0..4 {
+                        ui.label("");
+                    }
+                } else {
+                    for msg in &app.ui_state.log_messages {
+                        ui.label(msg);
+                    }
+                }
+            });
 
         // Status line
         ui.horizontal(|ui| {

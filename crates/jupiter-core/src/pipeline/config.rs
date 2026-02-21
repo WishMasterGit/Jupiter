@@ -10,6 +10,7 @@ use crate::sharpen::wavelet::WaveletParams;
 use crate::stack::drizzle::DrizzleConfig;
 use crate::stack::multi_point::{LocalStackMethod, MultiPointConfig};
 use crate::stack::sigma_clip::SigmaClipParams;
+use crate::stack::surface_warp::SurfaceWarpConfig;
 
 /// Memory usage strategy for the pipeline.
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -206,6 +207,7 @@ pub enum StackMethod {
     SigmaClip(SigmaClipParams),
     MultiPoint(MultiPointConfig),
     Drizzle(DrizzleConfig),
+    SurfaceWarp(SurfaceWarpConfig),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -297,6 +299,7 @@ impl fmt::Display for StackMethod {
             StackMethod::Drizzle(cfg) => {
                 write!(f, "Drizzle ({}x, pixfrac={})", cfg.scale, cfg.pixfrac)
             }
+            StackMethod::SurfaceWarp(_) => write!(f, "Surface Warp"),
         }
     }
 }

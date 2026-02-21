@@ -1,4 +1,5 @@
 pub mod consts;
+pub mod detection;
 pub mod error;
 pub mod frame;
 pub mod io;

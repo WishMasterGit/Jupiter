@@ -1,11 +1,11 @@
 use crate::consts::{
     AUTOCROP_SIGMA_CLIP_ITERATIONS, AUTOCROP_SIGMA_CLIP_THRESHOLD, AUTOCROP_SIZE_ALIGNMENT,
 };
+use crate::detection::planet::FrameDetection;
 use crate::error::Result;
 use crate::frame::ColorMode;
 use crate::io::crop::CropRect;
 
-use super::detection::FrameDetection;
 use super::config::AutoCropConfig;
 
 /// Result of temporal filtering on multi-frame detections.

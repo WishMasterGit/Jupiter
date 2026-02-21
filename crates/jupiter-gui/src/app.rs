@@ -53,6 +53,7 @@ impl JupiterApp {
                     self.ui_state.reset_pipeline();
                     self.viewport.zoom = 1.0;
                     self.viewport.pan_offset = egui::Vec2::ZERO;
+                    self.viewport.clear_processed();
 
                     // Auto-preview frame 0
                     self.send_command(WorkerCommand::PreviewFrame {
@@ -95,21 +96,22 @@ impl JupiterApp {
                     ));
                     self.ui_state.running_stage = None;
                     self.ui_state.clear_progress();
-                    self.update_viewport_from_output(ctx, &result, "Stacked");
+                    self.ui_state.viewing_raw = false;
+                    self.update_processed_output(ctx, &result, "Stacked");
                 }
                 WorkerResult::SharpenComplete { result, elapsed } => {
                     self.ui_state.stages.sharpen.set_complete("Done".into());
                     self.ui_state.running_stage = None;
                     self.ui_state.clear_progress();
                     self.ui_state.add_log(format!("Sharpened in {}", format_duration(elapsed)));
-                    self.update_viewport_from_output(ctx, &result, "Sharpened");
+                    self.update_processed_output(ctx, &result, "Sharpened");
                 }
                 WorkerResult::FilterComplete { result, elapsed } => {
                     self.ui_state.stages.filter.set_complete(format!("{} applied", self.config.filters.len()));
                     self.ui_state.running_stage = None;
                     self.ui_state.clear_progress();
                     self.ui_state.add_log(format!("Filters applied in {}", format_duration(elapsed)));
-                    self.update_viewport_from_output(ctx, &result, "Filtered");
+                    self.update_processed_output(ctx, &result, "Filtered");
                 }
                 WorkerResult::PipelineComplete { result, elapsed } => {
                     self.ui_state.running_stage = None;
@@ -118,7 +120,8 @@ impl JupiterApp {
                         "Pipeline complete in {}",
                         format_duration(elapsed)
                     ));
-                    self.update_viewport_from_output(ctx, &result, "Pipeline Result");
+                    self.ui_state.viewing_raw = false;
+                    self.update_processed_output(ctx, &result, "Pipeline Result");
                 }
                 WorkerResult::Progress {
                     stage,
@@ -222,6 +225,51 @@ impl JupiterApp {
         self.viewport.image_size = Some(display.original_size);
         self.viewport.display_scale = display.display_scale;
         self.viewport.viewing_label = label.to_string();
+    }
+
+    /// Store a processed result and update viewport only if not viewing raw.
+    fn update_processed_output(&mut self, ctx: &egui::Context, output: &PipelineOutput, label: &str) {
+        let display = output_to_display_image(output);
+        let texture = ctx.load_texture(
+            "processed",
+            display.image,
+            egui::TextureOptions::NEAREST,
+        );
+        // Always store the processed result for later switching.
+        self.viewport.processed_texture = Some(texture.clone());
+        self.viewport.processed_image_size = Some(display.original_size);
+        self.viewport.processed_display_scale = display.display_scale;
+        self.viewport.processed_label = label.to_string();
+
+        // Only update the viewport if viewing processed.
+        if !self.ui_state.viewing_raw {
+            self.viewport.texture = Some(texture);
+            self.viewport.image_size = Some(display.original_size);
+            self.viewport.display_scale = display.display_scale;
+            self.viewport.viewing_label = label.to_string();
+        }
+    }
+
+    /// Switch viewport to show the stored processed result.
+    pub fn switch_to_processed(&mut self) {
+        self.ui_state.viewing_raw = false;
+        if let Some(ref tex) = self.viewport.processed_texture {
+            self.viewport.texture = Some(tex.clone());
+            self.viewport.image_size = self.viewport.processed_image_size;
+            self.viewport.display_scale = self.viewport.processed_display_scale;
+            self.viewport.viewing_label = self.viewport.processed_label.clone();
+        }
+    }
+
+    /// Switch viewport to show a raw frame (sends PreviewFrame command).
+    pub fn switch_to_raw(&mut self) {
+        self.ui_state.viewing_raw = true;
+        if let Some(ref path) = self.ui_state.file_path {
+            self.send_command(WorkerCommand::PreviewFrame {
+                path: path.clone(),
+                frame_index: self.ui_state.preview_frame_index,
+            });
+        }
     }
 
     pub fn send_command(&self, cmd: WorkerCommand) {

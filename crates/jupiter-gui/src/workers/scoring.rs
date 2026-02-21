@@ -4,8 +4,7 @@ use std::sync::mpsc;
 use jupiter_core::color::debayer::{debayer, is_bayer, luminance};
 use jupiter_core::consts::{COLOR_CHANNEL_COUNT, LOW_MEMORY_THRESHOLD_BYTES};
 use jupiter_core::frame::{ColorFrame, ColorMode, Frame};
-use jupiter_core::io::autocrop::detection::detect_planet_in_frame;
-use jupiter_core::io::autocrop::AutoCropConfig;
+use jupiter_core::detection::{detect_planet_in_frame, DetectionConfig};
 use jupiter_core::io::ser::SerReader;
 use jupiter_core::pipeline::config::{DebayerConfig, QualityMetric};
 use jupiter_core::pipeline::PipelineStage;
@@ -286,7 +285,7 @@ pub(super) fn handle_load_and_score(
 
 /// Run planet detection on a single frame and return the diameter (max of bbox width/height).
 fn detect_planet_diameter(frame: &Frame) -> Option<usize> {
-    let config = AutoCropConfig::default();
+    let config = DetectionConfig::default();
     let detection = detect_planet_in_frame(&frame.data, 0, &config)?;
     Some(detection.bbox_width.max(detection.bbox_height))
 }

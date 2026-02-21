@@ -10,6 +10,7 @@ use jupiter_core::stack::drizzle::drizzle_stack_with_progress;
 use jupiter_core::stack::mean::mean_stack_with_progress;
 use jupiter_core::stack::median::median_stack;
 use jupiter_core::stack::multi_point::{multi_point_stack, multi_point_stack_color};
+use jupiter_core::stack::surface_warp::{surface_warp_stack, surface_warp_stack_color};
 use jupiter_core::stack::sigma_clip::sigma_clip_stack;
 
 use crate::messages::WorkerResult;
@@ -103,6 +104,92 @@ pub(super) fn handle_stack(
                     });
                 }
                 Err(e) => send_error(tx, ctx, format!("Multi-point stacking failed: {e}")),
+            }
+        }
+        return;
+    }
+
+    // Surface warp has its own flow (color or mono)
+    if let StackMethod::SurfaceWarp(ref sw_config) = method {
+        let file_path = match &cache.file_path {
+            Some(p) => p.clone(),
+            None => {
+                send_error(tx, ctx, "No file loaded. Run Score Frames first.");
+                return;
+            }
+        };
+        send_log(tx, ctx, "Surface warp stacking...");
+        send(tx, ctx, WorkerResult::Progress {
+            stage: PipelineStage::Stacking,
+            items_done: None,
+            items_total: None,
+        });
+        let start = Instant::now();
+        let reader = match SerReader::open(&file_path) {
+            Ok(r) => r,
+            Err(e) => {
+                send_error(tx, ctx, format!("Failed to open file: {e}"));
+                return;
+            }
+        };
+
+        if cache.is_color {
+            let color_mode = match reader.header.color_mode() {
+                ColorMode::Mono => {
+                    send_error(tx, ctx, "Expected color source but got mono");
+                    return;
+                }
+                mode => mode,
+            };
+            let debayer_method = cache.debayer_method.clone().unwrap_or_default();
+            match surface_warp_stack_color(
+                &reader,
+                sw_config,
+                &color_mode,
+                &debayer_method,
+                |_| {},
+            ) {
+                Ok(result) => {
+                    let elapsed = start.elapsed();
+                    let output = PipelineOutput::Color(result);
+                    cache.set_stacked(output.clone());
+                    send_log(
+                        tx,
+                        ctx,
+                        format!(
+                            "Surface warp color stacking complete in {:.1}s",
+                            elapsed.as_secs_f32()
+                        ),
+                    );
+                    send(tx, ctx, WorkerResult::StackComplete {
+                        result: output,
+                        elapsed,
+                    });
+                }
+                Err(e) => {
+                    send_error(tx, ctx, format!("Surface warp color stacking failed: {e}"))
+                }
+            }
+        } else {
+            match surface_warp_stack(&reader, sw_config, |_| {}) {
+                Ok(result) => {
+                    let elapsed = start.elapsed();
+                    let output = PipelineOutput::Mono(result);
+                    cache.set_stacked(output.clone());
+                    send_log(
+                        tx,
+                        ctx,
+                        format!(
+                            "Surface warp stacking complete in {:.1}s",
+                            elapsed.as_secs_f32()
+                        ),
+                    );
+                    send(tx, ctx, WorkerResult::StackComplete {
+                        result: output,
+                        elapsed,
+                    });
+                }
+                Err(e) => send_error(tx, ctx, format!("Surface warp stacking failed: {e}")),
             }
         }
         return;

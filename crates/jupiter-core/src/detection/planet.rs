@@ -4,8 +4,8 @@ use crate::consts::AUTOCROP_BORDER_STRIP_WIDTH;
 use crate::filters::gaussian_blur::gaussian_blur_array;
 
 use super::components::{connected_components, touches_border};
+use super::config::DetectionConfig;
 use super::morphology::morphological_opening;
-use super::config::AutoCropConfig;
 use super::threshold::compute_threshold;
 
 /// Per-frame detection result.
@@ -34,7 +34,7 @@ pub struct FrameDetection {
 pub fn detect_planet_in_frame(
     data: &Array2<f32>,
     frame_index: usize,
-    config: &AutoCropConfig,
+    config: &DetectionConfig,
 ) -> Option<FrameDetection> {
     let (h, w) = data.dim();
     if h == 0 || w == 0 {

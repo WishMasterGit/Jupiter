@@ -9,6 +9,7 @@ use jupiter_core::sharpen::wavelet::WaveletParams;
 use jupiter_core::stack::drizzle::DrizzleConfig;
 use jupiter_core::stack::multi_point::MultiPointConfig;
 use jupiter_core::stack::sigma_clip::SigmaClipParams;
+use jupiter_core::stack::surface_warp::SurfaceWarpConfig;
 
 use super::choices::{AlignMethodChoice, DeconvMethodChoice, PsfModelChoice, StackMethodChoice};
 
@@ -153,6 +154,13 @@ impl ConfigState {
                 quality_weighted: self.drizzle_quality_weighted,
                 kernel: Default::default(),
             }),
+            StackMethodChoice::SurfaceWarp => StackMethod::SurfaceWarp(SurfaceWarpConfig {
+                ap_size: self.mp_ap_size,
+                search_radius: self.mp_search_radius,
+                select_percentage: self.select_percentage,
+                min_brightness: self.mp_min_brightness,
+                quality_metric: self.quality_metric,
+            }),
         }
     }
 
@@ -290,6 +298,12 @@ impl ConfigState {
                 state.drizzle_scale = p.scale;
                 state.drizzle_pixfrac = p.pixfrac;
                 state.drizzle_quality_weighted = p.quality_weighted;
+            }
+            StackMethod::SurfaceWarp(p) => {
+                state.stack_method_choice = StackMethodChoice::SurfaceWarp;
+                state.mp_ap_size = p.ap_size;
+                state.mp_search_radius = p.search_radius;
+                state.mp_min_brightness = p.min_brightness;
             }
         }
 

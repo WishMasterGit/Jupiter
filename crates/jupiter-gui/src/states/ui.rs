@@ -40,6 +40,9 @@ pub struct UIState {
 
     /// Set to true on mouse-up to trigger auto-sharpening.
     pub sharpen_requested: bool,
+
+    /// Whether the viewport is showing a raw frame (true) or processed result (false).
+    pub viewing_raw: bool,
 }
 
 impl Default for UIState {
@@ -59,6 +62,7 @@ impl Default for UIState {
             crop_state: CropState::default(),
             detected_planet_diameter: None,
             sharpen_requested: false,
+            viewing_raw: true,
         }
     }
 }
@@ -95,6 +99,7 @@ impl UIState {
         self.crop_state = Default::default();
         self.clear_progress();
         self.sharpen_requested = false;
+        self.viewing_raw = true;
     }
 
     /// Clear progress counters.

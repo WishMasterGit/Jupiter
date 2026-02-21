@@ -3,11 +3,11 @@ use tempfile::NamedTempFile;
 
 use ndarray::Array2;
 
-use jupiter_core::io::autocrop::components::{connected_components, touches_border};
-use jupiter_core::io::autocrop::detection::{detect_planet_in_frame, FrameDetection};
-use jupiter_core::io::autocrop::morphology::morphological_opening;
+use jupiter_core::detection::components::{connected_components, touches_border};
+use jupiter_core::detection::morphology::morphological_opening;
+use jupiter_core::detection::{detect_planet_in_frame, DetectionConfig, FrameDetection, ThresholdMethod};
 use jupiter_core::io::autocrop::temporal::analyze_detections;
-use jupiter_core::io::autocrop::{auto_detect_crop, AutoCropConfig, ThresholdMethod};
+use jupiter_core::io::autocrop::{auto_detect_crop, AutoCropConfig};
 use jupiter_core::io::ser::SerReader;
 
 const SER_HEADER_SIZE: usize = 178;
@@ -187,7 +187,10 @@ fn test_autocrop_otsu() {
     let reader = SerReader::open(tmp.path()).unwrap();
 
     let config = AutoCropConfig {
-        threshold_method: ThresholdMethod::Otsu,
+        detection: DetectionConfig {
+            threshold_method: ThresholdMethod::Otsu,
+            ..Default::default()
+        },
         ..Default::default()
     };
     let crop = auto_detect_crop(&reader, &config).unwrap();
@@ -210,7 +213,10 @@ fn test_autocrop_fixed_threshold() {
     let reader = SerReader::open(tmp.path()).unwrap();
 
     let config = AutoCropConfig {
-        threshold_method: ThresholdMethod::Fixed(0.5),
+        detection: DetectionConfig {
+            threshold_method: ThresholdMethod::Fixed(0.5),
+            ..Default::default()
+        },
         ..Default::default()
     };
     let crop = auto_detect_crop(&reader, &config).unwrap();
@@ -385,7 +391,7 @@ fn test_detect_planet_with_hot_pixels() {
     let hot_pixels = vec![(0, 0), (0, 63), (63, 0), (63, 63), (10, 55)];
     let data = make_planet_array_with_noise(w, h, 32.0, 32.0, 10.0, &hot_pixels);
 
-    let config = AutoCropConfig::default();
+    let config = DetectionConfig::default();
     let det = detect_planet_in_frame(&data, 0, &config);
 
     assert!(det.is_some(), "Should detect planet despite hot pixels");
@@ -410,7 +416,7 @@ fn test_detect_planet_at_border_returns_none() {
     // Planet centered at (2, 2) with radius 8 — touches border.
     let data = make_planet_array_with_noise(w, h, 2.0, 2.0, 8.0, &[]);
 
-    let config = AutoCropConfig::default();
+    let config = DetectionConfig::default();
     let det = detect_planet_in_frame(&data, 0, &config);
     assert!(det.is_none(), "Border-touching planet should be rejected");
 }

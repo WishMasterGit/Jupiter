@@ -11,6 +11,7 @@ use jupiter_core::stack::mean::mean_stack;
 use jupiter_core::stack::median::median_stack;
 use jupiter_core::stack::multi_point::{multi_point_stack, MultiPointConfig};
 use jupiter_core::stack::sigma_clip::{sigma_clip_stack, SigmaClipParams};
+use jupiter_core::stack::surface_warp::{surface_warp_stack, SurfaceWarpConfig};
 use std::path::PathBuf;
 
 #[derive(Clone, ValueEnum)]
@@ -20,6 +21,7 @@ pub enum StackMethodArg {
     SigmaClip,
     MultiPoint,
     Drizzle,
+    SurfaceWarp,
 }
 
 #[derive(Args)]
@@ -71,6 +73,7 @@ pub fn run(args: &StackArgs) -> Result<()> {
     match args.method {
         StackMethodArg::MultiPoint => run_multi_point(&reader, args, percentage),
         StackMethodArg::Drizzle => run_drizzle(&reader, args, percentage),
+        StackMethodArg::SurfaceWarp => run_surface_warp(&reader, args, percentage),
         _ => run_standard(&reader, args, percentage),
     }
 }
@@ -239,5 +242,37 @@ fn run_drizzle(reader: &SerReader, args: &StackArgs, percentage: f32) -> Result<
         result.height(),
         args.output.display()
     );
+    Ok(())
+}
+
+fn run_surface_warp(reader: &SerReader, args: &StackArgs, percentage: f32) -> Result<()> {
+    let total = reader.frame_count();
+    println!(
+        "Surface warp stacking {} frames (ap_size={}, search_radius={})",
+        total, args.ap_size, args.search_radius
+    );
+
+    let sw_config = SurfaceWarpConfig {
+        ap_size: args.ap_size,
+        search_radius: args.search_radius,
+        select_percentage: percentage,
+        min_brightness: args.min_brightness,
+        ..Default::default()
+    };
+
+    let pb = ProgressBar::new(100);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("Surface Warp [{bar:40}] {pos}%")?
+            .progress_chars("=> "),
+    );
+
+    let result = surface_warp_stack(reader, &sw_config, |progress| {
+        pb.set_position((progress * 100.0) as u64);
+    })?;
+    pb.finish();
+
+    save_image(&result, &args.output)?;
+    println!("Saved to {}", args.output.display());
     Ok(())
 }

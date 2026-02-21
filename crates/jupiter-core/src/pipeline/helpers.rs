@@ -72,8 +72,8 @@ pub(super) fn stack_frames_with_progress(
             on_progress(frames.len());
             result
         }
-        StackMethod::MultiPoint(_) | StackMethod::Drizzle(_) => {
-            unreachable!("multi-point and drizzle handled separately")
+        StackMethod::MultiPoint(_) | StackMethod::Drizzle(_) | StackMethod::SurfaceWarp(_) => {
+            unreachable!("multi-point, drizzle, and surface-warp handled separately")
         }
     }
 }

@@ -66,6 +66,66 @@ pub fn compute_offset_array(
     })
 }
 
+/// Compute offset and a confidence metric (peak_value / mean_correlation).
+///
+/// Returns `(offset, confidence)`.  A confidence below
+/// [`crate::consts::MIN_CORRELATION_CONFIDENCE`] typically indicates an
+/// unreliable alignment that should be discarded.
+pub fn compute_offset_with_confidence(
+    reference: &Array2<f32>,
+    target: &Array2<f32>,
+) -> Result<(AlignmentOffset, f64)> {
+    let (h, w) = reference.dim();
+    let (th, tw) = target.dim();
+    if h != th || w != tw {
+        return Err(JupiterError::Pipeline(format!(
+            "Array size mismatch: {}x{} vs {}x{}",
+            w, h, tw, th
+        )));
+    }
+
+    let ref_windowed = apply_hann(reference);
+    let tgt_windowed = apply_hann(target);
+
+    let ref_fft = fft2d_forward(&ref_windowed);
+    let tgt_fft = fft2d_forward(&tgt_windowed);
+
+    let cross_power = normalized_cross_power(&ref_fft, &tgt_fft);
+    let correlation = ifft2d_inverse(&cross_power);
+
+    let (peak_row, peak_col, peak_val) = find_peak(&correlation);
+
+    // Confidence = peak / mean(abs(correlation))
+    let n = (h * w) as f64;
+    let mean_abs: f64 = correlation.iter().map(|v| v.abs()).sum::<f64>() / n;
+    let confidence = if mean_abs > 1e-15 {
+        peak_val / mean_abs
+    } else {
+        0.0
+    };
+
+    let dy = if peak_row > h / 2 {
+        peak_row as f64 - h as f64
+    } else {
+        peak_row as f64
+    };
+    let dx = if peak_col > w / 2 {
+        peak_col as f64 - w as f64
+    } else {
+        peak_col as f64
+    };
+
+    let (sub_dy, sub_dx) = refine_peak_paraboloid(&correlation, peak_row, peak_col);
+
+    Ok((
+        AlignmentOffset {
+            dx: dx + sub_dx,
+            dy: dy + sub_dy,
+        },
+        confidence,
+    ))
+}
+
 /// Compute translation offset using a ComputeBackend (GPU or CPU).
 pub fn compute_offset_gpu(
     reference: &Array2<f32>,

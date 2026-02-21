@@ -281,6 +281,28 @@ fn print_stack_sub_params(s: &Styles, method: &StackMethod) {
                 s.value.apply_to(if cfg.quality_weighted { "yes" } else { "no" })
             );
         }
+        StackMethod::SurfaceWarp(cfg) => {
+            println!(
+                "    {:<12}{}",
+                s.label.apply_to("AP Size"),
+                s.value.apply_to(format!("{} px", cfg.ap_size))
+            );
+            println!(
+                "    {:<12}{}",
+                s.label.apply_to("Search"),
+                s.value.apply_to(format!("{} px", cfg.search_radius))
+            );
+            println!(
+                "    {:<12}{}",
+                s.label.apply_to("Select"),
+                s.value.apply_to(format!("{}%", (cfg.select_percentage * 100.0) as u32))
+            );
+            println!(
+                "    {:<12}{}",
+                s.label.apply_to("Min Bright"),
+                s.value.apply_to(cfg.min_brightness)
+            );
+        }
         _ => {}
     }
 }

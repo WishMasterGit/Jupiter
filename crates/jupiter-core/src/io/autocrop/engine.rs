@@ -4,14 +4,15 @@ use rayon::prelude::*;
 use crate::consts::{
     AUTOCROP_FALLBACK_FRAME_COUNT, AUTOCROP_MIN_VALID_DETECTIONS, PARALLEL_FRAME_THRESHOLD,
 };
+use crate::detection::config::ThresholdMethod;
+use crate::detection::planet::{detect_planet_in_frame, FrameDetection};
+use crate::detection::threshold::otsu_threshold;
 use crate::error::{JupiterError, Result};
 use crate::io::crop::CropRect;
 use crate::io::ser::SerReader;
 
-use super::config::{AutoCropConfig, ThresholdMethod};
-use super::detection::{detect_planet_in_frame, FrameDetection};
+use super::config::AutoCropConfig;
 use super::temporal::{analyze_detections, compute_crop_rect};
-use super::threshold::otsu_threshold;
 
 /// Detect the planet in a SER file and return a crop rectangle that contains it.
 ///
@@ -38,6 +39,7 @@ pub fn auto_detect_crop(reader: &SerReader, config: &AutoCropConfig) -> Result<C
     };
 
     // Phase 1: per-frame detection with optional parallelism.
+    let det_config = &config.detection;
     let detections: Vec<Option<FrameDetection>> = if indices.len() >= PARALLEL_FRAME_THRESHOLD {
         indices
             .par_iter()
@@ -45,7 +47,7 @@ pub fn auto_detect_crop(reader: &SerReader, config: &AutoCropConfig) -> Result<C
                 reader
                     .read_frame(idx)
                     .ok()
-                    .and_then(|f| detect_planet_in_frame(&f.data, idx, config))
+                    .and_then(|f| detect_planet_in_frame(&f.data, idx, det_config))
             })
             .collect()
     } else {
@@ -55,7 +57,7 @@ pub fn auto_detect_crop(reader: &SerReader, config: &AutoCropConfig) -> Result<C
                 reader
                     .read_frame(idx)
                     .ok()
-                    .and_then(|f| detect_planet_in_frame(&f.data, idx, config))
+                    .and_then(|f| detect_planet_in_frame(&f.data, idx, det_config))
             })
             .collect()
     };
@@ -103,18 +105,18 @@ fn detect_fallback(reader: &SerReader, config: &AutoCropConfig) -> Result<CropRe
     let combined = median_combine(&frames);
 
     // Try detection on the composite.
-    if let Some(det) = detect_planet_in_frame(&combined, center, config) {
+    if let Some(det) = detect_planet_in_frame(&combined, center, &config.detection) {
         let analysis = analyze_detections(&[det]);
         return compute_crop_rect(&analysis, w, h, config, &reader.header.color_mode());
     }
 
     // Retry with progressively lower thresholds.
     for &multiplier in &[0.8_f32, 0.6] {
-        let mut lowered = config.clone();
+        let mut lowered = config.detection.clone();
         lowered.threshold_method = ThresholdMethod::Fixed(
             otsu_threshold(&crate::filters::gaussian_blur::gaussian_blur_array(
                 &combined,
-                config.blur_sigma,
+                config.detection.blur_sigma,
             )) * multiplier,
         );
         if let Some(det) = detect_planet_in_frame(&combined, center, &lowered) {

@@ -17,6 +17,7 @@ use jupiter_core::pipeline::{run_pipeline_reported, PipelineStage, ProgressRepor
 use jupiter_core::sharpen::wavelet::WaveletParams;
 use jupiter_core::stack::multi_point::MultiPointConfig;
 use jupiter_core::stack::sigma_clip::SigmaClipParams;
+use jupiter_core::stack::surface_warp::SurfaceWarpConfig;
 
 use super::stack::StackMethodArg;
 
@@ -347,6 +348,13 @@ fn build_config_from_args(args: &RunArgs) -> PipelineConfig {
             scale: args.drizzle_scale,
             pixfrac: args.pixfrac,
             quality_weighted: true,
+            ..Default::default()
+        }),
+        StackMethodArg::SurfaceWarp => StackMethod::SurfaceWarp(SurfaceWarpConfig {
+            ap_size: args.ap_size,
+            search_radius: args.search_radius,
+            select_percentage: args.select as f32 / 100.0,
+            min_brightness: args.min_brightness,
             ..Default::default()
         }),
     };
