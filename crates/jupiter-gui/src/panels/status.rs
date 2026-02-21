@@ -36,18 +36,18 @@ pub fn show(ctx: &egui::Context, app: &mut JupiterApp) {
             .len()
             .saturating_sub(max_visible);
         for msg in &app.ui_state.log_messages[start..] {
-            ui.small(msg);
+            ui.label(msg);
         }
 
         // Status line
         ui.horizontal(|ui| {
             if let Some(ref size) = app.viewport.image_size {
-                ui.small(format!("{}x{}", size[0], size[1]));
+                ui.label(format!("{}x{}", size[0], size[1]));
                 ui.separator();
             }
-            ui.small(format!("Zoom: {:.0}%", app.viewport.zoom * 100.0));
+            ui.label(format!("Zoom: {:.0}%", app.viewport.zoom * 100.0));
             ui.separator();
-            ui.small(format!("Device: {}", app.config.device));
+            ui.label(format!("Device: {}", app.config.device));
         });
 
         ui.add_space(2.0);

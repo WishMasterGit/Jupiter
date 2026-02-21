@@ -54,18 +54,7 @@ impl JupiterApp {
                     ));
                     self.ui_state.source_info = Some(info);
                     self.ui_state.preview_frame_index = 0;
-                    self.ui_state.crop_state = Default::default();
-
-                    // Reset pipeline state from previous file
-                    self.ui_state.frames_scored = None;
-                    self.ui_state.ranked_preview.clear();
-                    self.ui_state.align_status = None;
-                    self.ui_state.stack_status = None;
-                    self.ui_state.sharpen_status = false;
-                    self.ui_state.filter_status = None;
-                    self.ui_state.clear_all_dirty();
-                    self.ui_state.progress_items_done = None;
-                    self.ui_state.progress_items_total = None;
+                    self.ui_state.reset_pipeline();
                     self.viewport.zoom = 1.0;
                     self.viewport.pan_offset = egui::Vec2::ZERO;
 
@@ -83,60 +72,50 @@ impl JupiterApp {
                     frame_count,
                     ranked_preview,
                 } => {
-                    self.ui_state.frames_scored = Some(frame_count);
+                    self.ui_state.stages.score.set_complete(format!("{frame_count} scored"));
                     self.ui_state.ranked_preview = ranked_preview;
                     self.ui_state.running_stage = None;
-                    self.ui_state.score_params_dirty = false;
                     self.ui_state.add_log(format!("{frame_count} frames scored"));
                 }
                 WorkerResult::AlignComplete { frame_count, elapsed } => {
-                    self.ui_state.align_status = Some(format!(
+                    self.ui_state.stages.align.set_complete(format!(
                         "{frame_count} aligned ({})",
                         format_duration(elapsed)
                     ));
+                    self.ui_state.stages.stack.mark_dirty();
                     self.ui_state.running_stage = None;
-                    self.ui_state.align_params_dirty = false;
-                    self.ui_state.stack_params_dirty = true;
-                    self.ui_state.progress_items_done = None;
-                    self.ui_state.progress_items_total = None;
+                    self.ui_state.clear_progress();
                     self.ui_state.add_log(format!(
                         "Aligned {frame_count} frames in {}",
                         format_duration(elapsed)
                     ));
                 }
                 WorkerResult::StackComplete { result, elapsed } => {
-                    self.ui_state.stack_status = Some(format!(
+                    self.ui_state.stages.stack.set_complete(format!(
                         "Stacked ({})",
                         format_duration(elapsed)
                     ));
                     self.ui_state.running_stage = None;
-                    self.ui_state.stack_params_dirty = false;
-                    self.ui_state.progress_items_done = None;
-                    self.ui_state.progress_items_total = None;
+                    self.ui_state.clear_progress();
                     self.update_viewport_from_output(ctx, &result, "Stacked");
                 }
                 WorkerResult::SharpenComplete { result, elapsed } => {
-                    self.ui_state.sharpen_status = true;
+                    self.ui_state.stages.sharpen.set_complete("Done".into());
                     self.ui_state.running_stage = None;
-                    self.ui_state.sharpen_params_dirty = false;
-                    self.ui_state.progress_items_done = None;
-                    self.ui_state.progress_items_total = None;
+                    self.ui_state.clear_progress();
                     self.ui_state.add_log(format!("Sharpened in {}", format_duration(elapsed)));
                     self.update_viewport_from_output(ctx, &result, "Sharpened");
                 }
                 WorkerResult::FilterComplete { result, elapsed } => {
-                    self.ui_state.filter_status = Some(self.config.filters.len());
+                    self.ui_state.stages.filter.set_complete(format!("{} applied", self.config.filters.len()));
                     self.ui_state.running_stage = None;
-                    self.ui_state.filter_params_dirty = false;
-                    self.ui_state.progress_items_done = None;
-                    self.ui_state.progress_items_total = None;
+                    self.ui_state.clear_progress();
                     self.ui_state.add_log(format!("Filters applied in {}", format_duration(elapsed)));
                     self.update_viewport_from_output(ctx, &result, "Filtered");
                 }
                 WorkerResult::PipelineComplete { result, elapsed } => {
                     self.ui_state.running_stage = None;
-                    self.ui_state.progress_items_done = None;
-                    self.ui_state.progress_items_total = None;
+                    self.ui_state.clear_progress();
                     self.ui_state.add_log(format!(
                         "Pipeline complete in {}",
                         format_duration(elapsed)
@@ -175,16 +154,8 @@ impl JupiterApp {
                         telescope: None,
                         instrument: None,
                     });
-                    self.ui_state.crop_state = Default::default();
-                    self.ui_state.frames_scored = None;
-                    self.ui_state.ranked_preview.clear();
-                    self.ui_state.align_status = None;
-                    self.ui_state.stack_status = Some("Image loaded".to_string());
-                    self.ui_state.sharpen_status = false;
-                    self.ui_state.filter_status = None;
-                    self.ui_state.clear_all_dirty();
-                    self.ui_state.progress_items_done = None;
-                    self.ui_state.progress_items_total = None;
+                    self.ui_state.reset_pipeline();
+                    self.ui_state.stages.stack.set_complete("Image loaded".into());
                     self.viewport.zoom = 1.0;
                     self.viewport.pan_offset = egui::Vec2::ZERO;
                     self.ui_state.add_log(format!(
@@ -232,7 +203,7 @@ impl JupiterApp {
                 }
                 WorkerResult::ConfigImported { config } => {
                     self.config = ConfigState::from_pipeline_config(&config);
-                    self.ui_state.mark_dirty_from_score();
+                    self.ui_state.stages.mark_dirty_from(PipelineStage::QualityAssessment);
                     self.ui_state.add_log("Config imported".into());
                 }
                 WorkerResult::Log { message } => {
@@ -264,13 +235,14 @@ impl JupiterApp {
         if let Some(changed_at) = self.ui_state.sharpen_auto_pending {
             let elapsed = changed_at.elapsed();
             if elapsed >= AUTO_SHARPEN_DEBOUNCE {
-                let can_sharpen = self.ui_state.stack_status.is_some()
+                let can_sharpen = self.ui_state.stages.stack.is_complete()
                     && !self.ui_state.is_busy()
                     && self.config.sharpen_enabled
-                    && self.ui_state.sharpen_params_dirty;
+                    && self.ui_state.stages.sharpen.is_dirty();
 
                 if can_sharpen {
                     if let Some(config) = self.config.sharpening_config() {
+                        self.ui_state.stages.clear_downstream(PipelineStage::Sharpening);
                         self.ui_state.running_stage = Some(PipelineStage::Sharpening);
                         self.ui_state.sharpen_auto_pending = None;
                         self.send_command(WorkerCommand::Sharpen {

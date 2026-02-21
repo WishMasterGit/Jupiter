@@ -2,7 +2,7 @@ use crate::app::JupiterApp;
 use crate::messages::WorkerCommand;
 
 pub(super) fn file_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
-    crate::panels::section_header(ui, "File", None);
+    crate::panels::section_header(ui, "File", None, None);
     ui.add_space(4.0);
 
     if ui.button("Open...").clicked() {

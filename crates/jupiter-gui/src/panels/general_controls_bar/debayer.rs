@@ -1,8 +1,9 @@
 use crate::app::JupiterApp;
 use jupiter_core::color::debayer::DebayerMethod;
+use jupiter_core::pipeline::PipelineStage;
 
 pub(super) fn debayer_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
-    crate::panels::section_header(ui, "Debayer", None);
+    crate::panels::section_header(ui, "Debayer", None, None);
     ui.add_space(4.0);
 
     if let Some(ref info) = app.ui_state.source_info {
@@ -13,7 +14,7 @@ pub(super) fn debayer_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
         .checkbox(&mut app.config.debayer_enabled, "Enable debayering")
         .changed()
     {
-        app.ui_state.mark_dirty_from_score();
+        app.ui_state.stages.mark_dirty_from(PipelineStage::QualityAssessment);
     }
 
     if app.config.debayer_enabled {
@@ -32,7 +33,7 @@ pub(super) fn debayer_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
                 changed
             });
         if changed.inner == Some(true) {
-            app.ui_state.mark_dirty_from_score();
+            app.ui_state.stages.mark_dirty_from(PipelineStage::QualityAssessment);
         }
     }
 }

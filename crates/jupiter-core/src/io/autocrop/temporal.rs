@@ -6,7 +6,7 @@ use crate::frame::ColorMode;
 use crate::io::crop::CropRect;
 
 use super::detection::FrameDetection;
-use super::AutoCropConfig;
+use super::config::AutoCropConfig;
 
 /// Result of temporal filtering on multi-frame detections.
 #[derive(Clone, Debug)]

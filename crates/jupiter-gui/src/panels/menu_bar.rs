@@ -1,6 +1,7 @@
 use crate::app::JupiterApp;
 use crate::messages::{WorkerCommand, WorkerResult};
 use crate::states::ConfigState;
+use jupiter_core::pipeline::PipelineStage;
 
 pub fn show(ctx: &egui::Context, app: &mut JupiterApp) {
     egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
@@ -43,7 +44,7 @@ pub fn show(ctx: &egui::Context, app: &mut JupiterApp) {
                 if ui.button("Reset Defaults").clicked() {
                     ui.close();
                     app.config = ConfigState::default();
-                    app.ui_state.mark_dirty_from_score();
+                    app.ui_state.stages.mark_dirty_from(PipelineStage::QualityAssessment);
                     app.ui_state.add_log("Config reset to defaults".into());
                 }
             });

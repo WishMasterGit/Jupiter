@@ -5,120 +5,127 @@ use jupiter_core::pipeline::PipelineStage;
 pub(super) fn sharpen_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
     let status = if matches!(app.ui_state.running_stage, Some(PipelineStage::Sharpening)) {
         Some("Processing...")
-    } else if app.config.sharpen_enabled && app.ui_state.sharpen_status {
-        Some("Done")
+    } else if app.config.sharpen_enabled {
+        app.ui_state.stages.sharpen.label().map(|s| s as &str)
     } else {
         None
     };
-    crate::panels::section_header(ui, "Sharpening", status);
+    let color = if app.config.sharpen_enabled {
+        app.ui_state.stages.sharpen.button_color()
+    } else {
+        None
+    };
+    crate::panels::section_header(ui, "4. Sharpening", status, color);
     ui.add_space(4.0);
 
-    if ui.checkbox(&mut app.config.sharpen_enabled, "Enable sharpening").changed() {
-        app.ui_state.mark_dirty_from_sharpen();
-    }
-
-    if app.config.sharpen_enabled {
-        // Wavelet params
-        ui.small("Wavelet Layers:");
-        let mut layers = app.config.wavelet_num_layers as i32;
-        if ui.add(egui::Slider::new(&mut layers, 1..=8).text("Layers")).changed() {
-            app.config.wavelet_num_layers = layers as usize;
-            // Resize coefficients to match
-            app.config.wavelet_coefficients.resize(layers as usize, 1.0);
+    let enabled = app.ui_state.stages.stack.is_complete();
+    ui.add_enabled_ui(enabled, |ui| {
+        if ui.checkbox(&mut app.config.sharpen_enabled, "Enable sharpening").changed() {
             app.ui_state.mark_dirty_from_sharpen();
         }
 
-        for i in 0..app.config.wavelet_coefficients.len() {
-            if ui
-                .add(
-                    egui::Slider::new(&mut app.config.wavelet_coefficients[i], 0.0..=3.0)
-                        .text(format!("L{}", i + 1))
-                        .fixed_decimals(2),
-                )
-                .changed()
-            {
+        if app.config.sharpen_enabled {
+            // Wavelet params
+            ui.small("Wavelet Layers:");
+            let mut layers = app.config.wavelet_num_layers as i32;
+            if ui.add(egui::Slider::new(&mut layers, 1..=8).text("Layers")).changed() {
+                app.config.wavelet_num_layers = layers as usize;
+                // Resize coefficients to match
+                app.config.wavelet_coefficients.resize(layers as usize, 1.0);
                 app.ui_state.mark_dirty_from_sharpen();
             }
-        }
 
-        ui.add_space(4.0);
+            for i in 0..app.config.wavelet_coefficients.len() {
+                if ui
+                    .add(
+                        egui::Slider::new(&mut app.config.wavelet_coefficients[i], 0.0..=3.0)
+                            .text(format!("L{}", i + 1))
+                            .fixed_decimals(2),
+                    )
+                    .changed()
+                {
+                    app.ui_state.mark_dirty_from_sharpen();
+                }
+            }
 
-        // Deconvolution
-        if ui.checkbox(&mut app.config.deconv_enabled, "Deconvolution").changed() {
-            app.ui_state.mark_dirty_from_sharpen();
-        }
+            ui.add_space(4.0);
 
-        if app.config.deconv_enabled {
-            let changed = egui::ComboBox::from_label("Deconv")
-                .selected_text(app.config.deconv_method.to_string())
-                .show_ui(ui, |ui| {
-                    let mut changed = false;
-                    for &choice in DeconvMethodChoice::ALL {
-                        if ui
-                            .selectable_value(&mut app.config.deconv_method, choice, choice.to_string())
-                            .changed()
-                        {
-                            changed = true;
+            // Deconvolution
+            if ui.checkbox(&mut app.config.deconv_enabled, "Deconvolution").changed() {
+                app.ui_state.mark_dirty_from_sharpen();
+            }
+
+            if app.config.deconv_enabled {
+                let changed = egui::ComboBox::from_label("Deconv")
+                    .selected_text(app.config.deconv_method.to_string())
+                    .show_ui(ui, |ui| {
+                        let mut changed = false;
+                        for &choice in DeconvMethodChoice::ALL {
+                            if ui
+                                .selectable_value(&mut app.config.deconv_method, choice, choice.to_string())
+                                .changed()
+                            {
+                                changed = true;
+                            }
+                        }
+                        changed
+                    });
+                if changed.inner == Some(true) {
+                    app.ui_state.mark_dirty_from_sharpen();
+                }
+
+                match app.config.deconv_method {
+                    DeconvMethodChoice::RichardsonLucy => {
+                        let mut iter = app.config.rl_iterations as i32;
+                        if ui.add(egui::Slider::new(&mut iter, 1..=100).text("Iterations")).changed() {
+                            app.config.rl_iterations = iter as usize;
+                            app.ui_state.mark_dirty_from_sharpen();
                         }
                     }
-                    changed
-                });
-            if changed.inner == Some(true) {
-                app.ui_state.mark_dirty_from_sharpen();
-            }
-
-            match app.config.deconv_method {
-                DeconvMethodChoice::RichardsonLucy => {
-                    let mut iter = app.config.rl_iterations as i32;
-                    if ui.add(egui::Slider::new(&mut iter, 1..=100).text("Iterations")).changed() {
-                        app.config.rl_iterations = iter as usize;
-                        app.ui_state.mark_dirty_from_sharpen();
-                    }
-                }
-                DeconvMethodChoice::Wiener => {
-                    if ui.add(egui::Slider::new(&mut app.config.wiener_noise_ratio, 0.001..=0.1).text("Noise Ratio").logarithmic(true)).changed() {
-                        app.ui_state.mark_dirty_from_sharpen();
-                    }
-                }
-            }
-
-            // PSF model
-            let changed = egui::ComboBox::from_label("PSF")
-                .selected_text(app.config.psf_model.to_string())
-                .show_ui(ui, |ui| {
-                    let mut changed = false;
-                    for &choice in PsfModelChoice::ALL {
-                        if ui
-                            .selectable_value(&mut app.config.psf_model, choice, choice.to_string())
-                            .changed()
-                        {
-                            changed = true;
+                    DeconvMethodChoice::Wiener => {
+                        if ui.add(egui::Slider::new(&mut app.config.wiener_noise_ratio, 0.001..=0.1).text("Noise Ratio").logarithmic(true)).changed() {
+                            app.ui_state.mark_dirty_from_sharpen();
                         }
                     }
-                    changed
-                });
-            if changed.inner == Some(true) {
-                app.ui_state.mark_dirty_from_sharpen();
-            }
+                }
 
-            match app.config.psf_model {
-                PsfModelChoice::Gaussian => {
-                    if ui.add(egui::Slider::new(&mut app.config.psf_gaussian_sigma, 0.5..=5.0).text("Sigma")).changed() {
-                        app.ui_state.mark_dirty_from_sharpen();
-                    }
+                // PSF model
+                let changed = egui::ComboBox::from_label("PSF")
+                    .selected_text(app.config.psf_model.to_string())
+                    .show_ui(ui, |ui| {
+                        let mut changed = false;
+                        for &choice in PsfModelChoice::ALL {
+                            if ui
+                                .selectable_value(&mut app.config.psf_model, choice, choice.to_string())
+                                .changed()
+                            {
+                                changed = true;
+                            }
+                        }
+                        changed
+                    });
+                if changed.inner == Some(true) {
+                    app.ui_state.mark_dirty_from_sharpen();
                 }
-                PsfModelChoice::Kolmogorov => {
-                    if ui.add(egui::Slider::new(&mut app.config.psf_kolmogorov_seeing, 0.5..=10.0).text("Seeing")).changed() {
-                        app.ui_state.mark_dirty_from_sharpen();
+
+                match app.config.psf_model {
+                    PsfModelChoice::Gaussian => {
+                        if ui.add(egui::Slider::new(&mut app.config.psf_gaussian_sigma, 0.5..=5.0).text("Sigma")).changed() {
+                            app.ui_state.mark_dirty_from_sharpen();
+                        }
                     }
-                }
-                PsfModelChoice::Airy => {
-                    if ui.add(egui::Slider::new(&mut app.config.psf_airy_radius, 0.5..=10.0).text("Radius")).changed() {
-                        app.ui_state.mark_dirty_from_sharpen();
+                    PsfModelChoice::Kolmogorov => {
+                        if ui.add(egui::Slider::new(&mut app.config.psf_kolmogorov_seeing, 0.5..=10.0).text("Seeing")).changed() {
+                            app.ui_state.mark_dirty_from_sharpen();
+                        }
+                    }
+                    PsfModelChoice::Airy => {
+                        if ui.add(egui::Slider::new(&mut app.config.psf_airy_radius, 0.5..=10.0).text("Radius")).changed() {
+                            app.ui_state.mark_dirty_from_sharpen();
+                        }
                     }
                 }
             }
         }
-    }
-
+    });
 }

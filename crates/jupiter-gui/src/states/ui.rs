@@ -5,6 +5,7 @@ use jupiter_core::frame::SourceInfo;
 use jupiter_core::pipeline::PipelineStage;
 
 use super::crop::CropState;
+use super::stage_status::Stages;
 
 /// Overall UI state.
 pub struct UIState {
@@ -19,13 +20,11 @@ pub struct UIState {
     /// Which stage is currently running (None = idle).
     pub running_stage: Option<PipelineStage>,
 
-    /// Cache status indicators.
-    pub frames_scored: Option<usize>,
+    /// Unified pipeline stage status (completion + dirty tracking).
+    pub stages: Stages,
+
+    /// Ranked frame preview data from scoring.
     pub ranked_preview: Vec<(usize, f64)>,
-    pub align_status: Option<String>,
-    pub stack_status: Option<String>,
-    pub sharpen_status: bool,
-    pub filter_status: Option<usize>,
 
     /// Log messages.
     pub log_messages: Vec<String>,
@@ -36,13 +35,6 @@ pub struct UIState {
 
     /// Crop state.
     pub crop_state: CropState,
-
-    /// Params changed since last run (stale indicators).
-    pub score_params_dirty: bool,
-    pub align_params_dirty: bool,
-    pub stack_params_dirty: bool,
-    pub sharpen_params_dirty: bool,
-    pub filter_params_dirty: bool,
 
     /// Debounce timer for auto-sharpening on slider changes.
     pub sharpen_auto_pending: Option<Instant>,
@@ -57,21 +49,12 @@ impl Default for UIState {
             output_path: String::new(),
             is_video: false,
             running_stage: None,
-            frames_scored: None,
+            stages: Stages::default(),
             ranked_preview: Vec::new(),
-            align_status: None,
-            stack_status: None,
-            sharpen_status: false,
-            filter_status: None,
             log_messages: Vec::new(),
             progress_items_done: None,
             progress_items_total: None,
             crop_state: CropState::default(),
-            score_params_dirty: false,
-            align_params_dirty: false,
-            stack_params_dirty: false,
-            sharpen_params_dirty: false,
-            filter_params_dirty: false,
             sharpen_auto_pending: None,
         }
     }
@@ -86,44 +69,29 @@ impl UIState {
         self.log_messages.push(msg);
     }
 
-    /// Mark all pipeline stages as stale (e.g., debayer or metric changed).
-    pub fn mark_dirty_from_score(&mut self) {
-        self.score_params_dirty = true;
-        self.align_params_dirty = true;
-        self.stack_params_dirty = true;
-        self.sharpen_params_dirty = true;
-        self.filter_params_dirty = true;
-    }
-
-    /// Mark alignment and all downstream stages as stale.
-    pub fn mark_dirty_from_align(&mut self) {
-        self.align_params_dirty = true;
-        self.stack_params_dirty = true;
-        self.sharpen_params_dirty = true;
-        self.filter_params_dirty = true;
-    }
-
-    /// Mark stacking and all downstream stages as stale.
-    pub fn mark_dirty_from_stack(&mut self) {
-        self.stack_params_dirty = true;
-        self.sharpen_params_dirty = true;
-        self.filter_params_dirty = true;
-    }
-
     /// Mark sharpening and filter stages as stale, and start debounce timer.
     pub fn mark_dirty_from_sharpen(&mut self) {
-        self.sharpen_params_dirty = true;
-        self.filter_params_dirty = true;
+        self.stages.mark_dirty_from(PipelineStage::Sharpening);
         self.sharpen_auto_pending = Some(Instant::now());
     }
 
-    /// Clear all dirty flags (e.g., after opening a new file).
-    pub fn clear_all_dirty(&mut self) {
-        self.score_params_dirty = false;
-        self.align_params_dirty = false;
-        self.stack_params_dirty = false;
-        self.sharpen_params_dirty = false;
-        self.filter_params_dirty = false;
+    /// Mark filter stage as stale.
+    pub fn mark_dirty_from_filter(&mut self) {
+        self.stages.mark_dirty_from(PipelineStage::Filtering);
+    }
+
+    /// Reset all pipeline state (for file-load).
+    pub fn reset_pipeline(&mut self) {
+        self.stages.reset_all();
+        self.ranked_preview.clear();
+        self.crop_state = Default::default();
+        self.clear_progress();
         self.sharpen_auto_pending = None;
+    }
+
+    /// Clear progress counters.
+    pub fn clear_progress(&mut self) {
+        self.progress_items_done = None;
+        self.progress_items_total = None;
     }
 }

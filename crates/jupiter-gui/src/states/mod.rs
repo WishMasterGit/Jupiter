@@ -1,6 +1,7 @@
 mod choices;
 mod config;
 mod crop;
+mod stage_status;
 mod ui;
 mod viewport;
 

@@ -7,7 +7,7 @@ use jupiter_core::color::debayer::is_bayer;
 use jupiter_core::pipeline::PipelineStage;
 
 pub(super) fn crop_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
-    crate::panels::section_header(ui, "Tools", None);
+    crate::panels::section_header(ui, "Tools", None, None);
 
     ui.add_space(4.0);
 

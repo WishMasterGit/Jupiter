@@ -5,7 +5,8 @@ use crate::filters::gaussian_blur::gaussian_blur_array;
 
 use super::components::{connected_components, touches_border};
 use super::morphology::morphological_opening;
-use super::{compute_threshold, AutoCropConfig};
+use super::config::AutoCropConfig;
+use super::threshold::compute_threshold;
 
 /// Per-frame detection result.
 #[derive(Clone, Debug)]

@@ -4,7 +4,7 @@ use jupiter_core::compute::DevicePreference;
 use jupiter_core::pipeline::PipelineStage;
 
 pub(super) fn device_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
-    crate::panels::section_header(ui, "Compute Device", None);
+    crate::panels::section_header(ui, "Compute Device", None, None);
     ui.add_space(4.0);
 
     egui::ComboBox::from_label("Device")
@@ -22,7 +22,7 @@ pub(super) fn device_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
 }
 
 pub(super) fn actions_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
-    crate::panels::section_header(ui, "Actions", None);
+    crate::panels::section_header(ui, "Actions", None, None);
     ui.add_space(4.0);
 
     // Output path
