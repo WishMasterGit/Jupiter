@@ -142,11 +142,8 @@ pub(super) fn handle_load_and_score(
             }
         };
 
-        let ranked_preview: Vec<(usize, f64)> = ranked
-            .iter()
-            .take(20)
-            .map(|(i, s)| (*i, s.composite))
-            .collect();
+        let ranked_preview: Vec<(usize, f64)> =
+            ranked.iter().map(|(i, s)| (*i, s.composite)).collect();
 
         cache.file_path = Some(path.to_path_buf());
         cache.is_color = use_color;
@@ -253,11 +250,8 @@ pub(super) fn handle_load_and_score(
         }
     };
 
-    let ranked_preview: Vec<(usize, f64)> = ranked
-        .iter()
-        .take(20)
-        .map(|(i, s)| (*i, s.composite))
-        .collect();
+    let ranked_preview: Vec<(usize, f64)> =
+        ranked.iter().map(|(i, s)| (*i, s.composite)).collect();
 
     // Update cache — invalidate downstream
     cache.file_path = Some(path.to_path_buf());
