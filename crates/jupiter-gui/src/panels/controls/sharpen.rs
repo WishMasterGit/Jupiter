@@ -22,29 +22,34 @@ pub(super) fn sharpen_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
     ui.add_enabled_ui(enabled, |ui| {
         if ui.checkbox(&mut app.config.sharpen_enabled, "Enable sharpening").changed() {
             app.ui_state.mark_dirty_from_sharpen();
+            app.ui_state.request_sharpen();
         }
 
         if app.config.sharpen_enabled {
             // Wavelet params
             ui.small("Wavelet Layers:");
             let mut layers = app.config.wavelet_num_layers as i32;
-            if ui.add(egui::Slider::new(&mut layers, 1..=8).text("Layers")).changed() {
+            let resp = ui.add(egui::Slider::new(&mut layers, 1..=8).text("Layers"));
+            if resp.changed() {
                 app.config.wavelet_num_layers = layers as usize;
-                // Resize coefficients to match
                 app.config.wavelet_coefficients.resize(layers as usize, 1.0);
                 app.ui_state.mark_dirty_from_sharpen();
             }
+            if resp.drag_stopped() || resp.lost_focus() {
+                app.ui_state.request_sharpen();
+            }
 
             for i in 0..app.config.wavelet_coefficients.len() {
-                if ui
-                    .add(
-                        egui::Slider::new(&mut app.config.wavelet_coefficients[i], 0.0..=3.0)
-                            .text(format!("L{}", i + 1))
-                            .fixed_decimals(2),
-                    )
-                    .changed()
-                {
+                let resp = ui.add(
+                    egui::Slider::new(&mut app.config.wavelet_coefficients[i], 0.0..=3.0)
+                        .text(format!("L{}", i + 1))
+                        .fixed_decimals(2),
+                );
+                if resp.changed() {
                     app.ui_state.mark_dirty_from_sharpen();
+                }
+                if resp.drag_stopped() || resp.lost_focus() {
+                    app.ui_state.request_sharpen();
                 }
             }
 
@@ -53,6 +58,7 @@ pub(super) fn sharpen_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
             // Deconvolution
             if ui.checkbox(&mut app.config.deconv_enabled, "Deconvolution").changed() {
                 app.ui_state.mark_dirty_from_sharpen();
+                app.ui_state.request_sharpen();
             }
 
             if app.config.deconv_enabled {
@@ -72,19 +78,28 @@ pub(super) fn sharpen_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
                     });
                 if changed.inner == Some(true) {
                     app.ui_state.mark_dirty_from_sharpen();
+                    app.ui_state.request_sharpen();
                 }
 
                 match app.config.deconv_method {
                     DeconvMethodChoice::RichardsonLucy => {
                         let mut iter = app.config.rl_iterations as i32;
-                        if ui.add(egui::Slider::new(&mut iter, 1..=100).text("Iterations")).changed() {
+                        let resp = ui.add(egui::Slider::new(&mut iter, 1..=100).text("Iterations"));
+                        if resp.changed() {
                             app.config.rl_iterations = iter as usize;
                             app.ui_state.mark_dirty_from_sharpen();
                         }
+                        if resp.drag_stopped() || resp.lost_focus() {
+                            app.ui_state.request_sharpen();
+                        }
                     }
                     DeconvMethodChoice::Wiener => {
-                        if ui.add(egui::Slider::new(&mut app.config.wiener_noise_ratio, 0.001..=0.1).text("Noise Ratio").logarithmic(true)).changed() {
+                        let resp = ui.add(egui::Slider::new(&mut app.config.wiener_noise_ratio, 0.001..=0.1).text("Noise Ratio").logarithmic(true));
+                        if resp.changed() {
                             app.ui_state.mark_dirty_from_sharpen();
+                        }
+                        if resp.drag_stopped() || resp.lost_focus() {
+                            app.ui_state.request_sharpen();
                         }
                     }
                 }
@@ -106,22 +121,35 @@ pub(super) fn sharpen_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
                     });
                 if changed.inner == Some(true) {
                     app.ui_state.mark_dirty_from_sharpen();
+                    app.ui_state.request_sharpen();
                 }
 
                 match app.config.psf_model {
                     PsfModelChoice::Gaussian => {
-                        if ui.add(egui::Slider::new(&mut app.config.psf_gaussian_sigma, 0.5..=5.0).text("Sigma")).changed() {
+                        let resp = ui.add(egui::Slider::new(&mut app.config.psf_gaussian_sigma, 0.5..=5.0).text("Sigma"));
+                        if resp.changed() {
                             app.ui_state.mark_dirty_from_sharpen();
+                        }
+                        if resp.drag_stopped() || resp.lost_focus() {
+                            app.ui_state.request_sharpen();
                         }
                     }
                     PsfModelChoice::Kolmogorov => {
-                        if ui.add(egui::Slider::new(&mut app.config.psf_kolmogorov_seeing, 0.5..=10.0).text("Seeing")).changed() {
+                        let resp = ui.add(egui::Slider::new(&mut app.config.psf_kolmogorov_seeing, 0.5..=10.0).text("Seeing"));
+                        if resp.changed() {
                             app.ui_state.mark_dirty_from_sharpen();
+                        }
+                        if resp.drag_stopped() || resp.lost_focus() {
+                            app.ui_state.request_sharpen();
                         }
                     }
                     PsfModelChoice::Airy => {
-                        if ui.add(egui::Slider::new(&mut app.config.psf_airy_radius, 0.5..=10.0).text("Radius")).changed() {
+                        let resp = ui.add(egui::Slider::new(&mut app.config.psf_airy_radius, 0.5..=10.0).text("Radius"));
+                        if resp.changed() {
                             app.ui_state.mark_dirty_from_sharpen();
+                        }
+                        if resp.drag_stopped() || resp.lost_focus() {
+                            app.ui_state.request_sharpen();
                         }
                     }
                 }

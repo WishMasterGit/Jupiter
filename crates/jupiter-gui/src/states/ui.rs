@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use std::time::Instant;
 
 use jupiter_core::frame::SourceInfo;
 use jupiter_core::pipeline::PipelineStage;
@@ -36,8 +35,8 @@ pub struct UIState {
     /// Crop state.
     pub crop_state: CropState,
 
-    /// Debounce timer for auto-sharpening on slider changes.
-    pub sharpen_auto_pending: Option<Instant>,
+    /// Set to true on mouse-up to trigger auto-sharpening.
+    pub sharpen_requested: bool,
 }
 
 impl Default for UIState {
@@ -55,7 +54,7 @@ impl Default for UIState {
             progress_items_done: None,
             progress_items_total: None,
             crop_state: CropState::default(),
-            sharpen_auto_pending: None,
+            sharpen_requested: false,
         }
     }
 }
@@ -69,10 +68,14 @@ impl UIState {
         self.log_messages.push(msg);
     }
 
-    /// Mark sharpening and filter stages as stale, and start debounce timer.
+    /// Mark sharpening and downstream stages as stale (visual feedback while dragging).
     pub fn mark_dirty_from_sharpen(&mut self) {
         self.stages.mark_dirty_from(PipelineStage::Sharpening);
-        self.sharpen_auto_pending = Some(Instant::now());
+    }
+
+    /// Request auto-sharpening (called on mouse-up / discrete control change).
+    pub fn request_sharpen(&mut self) {
+        self.sharpen_requested = true;
     }
 
     /// Mark filter stage as stale.
@@ -86,7 +89,7 @@ impl UIState {
         self.ranked_preview.clear();
         self.crop_state = Default::default();
         self.clear_progress();
-        self.sharpen_auto_pending = None;
+        self.sharpen_requested = false;
     }
 
     /// Clear progress counters.

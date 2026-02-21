@@ -1,7 +1,6 @@
 use egui::Color32;
 use jupiter_core::pipeline::PipelineStage;
 
-const COLOR_DIRTY: Color32 = Color32::from_rgb(230, 160, 50);
 const COLOR_COMPLETE: Color32 = Color32::from_rgb(80, 180, 80);
 
 /// Per-stage completion + dirty tracking.
@@ -47,11 +46,11 @@ impl StageStatus {
         self.dirty = true;
     }
 
-    /// Returns the button fill color: orange if dirty, green if complete, None otherwise.
+    /// Returns the header fill color:
+    /// - green if completed and up-to-date
+    /// - None (transparent) otherwise
     pub fn button_color(&self) -> Option<Color32> {
-        if self.dirty {
-            Some(COLOR_DIRTY)
-        } else if self.label.is_some() {
+        if self.label.is_some() && !self.dirty {
             Some(COLOR_COMPLETE)
         } else {
             None
