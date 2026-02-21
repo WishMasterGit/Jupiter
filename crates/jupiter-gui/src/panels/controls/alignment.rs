@@ -14,15 +14,17 @@ pub(super) fn alignment_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
 
     let enabled = app.ui_state.stages.score.is_complete();
     ui.add_enabled_ui(enabled, |ui| {
-        // Keep percentage (frame selection)
+        // Keep percentage (frame selection) — display as percent, store as fraction
+        let mut keep_pct = app.config.select_percentage * 100.0;
         if ui
             .add(
-                egui::Slider::new(&mut app.config.select_percentage, 0.01..=1.0)
+                egui::Slider::new(&mut keep_pct, 1.0..=100.0)
                     .text("Keep %")
-                    .fixed_decimals(2),
+                    .fixed_decimals(0),
             )
             .changed()
         {
+            app.config.select_percentage = keep_pct / 100.0;
             app.ui_state.stages.mark_dirty_from(PipelineStage::Alignment);
         }
 
