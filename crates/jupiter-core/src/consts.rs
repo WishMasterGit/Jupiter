@@ -82,3 +82,15 @@ pub const AUTOCROP_BORDER_STRIP_WIDTH: usize = 10;
 
 /// Number of center frames to median-combine for fallback detection.
 pub const AUTOCROP_FALLBACK_FRAME_COUNT: usize = 5;
+
+/// Divisor to derive AP size from planet diameter: `ap_size = diameter / divisor`.
+pub const AUTO_AP_DIVISOR: usize = 8;
+
+/// Minimum auto-computed AP size in pixels.
+pub const AUTO_AP_SIZE_MIN: usize = 32;
+
+/// Maximum auto-computed AP size in pixels.
+pub const AUTO_AP_SIZE_MAX: usize = 256;
+
+/// Auto AP size is rounded down to this alignment (pixels).
+pub const AUTO_AP_SIZE_ALIGN: usize = 8;

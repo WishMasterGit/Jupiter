@@ -35,6 +35,9 @@ pub struct UIState {
     /// Crop state.
     pub crop_state: CropState,
 
+    /// Detected planet diameter in pixels (from scoring step).
+    pub detected_planet_diameter: Option<usize>,
+
     /// Set to true on mouse-up to trigger auto-sharpening.
     pub sharpen_requested: bool,
 }
@@ -54,6 +57,7 @@ impl Default for UIState {
             progress_items_done: None,
             progress_items_total: None,
             crop_state: CropState::default(),
+            detected_planet_diameter: None,
             sharpen_requested: false,
         }
     }
@@ -87,6 +91,7 @@ impl UIState {
     pub fn reset_pipeline(&mut self) {
         self.stages.reset_all();
         self.ranked_preview.clear();
+        self.detected_planet_diameter = None;
         self.crop_state = Default::default();
         self.clear_progress();
         self.sharpen_requested = false;

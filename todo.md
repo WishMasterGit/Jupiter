@@ -12,6 +12,8 @@
 - sharpening should be applied on mouse up not on time delay [Done]
 - background for unprocessed stage should be transparent not orange [Done]
 - for frame selection small graph should be shown that represents frames quality [Done]
-- for multipoint alignment there should be option to automatically choose appropriate AP size
+- for multipoint alignment there should be option to automatically choose appropriate AP size [Done]
+- lets refactor planet detection out of cropping class so it is more concise
 - there should be option to switch between processed and raw frames, also when user changes raw frames it should only update the original frames preview
 - for log preview it should prerender 4 lines to avoid screen jumping when new log appears, user should also be able to scroll through the log
+- multipoint alignment is not producing good image, lets make a through research including scientific articles on best way to implement it, and write and article that we will save in the docs

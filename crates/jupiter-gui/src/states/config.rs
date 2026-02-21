@@ -10,9 +10,7 @@ use jupiter_core::stack::drizzle::DrizzleConfig;
 use jupiter_core::stack::multi_point::MultiPointConfig;
 use jupiter_core::stack::sigma_clip::SigmaClipParams;
 
-use super::choices::{
-    AlignMethodChoice, DeconvMethodChoice, PsfModelChoice, StackMethodChoice,
-};
+use super::choices::{AlignMethodChoice, DeconvMethodChoice, PsfModelChoice, StackMethodChoice};
 
 /// All pipeline configuration parameters as editable UI fields.
 pub struct ConfigState {
@@ -36,6 +34,7 @@ pub struct ConfigState {
     pub sigma_clip_sigma: f32,
     pub sigma_clip_iterations: usize,
     // Multi-point params
+    pub mp_auto_ap_size: bool,
     pub mp_ap_size: usize,
     pub mp_search_radius: usize,
     pub mp_min_brightness: f32,
@@ -83,6 +82,7 @@ impl Default for ConfigState {
             stack_method_choice: StackMethodChoice::default(),
             sigma_clip_sigma: 2.5,
             sigma_clip_iterations: 2,
+            mp_auto_ap_size: true,
             mp_ap_size: 64,
             mp_search_radius: 16,
             mp_min_brightness: 0.05,
@@ -202,7 +202,7 @@ impl ConfigState {
     pub fn debayer_config(&self) -> Option<DebayerConfig> {
         if self.debayer_enabled {
             Some(DebayerConfig {
-                method: self.debayer_method.clone(),
+                method: self.debayer_method,
             })
         } else {
             None

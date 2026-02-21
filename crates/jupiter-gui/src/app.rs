@@ -67,9 +67,11 @@ impl JupiterApp {
                 WorkerResult::LoadAndScoreComplete {
                     frame_count,
                     ranked_preview,
+                    detected_planet_diameter,
                 } => {
                     self.ui_state.stages.score.set_complete(format!("{frame_count} scored"));
                     self.ui_state.ranked_preview = ranked_preview;
+                    self.ui_state.detected_planet_diameter = detected_planet_diameter;
                     self.ui_state.running_stage = None;
                     self.ui_state.add_log(format!("{frame_count} frames scored"));
                 }

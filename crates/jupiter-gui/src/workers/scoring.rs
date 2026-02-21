@@ -4,6 +4,8 @@ use std::sync::mpsc;
 use jupiter_core::color::debayer::{debayer, is_bayer, luminance};
 use jupiter_core::consts::{COLOR_CHANNEL_COUNT, LOW_MEMORY_THRESHOLD_BYTES};
 use jupiter_core::frame::{ColorFrame, ColorMode, Frame};
+use jupiter_core::io::autocrop::detection::detect_planet_in_frame;
+use jupiter_core::io::autocrop::AutoCropConfig;
 use jupiter_core::io::ser::SerReader;
 use jupiter_core::pipeline::config::{DebayerConfig, QualityMetric};
 use jupiter_core::pipeline::PipelineStage;
@@ -145,6 +147,12 @@ pub(super) fn handle_load_and_score(
         let ranked_preview: Vec<(usize, f64)> =
             ranked.iter().map(|(i, s)| (*i, s.composite)).collect();
 
+        // Detect planet diameter on first frame for auto AP size
+        let detected_planet_diameter = reader
+            .read_frame(0)
+            .ok()
+            .and_then(|f| detect_planet_diameter(&f));
+
         cache.file_path = Some(path.to_path_buf());
         cache.is_color = use_color;
         cache.is_streaming = true;
@@ -171,6 +179,7 @@ pub(super) fn handle_load_and_score(
         send(tx, ctx, WorkerResult::LoadAndScoreComplete {
             frame_count: total,
             ranked_preview,
+            detected_planet_diameter,
         });
         return;
     }
@@ -253,6 +262,9 @@ pub(super) fn handle_load_and_score(
     let ranked_preview: Vec<(usize, f64)> =
         ranked.iter().map(|(i, s)| (*i, s.composite)).collect();
 
+    // Detect planet diameter on first frame for auto AP size
+    let detected_planet_diameter = detect_planet_diameter(&scoring_frames[0]);
+
     // Update cache — invalidate downstream
     cache.file_path = Some(path.to_path_buf());
     cache.is_color = use_color;
@@ -268,5 +280,13 @@ pub(super) fn handle_load_and_score(
     send(tx, ctx, WorkerResult::LoadAndScoreComplete {
         frame_count: total,
         ranked_preview,
+        detected_planet_diameter,
     });
+}
+
+/// Run planet detection on a single frame and return the diameter (max of bbox width/height).
+fn detect_planet_diameter(frame: &Frame) -> Option<usize> {
+    let config = AutoCropConfig::default();
+    let detection = detect_planet_in_frame(&frame.data, 0, &config)?;
+    Some(detection.bbox_width.max(detection.bbox_height))
 }

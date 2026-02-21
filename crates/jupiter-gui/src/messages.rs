@@ -87,6 +87,8 @@ pub enum WorkerResult {
     LoadAndScoreComplete {
         frame_count: usize,
         ranked_preview: Vec<(usize, f64)>,
+        /// Detected planet diameter in pixels (None if detection failed).
+        detected_planet_diameter: Option<usize>,
     },
 
     /// Stage 2 complete: frames selected and alignment offsets computed.

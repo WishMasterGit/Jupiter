@@ -7,7 +7,9 @@ use tracing::info;
 
 use crate::align::phase_correlation::{bilinear_sample, compute_offset_array};
 use crate::color::debayer::{debayer, luminance, DebayerMethod};
-use crate::consts::EPSILON;
+use crate::consts::{
+    AUTO_AP_DIVISOR, AUTO_AP_SIZE_ALIGN, AUTO_AP_SIZE_MAX, AUTO_AP_SIZE_MIN, EPSILON,
+};
 use crate::error::{JupiterError, Result};
 use crate::frame::{AlignmentOffset, ColorFrame, ColorMode, Frame};
 use crate::io::ser::SerReader;
@@ -53,6 +55,23 @@ impl Default for MultiPointConfig {
             local_stack_method: LocalStackMethod::Mean,
         }
     }
+}
+
+/// Compute an appropriate AP size from a detected planet diameter.
+///
+/// Divides the diameter by [`AUTO_AP_DIVISOR`], clamps to
+/// [`AUTO_AP_SIZE_MIN`]..=[`AUTO_AP_SIZE_MAX`], and rounds down to a
+/// multiple of [`AUTO_AP_SIZE_ALIGN`].
+pub fn auto_ap_size(planet_diameter: usize) -> usize {
+    let raw = planet_diameter / AUTO_AP_DIVISOR;
+    let clamped = raw.clamp(AUTO_AP_SIZE_MIN, AUTO_AP_SIZE_MAX);
+    (clamped / AUTO_AP_SIZE_ALIGN) * AUTO_AP_SIZE_ALIGN
+}
+
+/// Fallback: compute AP size from frame dimensions when no planet is detected.
+pub fn auto_ap_size_from_frame(width: usize, height: usize) -> usize {
+    let dim = width.min(height);
+    auto_ap_size(dim)
 }
 
 /// A single alignment point on the grid.
