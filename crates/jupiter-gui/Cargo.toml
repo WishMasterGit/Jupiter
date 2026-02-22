@@ -19,6 +19,10 @@ egui = { workspace = true }
 egui_plot = { workspace = true }
 # Required to pull in wgpu/default which enables Metal/Vulkan/DX12 GPU backends
 egui-wgpu = { workspace = true }
+# Enable Linux platform backends (x11/wayland) without going through eframe's
+# x11/wayland features (which also enable glutin, a version that is unavailable).
+# Cargo feature unification propagates these to the winit instance eframe uses.
+winit = { version = "0.30", features = ["x11", "wayland"] }
 rfd = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
