@@ -29,21 +29,7 @@ pub(super) fn alignment_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
         }
 
         // Method combo
-        let changed = egui::ComboBox::from_label("Align Method")
-            .selected_text(app.config.align_method.to_string())
-            .show_ui(ui, |ui| {
-                let mut changed = false;
-                for &choice in AlignMethodChoice::ALL {
-                    if ui
-                        .selectable_value(&mut app.config.align_method, choice, choice.to_string())
-                        .changed()
-                    {
-                        changed = true;
-                    }
-                }
-                changed
-            });
-        if changed.inner == Some(true) {
+        if crate::panels::enum_combo(ui, "Align Method", &mut app.config.align_method, AlignMethodChoice::ALL) {
             app.ui_state.stages.mark_dirty_from(PipelineStage::Alignment);
         }
 

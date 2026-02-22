@@ -1,6 +1,9 @@
+pub mod ap_grid;
+pub mod ap_local;
 pub mod drizzle;
 pub mod mean;
 pub mod median;
 pub mod multi_point;
+pub mod reference;
 pub mod sigma_clip;
 pub mod surface_warp;

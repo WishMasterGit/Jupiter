@@ -1,5 +1,5 @@
-use std::io::Write;
-use tempfile::NamedTempFile;
+#[allow(dead_code)]
+mod common;
 
 use ndarray::Array2;
 
@@ -9,35 +9,6 @@ use jupiter_core::detection::{detect_planet_in_frame, DetectionConfig, FrameDete
 use jupiter_core::io::autocrop::temporal::analyze_detections;
 use jupiter_core::io::autocrop::{auto_detect_crop, AutoCropConfig};
 use jupiter_core::io::ser::SerReader;
-
-const SER_HEADER_SIZE: usize = 178;
-
-/// Build a minimal synthetic SER file with 8-bit mono frames.
-fn build_synthetic_ser(width: u32, height: u32, frames: &[Vec<u8>]) -> Vec<u8> {
-    let mut buf = Vec::new();
-
-    buf.extend_from_slice(b"LUCAM-RECORDER");
-    buf.extend_from_slice(&0i32.to_le_bytes()); // LuID
-    buf.extend_from_slice(&0i32.to_le_bytes()); // ColorID = MONO
-    buf.extend_from_slice(&0i32.to_le_bytes()); // LittleEndian
-    buf.extend_from_slice(&(width as i32).to_le_bytes());
-    buf.extend_from_slice(&(height as i32).to_le_bytes());
-    buf.extend_from_slice(&8i32.to_le_bytes()); // PixelDepth = 8
-    buf.extend_from_slice(&(frames.len() as i32).to_le_bytes());
-    buf.extend_from_slice(&[0u8; 40]); // Observer
-    buf.extend_from_slice(&[0u8; 40]); // Instrument
-    buf.extend_from_slice(&[0u8; 40]); // Telescope
-    buf.extend_from_slice(&0u64.to_le_bytes()); // DateTime
-    buf.extend_from_slice(&0u64.to_le_bytes()); // DateTimeUTC
-
-    assert_eq!(buf.len(), SER_HEADER_SIZE);
-
-    for frame in frames {
-        buf.extend_from_slice(frame);
-    }
-
-    buf
-}
 
 /// Create a frame with a bright circle (planet) on a dark background.
 fn make_planet_frame(width: u32, height: u32, cx: f32, cy: f32, radius: f32) -> Vec<u8> {
@@ -54,10 +25,8 @@ fn make_planet_frame(width: u32, height: u32, cx: f32, cy: f32, radius: f32) -> 
     data
 }
 
-fn write_temp_ser(data: &[u8]) -> NamedTempFile {
-    let mut tmp = NamedTempFile::new().unwrap();
-    tmp.write_all(data).unwrap();
-    tmp
+fn write_temp_ser(data: &[u8]) -> tempfile::NamedTempFile {
+    common::write_test_ser(data)
 }
 
 #[test]
@@ -66,7 +35,7 @@ fn test_autocrop_centered_disk() {
     let h = 64u32;
     let radius = 10.0;
     let frame = make_planet_frame(w, h, 32.0, 32.0, radius);
-    let ser = build_synthetic_ser(w, h, &[frame]);
+    let ser = common::build_ser_with_frames(w, h, &[frame]);
     let tmp = write_temp_ser(&ser);
     let reader = SerReader::open(tmp.path()).unwrap();
 
@@ -101,7 +70,7 @@ fn test_autocrop_offset_disk() {
     let cy = 48.0;
     let radius = 8.0;
     let frame = make_planet_frame(w, h, cx, cy, radius);
-    let ser = build_synthetic_ser(w, h, &[frame]);
+    let ser = common::build_ser_with_frames(w, h, &[frame]);
     let tmp = write_temp_ser(&ser);
     let reader = SerReader::open(tmp.path()).unwrap();
 
@@ -124,7 +93,7 @@ fn test_autocrop_near_border_rejected() {
     let cy = 5.0;
     let radius = 8.0;
     let frame = make_planet_frame(w, h, cx, cy, radius);
-    let ser = build_synthetic_ser(w, h, &[frame]);
+    let ser = common::build_ser_with_frames(w, h, &[frame]);
     let tmp = write_temp_ser(&ser);
     let reader = SerReader::open(tmp.path()).unwrap();
 
@@ -137,7 +106,7 @@ fn test_autocrop_no_planet() {
     let w = 32u32;
     let h = 32u32;
     let frame = vec![0u8; (w * h) as usize]; // All black
-    let ser = build_synthetic_ser(w, h, &[frame]);
+    let ser = common::build_ser_with_frames(w, h, &[frame]);
     let tmp = write_temp_ser(&ser);
     let reader = SerReader::open(tmp.path()).unwrap();
 
@@ -150,7 +119,7 @@ fn test_autocrop_padding_increases_size() {
     let w = 64u32;
     let h = 64u32;
     let frame = make_planet_frame(w, h, 32.0, 32.0, 10.0);
-    let ser = build_synthetic_ser(w, h, &[frame]);
+    let ser = common::build_ser_with_frames(w, h, &[frame]);
     let tmp = write_temp_ser(&ser);
     let reader = SerReader::open(tmp.path()).unwrap();
 
@@ -182,7 +151,7 @@ fn test_autocrop_otsu() {
     let w = 64u32;
     let h = 64u32;
     let frame = make_planet_frame(w, h, 32.0, 32.0, 12.0);
-    let ser = build_synthetic_ser(w, h, &[frame]);
+    let ser = common::build_ser_with_frames(w, h, &[frame]);
     let tmp = write_temp_ser(&ser);
     let reader = SerReader::open(tmp.path()).unwrap();
 
@@ -208,7 +177,7 @@ fn test_autocrop_fixed_threshold() {
     let h = 32u32;
     // Planet at brightness 200/255 ≈ 0.784
     let frame = make_planet_frame(w, h, 16.0, 16.0, 6.0);
-    let ser = build_synthetic_ser(w, h, &[frame]);
+    let ser = common::build_ser_with_frames(w, h, &[frame]);
     let tmp = write_temp_ser(&ser);
     let reader = SerReader::open(tmp.path()).unwrap();
 
@@ -435,7 +404,7 @@ fn test_autocrop_v2_multi_frame_drift() {
         frames.push(make_planet_frame(w, h, cx, cy, radius));
     }
 
-    let ser = build_synthetic_ser(w, h, &frames);
+    let ser = common::build_ser_with_frames(w, h, &frames);
     let tmp = write_temp_ser(&ser);
     let reader = SerReader::open(tmp.path()).unwrap();
 
@@ -490,7 +459,7 @@ fn test_autocrop_v2_outlier_rejection() {
         frames.push(make_planet_frame(w, h, 20.0, 20.0, radius));
     }
 
-    let ser = build_synthetic_ser(w, h, &frames);
+    let ser = common::build_ser_with_frames(w, h, &frames);
     let tmp = write_temp_ser(&ser);
     let reader = SerReader::open(tmp.path()).unwrap();
 
@@ -532,7 +501,7 @@ fn test_autocrop_v2_fallback_few_detections() {
         }
     }
 
-    let ser = build_synthetic_ser(w, h, &frames);
+    let ser = common::build_ser_with_frames(w, h, &frames);
     let tmp = write_temp_ser(&ser);
     let reader = SerReader::open(tmp.path()).unwrap();
 
@@ -554,7 +523,7 @@ fn test_autocrop_v2_crop_aligned_to_32() {
     let w = 128u32;
     let h = 128u32;
     let frame = make_planet_frame(w, h, 64.0, 64.0, 15.0);
-    let ser = build_synthetic_ser(w, h, &[frame]);
+    let ser = common::build_ser_with_frames(w, h, &[frame]);
     let tmp = write_temp_ser(&ser);
     let reader = SerReader::open(tmp.path()).unwrap();
 

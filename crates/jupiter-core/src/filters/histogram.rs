@@ -16,7 +16,7 @@ pub fn histogram_stretch(frame: &Frame, black_point: f32, white_point: f32) -> F
 /// Default: 0.001 (0.1%) and 0.999 (99.9%).
 pub fn auto_stretch(frame: &Frame, low_percentile: f32, high_percentile: f32) -> Frame {
     let mut sorted: Vec<f32> = frame.data.iter().copied().collect();
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    sorted.sort_by(|a, b| a.total_cmp(b));
 
     let n = sorted.len();
     let lo_idx = ((n as f32 * low_percentile) as usize).min(n - 1);

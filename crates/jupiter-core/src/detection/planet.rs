@@ -110,7 +110,7 @@ fn estimate_background(data: &Array2<f32>, h: usize, w: usize) -> f32 {
         return 0.0;
     }
 
-    border_pixels.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    border_pixels.sort_unstable_by(|a, b| a.total_cmp(b));
     border_pixels[border_pixels.len() / 2]
 }
 

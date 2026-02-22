@@ -9,7 +9,7 @@ use crate::color::debayer::{debayer, is_bayer, DebayerMethod};
 use crate::error::{JupiterError, Result};
 use crate::frame::{ColorFrame, ColorMode, Frame, FrameMetadata, SourceInfo};
 
-pub(crate) const SER_HEADER_SIZE: usize = 178;
+pub const SER_HEADER_SIZE: usize = 178;
 pub(crate) const SER_MAGIC: &[u8; 14] = b"LUCAM-RECORDER";
 
 /// SER file header (178 bytes).

@@ -17,6 +17,7 @@ jupiter-core = { path = "../jupiter-core" }
 eframe = { workspace = true }
 egui = { workspace = true }
 egui_plot = { workspace = true }
+# Required to pull in wgpu/default which enables Metal/Vulkan/DX12 GPU backends
 egui-wgpu = { workspace = true }
 rfd = { workspace = true }
 anyhow = { workspace = true }

@@ -1,3 +1,6 @@
+#[allow(dead_code)]
+mod common;
+
 use std::collections::HashMap;
 use std::io::Write;
 use std::sync::Arc;
@@ -7,6 +10,7 @@ use tempfile::NamedTempFile;
 
 use jupiter_core::compute::cpu::CpuBackend;
 use jupiter_core::frame::AlignmentOffset;
+use jupiter_core::io::ser::SER_HEADER_SIZE;
 use jupiter_core::pipeline::config::{
     FrameSelectionConfig, PipelineConfig, StackMethod, StackingConfig,
 };
@@ -16,27 +20,9 @@ use jupiter_core::stack::surface_warp::{
     interpolate_shift_field, surface_warp_stack, warp_frame, SurfaceWarpConfig,
 };
 
-const SER_HEADER_SIZE: usize = 178;
-
 /// Build a synthetic SER file with 8-bit mono pixels.
 fn build_mono_ser(width: u32, height: u32, num_frames: usize, jitter: bool) -> Vec<u8> {
-    let mut buf = Vec::new();
-
-    // SER header
-    buf.extend_from_slice(b"LUCAM-RECORDER");
-    buf.extend_from_slice(&0i32.to_le_bytes()); // LuID
-    buf.extend_from_slice(&0i32.to_le_bytes()); // ColorID = 0 = Mono
-    buf.extend_from_slice(&0i32.to_le_bytes()); // LittleEndian
-    buf.extend_from_slice(&(width as i32).to_le_bytes());
-    buf.extend_from_slice(&(height as i32).to_le_bytes());
-    buf.extend_from_slice(&8i32.to_le_bytes()); // 8-bit
-    buf.extend_from_slice(&(num_frames as i32).to_le_bytes());
-    buf.extend_from_slice(&[0u8; 40]); // Observer
-    buf.extend_from_slice(&[0u8; 40]); // Instrument
-    buf.extend_from_slice(&[0u8; 40]); // Telescope
-    buf.extend_from_slice(&0u64.to_le_bytes()); // DateTime
-    buf.extend_from_slice(&0u64.to_le_bytes()); // DateTimeUTC
-    assert_eq!(buf.len(), SER_HEADER_SIZE);
+    let mut buf = common::build_ser_header(width, height, num_frames);
 
     let w = width as usize;
     let h = height as usize;
@@ -74,9 +60,7 @@ fn build_mono_ser(width: u32, height: u32, num_frames: usize, jitter: bool) -> V
 
 fn write_mono_ser(width: u32, height: u32, num_frames: usize, jitter: bool) -> NamedTempFile {
     let ser_data = build_mono_ser(width, height, num_frames, jitter);
-    let mut tmpfile = NamedTempFile::new().unwrap();
-    tmpfile.write_all(&ser_data).unwrap();
-    tmpfile
+    common::write_test_ser(&ser_data)
 }
 
 // ---------------------------------------------------------------------------

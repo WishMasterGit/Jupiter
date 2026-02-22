@@ -1,6 +1,9 @@
 use ndarray::Array2;
 
-use crate::frame::{ColorFrame, Frame};
+use crate::color::debayer::{debayer, luminance, DebayerMethod};
+use crate::error::{JupiterError, Result};
+use crate::frame::{ColorFrame, ColorMode, Frame};
+use crate::io::ser::SerReader;
 
 /// Split an interleaved RGB Array2 (shape: height x width*3) into separate R, G, B frames.
 ///
@@ -76,4 +79,31 @@ where
 /// Create a ColorFrame from three separate mono frames.
 pub fn from_channels(red: Frame, green: Frame, blue: Frame) -> ColorFrame {
     ColorFrame { red, green, blue }
+}
+
+/// Read a color frame from a SER reader, handling both RGB/BGR and Bayer modes.
+pub fn read_color_frame(
+    reader: &SerReader,
+    index: usize,
+    color_mode: &ColorMode,
+    debayer_method: &DebayerMethod,
+) -> Result<ColorFrame> {
+    if matches!(color_mode, ColorMode::RGB | ColorMode::BGR) {
+        reader.read_frame_rgb(index)
+    } else {
+        let raw = reader.read_frame(index)?;
+        debayer(&raw.data, color_mode, debayer_method, raw.original_bit_depth)
+            .ok_or_else(|| JupiterError::Pipeline("Debayer failed".into()))
+    }
+}
+
+/// Read a frame from a SER reader and convert to luminance.
+pub fn read_luminance_frame(
+    reader: &SerReader,
+    index: usize,
+    color_mode: &ColorMode,
+    debayer_method: &DebayerMethod,
+) -> Result<Frame> {
+    let cf = read_color_frame(reader, index, color_mode, debayer_method)?;
+    Ok(luminance(&cf))
 }

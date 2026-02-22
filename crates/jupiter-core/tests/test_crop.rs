@@ -1,11 +1,11 @@
-use std::io::Write;
+#[allow(dead_code)]
+mod common;
+
 use tempfile::NamedTempFile;
 
 use jupiter_core::frame::ColorMode;
 use jupiter_core::io::crop::{crop_ser, CropRect};
-use jupiter_core::io::ser::SerReader;
-
-const SER_HEADER_SIZE: usize = 178;
+use jupiter_core::io::ser::{SerReader, SER_HEADER_SIZE};
 
 /// Build a minimal synthetic SER file in memory.
 fn build_synthetic_ser(
@@ -67,10 +67,7 @@ fn build_synthetic_ser(
 }
 
 fn write_temp(data: &[u8]) -> NamedTempFile {
-    let mut tmpfile = NamedTempFile::new().unwrap();
-    tmpfile.write_all(data).unwrap();
-    tmpfile.flush().unwrap();
-    tmpfile
+    common::write_test_ser(data)
 }
 
 #[test]

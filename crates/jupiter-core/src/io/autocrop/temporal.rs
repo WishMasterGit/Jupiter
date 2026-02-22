@@ -159,7 +159,7 @@ fn sigma_clip_1d(values: &[f64], valid: &mut [bool]) {
 }
 
 fn median_f64(vals: &mut [f64]) -> f64 {
-    vals.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    vals.sort_unstable_by(|a, b| a.total_cmp(b));
     let n = vals.len();
     if n == 0 {
         return 0.0;

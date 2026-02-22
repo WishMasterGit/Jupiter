@@ -18,21 +18,12 @@ pub(super) fn debayer_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
     }
 
     if app.config.debayer_enabled {
-        let changed = egui::ComboBox::from_label("Debayer Method")
-            .selected_text(app.config.debayer_method.to_string())
-            .show_ui(ui, |ui| {
-                let mut changed = false;
-                for &method in &[DebayerMethod::Bilinear, DebayerMethod::MalvarHeCutler] {
-                    if ui
-                        .selectable_value(&mut app.config.debayer_method, method, method.to_string())
-                        .changed()
-                    {
-                        changed = true;
-                    }
-                }
-                changed
-            });
-        if changed.inner == Some(true) {
+        if crate::panels::enum_combo(
+            ui,
+            "Debayer Method",
+            &mut app.config.debayer_method,
+            &[DebayerMethod::Bilinear, DebayerMethod::MalvarHeCutler],
+        ) {
             app.ui_state.stages.mark_dirty_from(PipelineStage::QualityAssessment);
         }
     }

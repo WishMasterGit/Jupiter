@@ -5,15 +5,17 @@ use rayon::prelude::*;
 use tracing::info;
 
 use crate::align::phase_correlation::{bilinear_sample, compute_offset_with_confidence};
-use crate::color::debayer::{debayer, luminance, DebayerMethod};
+use crate::color::debayer::DebayerMethod;
+use crate::color::process::{read_color_frame, read_luminance_frame};
 use crate::consts::{MEAN_REFERENCE_KEEP_FRACTION, MIN_CORRELATION_CONFIDENCE};
 use crate::error::{JupiterError, Result};
 use crate::frame::{AlignmentOffset, ColorFrame, ColorMode, Frame};
 use crate::io::ser::SerReader;
-use crate::stack::multi_point::{
-    build_ap_grid, build_mean_reference, build_mean_reference_color, extract_region,
-    extract_region_shifted, ApGrid, MultiPointConfig,
+use crate::quality::score_with_metric;
+use crate::stack::ap_grid::{
+    build_ap_grid, extract_region, extract_region_shifted, ApGrid, MultiPointConfig,
 };
+use crate::stack::reference::{build_mean_reference, build_mean_reference_color};
 
 /// Configuration for surface-model warping stacking.
 ///
@@ -381,17 +383,9 @@ where
         return Err(JupiterError::EmptySequence);
     }
 
-    let is_rgb_bgr = matches!(color_mode, ColorMode::RGB | ColorMode::BGR);
-
     // Step 1: Get luminance reference for alignment
-    let ref_color = if is_rgb_bgr {
-        reader.read_frame_rgb(0)?
-    } else {
-        let raw = reader.read_frame(0)?;
-        debayer(&raw.data, color_mode, debayer_method, raw.original_bit_depth)
-            .ok_or_else(|| JupiterError::Pipeline("Debayer failed".into()))?
-    };
-    let ref_lum = luminance(&ref_color);
+    let ref_color = read_color_frame(reader, 0, color_mode, debayer_method)?;
+    let ref_lum = crate::color::debayer::luminance(&ref_color);
     let (h, w) = ref_lum.data.dim();
     let bit_depth = ref_color.red.original_bit_depth;
 
@@ -400,15 +394,7 @@ where
     let rest_offsets: Vec<Result<AlignmentOffset>> = (1..total_frames)
         .into_par_iter()
         .map(|i| {
-            let lum = if is_rgb_bgr {
-                let cf = reader.read_frame_rgb(i)?;
-                luminance(&cf)
-            } else {
-                let raw = reader.read_frame(i)?;
-                let cf = debayer(&raw.data, color_mode, debayer_method, raw.original_bit_depth)
-                    .ok_or_else(|| JupiterError::Pipeline("Debayer failed".into()))?;
-                luminance(&cf)
-            };
+            let lum = read_luminance_frame(reader, i, color_mode, debayer_method)?;
             crate::align::phase_correlation::compute_offset(&ref_lum, &lum)
         })
         .collect();
@@ -462,14 +448,8 @@ where
 
     for (i, &(frame_idx, quality_score)) in selected.iter().enumerate() {
         // Read color frame
-        let cf = if is_rgb_bgr {
-            reader.read_frame_rgb(frame_idx)?
-        } else {
-            let raw = reader.read_frame(frame_idx)?;
-            debayer(&raw.data, color_mode, debayer_method, raw.original_bit_depth)
-                .ok_or_else(|| JupiterError::Pipeline("Debayer failed".into()))?
-        };
-        let lum = luminance(&cf);
+        let cf = read_color_frame(reader, frame_idx, color_mode, debayer_method)?;
+        let lum = crate::color::debayer::luminance(&cf);
 
         // Compute local shifts on luminance
         let local_shifts = compute_local_shifts(
@@ -553,19 +533,12 @@ fn score_and_select_frames(
     let mut scores: Vec<(usize, f64)> = (0..total)
         .map(|i| {
             let frame = reader.read_frame(i).unwrap();
-            let score = match config.quality_metric {
-                crate::pipeline::config::QualityMetric::Laplacian => {
-                    crate::quality::laplacian::laplacian_variance_array(&frame.data)
-                }
-                crate::pipeline::config::QualityMetric::Gradient => {
-                    crate::quality::gradient::gradient_score_array(&frame.data)
-                }
-            };
+            let score = score_with_metric(&frame.data, &config.quality_metric);
             (i, score)
         })
         .collect();
 
-    scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    scores.sort_by(|a, b| b.1.total_cmp(&a.1));
 
     let keep = ((total as f32 * config.select_percentage).ceil() as usize)
         .max(1)
@@ -583,31 +556,15 @@ fn score_and_select_frames_color(
     debayer_method: &DebayerMethod,
 ) -> Result<Vec<(usize, f64)>> {
     let total = reader.frame_count();
-    let is_rgb_bgr = matches!(color_mode, ColorMode::RGB | ColorMode::BGR);
 
     let mut scores: Vec<(usize, f64)> = Vec::with_capacity(total);
     for i in 0..total {
-        let lum = if is_rgb_bgr {
-            let cf = reader.read_frame_rgb(i)?;
-            luminance(&cf)
-        } else {
-            let raw = reader.read_frame(i)?;
-            let cf = debayer(&raw.data, color_mode, debayer_method, raw.original_bit_depth)
-                .ok_or_else(|| JupiterError::Pipeline("Debayer failed".into()))?;
-            luminance(&cf)
-        };
-        let score = match config.quality_metric {
-            crate::pipeline::config::QualityMetric::Laplacian => {
-                crate::quality::laplacian::laplacian_variance_array(&lum.data)
-            }
-            crate::pipeline::config::QualityMetric::Gradient => {
-                crate::quality::gradient::gradient_score_array(&lum.data)
-            }
-        };
+        let lum = read_luminance_frame(reader, i, color_mode, debayer_method)?;
+        let score = score_with_metric(&lum.data, &config.quality_metric);
         scores.push((i, score));
     }
 
-    scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    scores.sort_by(|a, b| b.1.total_cmp(&a.1));
     let keep = ((total as f32 * config.select_percentage).ceil() as usize)
         .max(1)
         .min(total);

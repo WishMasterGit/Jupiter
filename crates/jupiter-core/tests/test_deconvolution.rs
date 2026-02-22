@@ -57,7 +57,7 @@ fn gaussian_psf_peak_at_origin() {
     let psf = generate_psf(&PsfModel::Gaussian { sigma: 2.0 }, 64, 64);
     let max_val = *psf
         .iter()
-        .max_by(|a, b| a.partial_cmp(b).unwrap())
+        .max_by(|a, b| a.total_cmp(b))
         .unwrap();
     assert!(
         (psf[[0, 0]] - max_val).abs() < 1e-6,
@@ -71,7 +71,7 @@ fn airy_psf_peak_at_origin() {
     let psf = generate_psf(&PsfModel::Airy { radius: 3.0 }, 64, 64);
     let max_val = *psf
         .iter()
-        .max_by(|a, b| a.partial_cmp(b).unwrap())
+        .max_by(|a, b| a.total_cmp(b))
         .unwrap();
     assert!(
         (psf[[0, 0]] - max_val).abs() < 1e-6,
@@ -512,7 +512,7 @@ fn rl_black_image_stays_black() {
     let max_val = *result
         .data
         .iter()
-        .max_by(|a, b| a.partial_cmp(b).unwrap())
+        .max_by(|a, b| a.total_cmp(b))
         .unwrap();
     assert!(
         max_val < 1e-5,
@@ -532,7 +532,7 @@ fn wiener_black_image_stays_black() {
     let max_val = *result
         .data
         .iter()
-        .max_by(|a, b| a.partial_cmp(b).unwrap())
+        .max_by(|a, b| a.total_cmp(b))
         .unwrap();
     assert!(
         max_val < 1e-4,

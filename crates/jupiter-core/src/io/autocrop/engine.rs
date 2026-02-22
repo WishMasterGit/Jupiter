@@ -139,7 +139,7 @@ fn median_combine(frames: &[Array2<f32>]) -> Array2<f32> {
     for row in 0..h {
         for col in 0..w {
             let mut vals: Vec<f32> = frames.iter().map(|f| f[[row, col]]).collect();
-            vals.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            vals.sort_unstable_by(|a, b| a.total_cmp(b));
             result[[row, col]] = if n % 2 == 1 {
                 vals[n / 2]
             } else {

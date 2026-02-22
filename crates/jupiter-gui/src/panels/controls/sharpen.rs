@@ -62,21 +62,7 @@ pub(super) fn sharpen_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
             }
 
             if app.config.deconv_enabled {
-                let changed = egui::ComboBox::from_label("Deconv")
-                    .selected_text(app.config.deconv_method.to_string())
-                    .show_ui(ui, |ui| {
-                        let mut changed = false;
-                        for &choice in DeconvMethodChoice::ALL {
-                            if ui
-                                .selectable_value(&mut app.config.deconv_method, choice, choice.to_string())
-                                .changed()
-                            {
-                                changed = true;
-                            }
-                        }
-                        changed
-                    });
-                if changed.inner == Some(true) {
+                if crate::panels::enum_combo(ui, "Deconv", &mut app.config.deconv_method, DeconvMethodChoice::ALL) {
                     app.ui_state.mark_dirty_from_sharpen();
                     app.ui_state.request_sharpen();
                 }
@@ -105,21 +91,7 @@ pub(super) fn sharpen_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
                 }
 
                 // PSF model
-                let changed = egui::ComboBox::from_label("PSF")
-                    .selected_text(app.config.psf_model.to_string())
-                    .show_ui(ui, |ui| {
-                        let mut changed = false;
-                        for &choice in PsfModelChoice::ALL {
-                            if ui
-                                .selectable_value(&mut app.config.psf_model, choice, choice.to_string())
-                                .changed()
-                            {
-                                changed = true;
-                            }
-                        }
-                        changed
-                    });
-                if changed.inner == Some(true) {
+                if crate::panels::enum_combo(ui, "PSF", &mut app.config.psf_model, PsfModelChoice::ALL) {
                     app.ui_state.mark_dirty_from_sharpen();
                     app.ui_state.request_sharpen();
                 }

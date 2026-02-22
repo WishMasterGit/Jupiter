@@ -1,7 +1,9 @@
-use std::io::Write;
+#[allow(dead_code)]
+mod common;
+
 use std::sync::Arc;
 
-use tempfile::{NamedTempFile, TempDir};
+use tempfile::TempDir;
 
 use jupiter_core::compute::cpu::CpuBackend;
 use jupiter_core::frame::ColorMode;
@@ -12,28 +14,10 @@ use jupiter_core::pipeline::{run_pipeline, PipelineOutput};
 use jupiter_core::stack::multi_point::{multi_point_stack_color, LocalStackMethod, MultiPointConfig};
 use jupiter_core::color::debayer::DebayerMethod;
 
-const SER_HEADER_SIZE: usize = 178;
-
 /// Build a synthetic Bayer RGGB SER file with 8-bit pixels.
 /// Each frame has a bright square that jitters slightly between frames.
 fn build_bayer_ser(width: u32, height: u32, num_frames: usize) -> Vec<u8> {
-    let mut buf = Vec::new();
-
-    // Header
-    buf.extend_from_slice(b"LUCAM-RECORDER");
-    buf.extend_from_slice(&0i32.to_le_bytes()); // LuID
-    buf.extend_from_slice(&8i32.to_le_bytes()); // ColorID = 8 = RGGB
-    buf.extend_from_slice(&0i32.to_le_bytes()); // LittleEndian
-    buf.extend_from_slice(&(width as i32).to_le_bytes());
-    buf.extend_from_slice(&(height as i32).to_le_bytes());
-    buf.extend_from_slice(&8i32.to_le_bytes()); // 8-bit
-    buf.extend_from_slice(&(num_frames as i32).to_le_bytes());
-    buf.extend_from_slice(&[0u8; 40]); // Observer
-    buf.extend_from_slice(&[0u8; 40]); // Instrument
-    buf.extend_from_slice(&[0u8; 40]); // Telescope
-    buf.extend_from_slice(&0u64.to_le_bytes()); // DateTime
-    buf.extend_from_slice(&0u64.to_le_bytes()); // DateTimeUTC
-    assert_eq!(buf.len(), SER_HEADER_SIZE);
+    let mut buf = common::build_ser_header_full(width, height, 8, num_frames, 8);
 
     let w = width as usize;
     let h = height as usize;
@@ -74,11 +58,9 @@ fn build_bayer_ser(width: u32, height: u32, num_frames: usize) -> Vec<u8> {
     buf
 }
 
-fn write_bayer_ser(width: u32, height: u32, num_frames: usize) -> NamedTempFile {
+fn write_bayer_ser(width: u32, height: u32, num_frames: usize) -> tempfile::NamedTempFile {
     let ser_data = build_bayer_ser(width, height, num_frames);
-    let mut tmpfile = NamedTempFile::new().unwrap();
-    tmpfile.write_all(&ser_data).unwrap();
-    tmpfile
+    common::write_test_ser(&ser_data)
 }
 
 // ---------------------------------------------------------------------------

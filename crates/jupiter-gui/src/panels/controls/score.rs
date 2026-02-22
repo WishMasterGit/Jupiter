@@ -17,21 +17,12 @@ pub(super) fn score_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
     ui.add_space(4.0);
 
     // Metric combo
-    let changed = egui::ComboBox::from_label("Metric")
-        .selected_text(app.config.quality_metric.to_string())
-        .show_ui(ui, |ui| {
-            let mut changed = false;
-            for &metric in &[QualityMetric::Laplacian, QualityMetric::Gradient] {
-                if ui
-                    .selectable_value(&mut app.config.quality_metric, metric, metric.to_string())
-                    .changed()
-                {
-                    changed = true;
-                }
-            }
-            changed
-        });
-    if changed.inner == Some(true) {
+    if crate::panels::enum_combo(
+        ui,
+        "Metric",
+        &mut app.config.quality_metric,
+        &[QualityMetric::Laplacian, QualityMetric::Gradient],
+    ) {
         app.ui_state.stages.mark_dirty_from(PipelineStage::QualityAssessment);
     }
 
