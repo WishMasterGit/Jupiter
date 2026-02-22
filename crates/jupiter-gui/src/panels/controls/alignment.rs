@@ -25,12 +25,21 @@ pub(super) fn alignment_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
             .changed()
         {
             app.config.select_percentage = keep_pct / 100.0;
-            app.ui_state.stages.mark_dirty_from(PipelineStage::Alignment);
+            app.ui_state
+                .stages
+                .mark_dirty_from(PipelineStage::Alignment);
         }
 
         // Method combo
-        if crate::panels::enum_combo(ui, "Align Method", &mut app.config.align_method, AlignMethodChoice::ALL) {
-            app.ui_state.stages.mark_dirty_from(PipelineStage::Alignment);
+        if crate::panels::enum_combo(
+            ui,
+            "Align Method",
+            &mut app.config.align_method,
+            AlignMethodChoice::ALL,
+        ) {
+            app.ui_state
+                .stages
+                .mark_dirty_from(PipelineStage::Alignment);
         }
 
         // Method-specific params
@@ -42,7 +51,9 @@ pub(super) fn alignment_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
                     .changed()
                 {
                     app.config.enhanced_phase_upsample = upsample as usize;
-                    app.ui_state.stages.mark_dirty_from(PipelineStage::Alignment);
+                    app.ui_state
+                        .stages
+                        .mark_dirty_from(PipelineStage::Alignment);
                 }
             }
             AlignMethodChoice::Centroid => {
@@ -53,7 +64,9 @@ pub(super) fn alignment_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
                     )
                     .changed()
                 {
-                    app.ui_state.stages.mark_dirty_from(PipelineStage::Alignment);
+                    app.ui_state
+                        .stages
+                        .mark_dirty_from(PipelineStage::Alignment);
                 }
             }
             AlignMethodChoice::Pyramid => {
@@ -63,7 +76,9 @@ pub(super) fn alignment_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
                     .changed()
                 {
                     app.config.pyramid_levels = levels as usize;
-                    app.ui_state.stages.mark_dirty_from(PipelineStage::Alignment);
+                    app.ui_state
+                        .stages
+                        .mark_dirty_from(PipelineStage::Alignment);
                 }
             }
             _ => {}
@@ -71,8 +86,13 @@ pub(super) fn alignment_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
 
         // Align button
         let can_align = app.ui_state.stages.score.is_complete() && !app.ui_state.is_busy();
-        if ui.add_enabled(can_align, egui::Button::new("Align Frames")).clicked() {
-            app.ui_state.stages.clear_downstream(PipelineStage::Alignment);
+        if ui
+            .add_enabled(can_align, egui::Button::new("Align Frames"))
+            .clicked()
+        {
+            app.ui_state
+                .stages
+                .clear_downstream(PipelineStage::Alignment);
             app.ui_state.running_stage = Some(PipelineStage::Alignment);
             app.send_command(WorkerCommand::Align {
                 select_percentage: app.config.select_percentage,

@@ -370,11 +370,8 @@ where
                 } else {
                     let offset =
                         compute_offset_gpu(&reference.data, &frame.data, backend.as_ref())?;
-                    let shifted_buf = backend.shift_bilinear(
-                        &backend.upload(&frame.data),
-                        offset.dx,
-                        offset.dy,
-                    );
+                    let shifted_buf =
+                        backend.shift_bilinear(&backend.upload(&frame.data), offset.dx, offset.dy);
                     let shifted_data = backend.download(&shifted_buf);
                     Ok(Frame::new(shifted_data, frame.original_bit_depth))
                 };
@@ -390,8 +387,7 @@ where
             let result = if i == reference_idx {
                 frame.clone()
             } else {
-                let offset =
-                    compute_offset_gpu(&reference.data, &frame.data, backend.as_ref())?;
+                let offset = compute_offset_gpu(&reference.data, &frame.data, backend.as_ref())?;
                 let shifted_buf =
                     backend.shift_bilinear(&backend.upload(&frame.data), offset.dx, offset.dy);
                 let shifted_data = backend.download(&shifted_buf);
@@ -553,8 +549,5 @@ pub fn bilinear_sample(data: &Array2<f32>, y: f64, x: f64) -> f32 {
     let v01 = sample(y1, x0);
     let v11 = sample(y1, x1);
 
-    v00 * (1.0 - fx) * (1.0 - fy)
-        + v10 * fx * (1.0 - fy)
-        + v01 * (1.0 - fx) * fy
-        + v11 * fx * fy
+    v00 * (1.0 - fx) * (1.0 - fy) + v10 * fx * (1.0 - fy) + v01 * (1.0 - fx) * fy + v11 * fx * fy
 }

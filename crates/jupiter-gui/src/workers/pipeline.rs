@@ -43,10 +43,14 @@ pub(super) fn handle_run_all(
                 ctx,
                 format!("Pipeline complete in {:.1}s", elapsed.as_secs_f32()),
             );
-            send(tx, ctx, WorkerResult::PipelineComplete {
-                result: output,
-                elapsed,
-            });
+            send(
+                tx,
+                ctx,
+                WorkerResult::PipelineComplete {
+                    result: output,
+                    elapsed,
+                },
+            );
         }
         Err(e) => send_error(tx, ctx, format!("Pipeline failed: {e}")),
     }

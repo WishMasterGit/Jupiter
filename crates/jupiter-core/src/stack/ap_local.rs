@@ -45,9 +45,8 @@ pub(crate) fn stack_ap_cached(
         );
 
         // Local alignment with confidence check
-        let (local_offset, confidence) =
-            compute_offset_with_confidence(&ref_search, &tgt_search)
-                .unwrap_or((AlignmentOffset::default(), 0.0));
+        let (local_offset, confidence) = compute_offset_with_confidence(&ref_search, &tgt_search)
+            .unwrap_or((AlignmentOffset::default(), 0.0));
 
         if confidence < MIN_CORRELATION_CONFIDENCE {
             continue; // skip unreliable alignment
@@ -123,9 +122,8 @@ pub(crate) fn stack_ap_cached_color(
             &global_offsets[frame_idx],
         );
 
-        let (local_offset, confidence) =
-            compute_offset_with_confidence(&ref_search, &tgt_search)
-                .unwrap_or((AlignmentOffset::default(), 0.0));
+        let (local_offset, confidence) = compute_offset_with_confidence(&ref_search, &tgt_search)
+            .unwrap_or((AlignmentOffset::default(), 0.0));
 
         if confidence < MIN_CORRELATION_CONFIDENCE {
             continue; // skip unreliable alignment
@@ -268,13 +266,10 @@ pub(crate) fn median_stack_arrays(patches: &[Array2<f32>]) -> Array2<f32> {
                 vals[0]
             } else if n % 2 == 1 {
                 let mid = n / 2;
-                *vals
-                    .select_nth_unstable_by(mid, |a, b| a.total_cmp(b))
-                    .1
+                *vals.select_nth_unstable_by(mid, |a, b| a.total_cmp(b)).1
             } else {
                 let mid = n / 2;
-                let (_, upper, _) =
-                    vals.select_nth_unstable_by(mid, |a, b| a.total_cmp(b));
+                let (_, upper, _) = vals.select_nth_unstable_by(mid, |a, b| a.total_cmp(b));
                 let upper_val = *upper;
                 let lower_val = vals[..mid]
                     .iter()

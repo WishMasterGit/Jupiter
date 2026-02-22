@@ -5,14 +5,16 @@ use std::sync::Arc;
 
 use tempfile::TempDir;
 
+use jupiter_core::color::debayer::DebayerMethod;
 use jupiter_core::compute::cpu::CpuBackend;
 use jupiter_core::frame::ColorMode;
 use jupiter_core::pipeline::config::{
     DebayerConfig, FrameSelectionConfig, PipelineConfig, StackMethod, StackingConfig,
 };
 use jupiter_core::pipeline::{run_pipeline, PipelineOutput};
-use jupiter_core::stack::multi_point::{multi_point_stack_color, LocalStackMethod, MultiPointConfig};
-use jupiter_core::color::debayer::DebayerMethod;
+use jupiter_core::stack::multi_point::{
+    multi_point_stack_color, LocalStackMethod, MultiPointConfig,
+};
 
 /// Build a synthetic Bayer RGGB SER file with 8-bit pixels.
 /// Each frame has a bright square that jitters slightly between frames.
@@ -33,9 +35,9 @@ fn build_bayer_ser(width: u32, height: u32, num_frames: usize) -> Vec<u8> {
             for col in 0..w {
                 // RGGB pattern with distinct channel values
                 let bg = match (row % 2, col % 2) {
-                    (0, 0) => 180u8, // R
+                    (0, 0) => 180u8,          // R
                     (0, 1) | (1, 0) => 120u8, // G
-                    _ => 60u8,                 // B
+                    _ => 60u8,                // B
                 };
                 frame_data[row * w + col] = bg;
             }
@@ -86,7 +88,11 @@ fn test_multi_point_stack_color_basic() {
         &DebayerMethod::Bilinear,
         |_| {},
     );
-    assert!(result.is_ok(), "multi_point_stack_color failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "multi_point_stack_color failed: {:?}",
+        result.err()
+    );
 
     let cf = result.unwrap();
     assert_eq!(cf.red.data.dim(), (128, 128));
@@ -122,7 +128,11 @@ fn test_multi_point_stack_color_single_frame() {
         &DebayerMethod::Bilinear,
         |_| {},
     );
-    assert!(result.is_ok(), "Single frame color multipoint failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Single frame color multipoint failed: {:?}",
+        result.err()
+    );
 
     let cf = result.unwrap();
     assert_eq!(cf.red.data.dim(), (64, 64));

@@ -5,7 +5,9 @@ use ndarray::Array2;
 
 use jupiter_core::detection::components::{connected_components, touches_border};
 use jupiter_core::detection::morphology::morphological_opening;
-use jupiter_core::detection::{detect_planet_in_frame, DetectionConfig, FrameDetection, ThresholdMethod};
+use jupiter_core::detection::{
+    detect_planet_in_frame, DetectionConfig, FrameDetection, ThresholdMethod,
+};
 use jupiter_core::io::autocrop::temporal::analyze_detections;
 use jupiter_core::io::autocrop::{auto_detect_crop, AutoCropConfig};
 use jupiter_core::io::ser::SerReader;
@@ -48,8 +50,16 @@ fn test_autocrop_centered_disk() {
     let planet_right = (32.0 + radius).ceil() as u32;
     let planet_bottom = (32.0 + radius).ceil() as u32;
 
-    assert!(crop.x <= planet_left, "crop.x={} > planet_left={planet_left}", crop.x);
-    assert!(crop.y <= planet_top, "crop.y={} > planet_top={planet_top}", crop.y);
+    assert!(
+        crop.x <= planet_left,
+        "crop.x={} > planet_left={planet_left}",
+        crop.x
+    );
+    assert!(
+        crop.y <= planet_top,
+        "crop.y={} > planet_top={planet_top}",
+        crop.y
+    );
     assert!(
         crop.x + crop.width >= planet_right,
         "crop right {} < planet_right {planet_right}",
@@ -143,7 +153,10 @@ fn test_autocrop_padding_increases_size() {
 
     let small_area = small_pad.width as u64 * small_pad.height as u64;
     let large_area = large_pad.width as u64 * large_pad.height as u64;
-    assert!(large_area > small_area, "larger padding should produce bigger crop");
+    assert!(
+        large_area > small_area,
+        "larger padding should produce bigger crop"
+    );
 }
 
 #[test]
@@ -589,7 +602,15 @@ fn test_temporal_analysis_basic() {
         "median_cy={}",
         analysis.median_cy
     );
-    assert!(analysis.drift_range_x >= 1.5, "drift_x={}", analysis.drift_range_x);
-    assert!(analysis.drift_range_y >= 1.5, "drift_y={}", analysis.drift_range_y);
+    assert!(
+        analysis.drift_range_x >= 1.5,
+        "drift_x={}",
+        analysis.drift_range_x
+    );
+    assert!(
+        analysis.drift_range_y >= 1.5,
+        "drift_y={}",
+        analysis.drift_range_y
+    );
     assert!(analysis.median_diameter >= 20.0);
 }

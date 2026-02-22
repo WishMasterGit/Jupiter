@@ -20,7 +20,10 @@ pub(super) fn sharpen_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
 
     let enabled = app.ui_state.stages.stack.is_complete();
     ui.add_enabled_ui(enabled, |ui| {
-        if ui.checkbox(&mut app.config.sharpen_enabled, "Enable sharpening").changed() {
+        if ui
+            .checkbox(&mut app.config.sharpen_enabled, "Enable sharpening")
+            .changed()
+        {
             app.ui_state.mark_dirty_from_sharpen();
             app.ui_state.request_sharpen();
         }
@@ -56,13 +59,21 @@ pub(super) fn sharpen_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
             ui.add_space(4.0);
 
             // Deconvolution
-            if ui.checkbox(&mut app.config.deconv_enabled, "Deconvolution").changed() {
+            if ui
+                .checkbox(&mut app.config.deconv_enabled, "Deconvolution")
+                .changed()
+            {
                 app.ui_state.mark_dirty_from_sharpen();
                 app.ui_state.request_sharpen();
             }
 
             if app.config.deconv_enabled {
-                if crate::panels::enum_combo(ui, "Deconv", &mut app.config.deconv_method, DeconvMethodChoice::ALL) {
+                if crate::panels::enum_combo(
+                    ui,
+                    "Deconv",
+                    &mut app.config.deconv_method,
+                    DeconvMethodChoice::ALL,
+                ) {
                     app.ui_state.mark_dirty_from_sharpen();
                     app.ui_state.request_sharpen();
                 }
@@ -80,7 +91,11 @@ pub(super) fn sharpen_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
                         }
                     }
                     DeconvMethodChoice::Wiener => {
-                        let resp = ui.add(egui::Slider::new(&mut app.config.wiener_noise_ratio, 0.001..=0.1).text("Noise Ratio").logarithmic(true));
+                        let resp = ui.add(
+                            egui::Slider::new(&mut app.config.wiener_noise_ratio, 0.001..=0.1)
+                                .text("Noise Ratio")
+                                .logarithmic(true),
+                        );
                         if resp.changed() {
                             app.ui_state.mark_dirty_from_sharpen();
                         }
@@ -91,14 +106,22 @@ pub(super) fn sharpen_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
                 }
 
                 // PSF model
-                if crate::panels::enum_combo(ui, "PSF", &mut app.config.psf_model, PsfModelChoice::ALL) {
+                if crate::panels::enum_combo(
+                    ui,
+                    "PSF",
+                    &mut app.config.psf_model,
+                    PsfModelChoice::ALL,
+                ) {
                     app.ui_state.mark_dirty_from_sharpen();
                     app.ui_state.request_sharpen();
                 }
 
                 match app.config.psf_model {
                     PsfModelChoice::Gaussian => {
-                        let resp = ui.add(egui::Slider::new(&mut app.config.psf_gaussian_sigma, 0.5..=5.0).text("Sigma"));
+                        let resp = ui.add(
+                            egui::Slider::new(&mut app.config.psf_gaussian_sigma, 0.5..=5.0)
+                                .text("Sigma"),
+                        );
                         if resp.changed() {
                             app.ui_state.mark_dirty_from_sharpen();
                         }
@@ -107,7 +130,10 @@ pub(super) fn sharpen_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
                         }
                     }
                     PsfModelChoice::Kolmogorov => {
-                        let resp = ui.add(egui::Slider::new(&mut app.config.psf_kolmogorov_seeing, 0.5..=10.0).text("Seeing"));
+                        let resp = ui.add(
+                            egui::Slider::new(&mut app.config.psf_kolmogorov_seeing, 0.5..=10.0)
+                                .text("Seeing"),
+                        );
                         if resp.changed() {
                             app.ui_state.mark_dirty_from_sharpen();
                         }
@@ -116,7 +142,10 @@ pub(super) fn sharpen_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
                         }
                     }
                     PsfModelChoice::Airy => {
-                        let resp = ui.add(egui::Slider::new(&mut app.config.psf_airy_radius, 0.5..=10.0).text("Radius"));
+                        let resp = ui.add(
+                            egui::Slider::new(&mut app.config.psf_airy_radius, 0.5..=10.0)
+                                .text("Radius"),
+                        );
                         if resp.changed() {
                             app.ui_state.mark_dirty_from_sharpen();
                         }

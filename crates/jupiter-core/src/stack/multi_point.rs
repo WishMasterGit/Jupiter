@@ -114,7 +114,10 @@ where
     on_progress(0.1);
 
     // Step 2: Build mean reference from top-quality frames
-    info!("Building mean reference from top {}% frames", (MEAN_REFERENCE_KEEP_FRACTION * 100.0) as u32);
+    info!(
+        "Building mean reference from top {}% frames",
+        (MEAN_REFERENCE_KEEP_FRACTION * 100.0) as u32
+    );
     let mean_ref = build_mean_reference(
         reader,
         &global_offsets,
@@ -282,7 +285,10 @@ where
     on_progress(0.1);
 
     // Step 3: Build mean reference from top-quality frames (luminance)
-    info!("Building mean reference from top {}% color frames", (MEAN_REFERENCE_KEEP_FRACTION * 100.0) as u32);
+    info!(
+        "Building mean reference from top {}% color frames",
+        (MEAN_REFERENCE_KEEP_FRACTION * 100.0) as u32
+    );
     let mean_ref = build_mean_reference_color(
         reader,
         &global_offsets,
@@ -310,7 +316,14 @@ where
         grid.points.len(),
         total_frames
     );
-    let ap_selections = score_all_aps_color(reader, &grid, &global_offsets, config, color_mode, debayer_method)?;
+    let ap_selections = score_all_aps_color(
+        reader,
+        &grid,
+        &global_offsets,
+        config,
+        color_mode,
+        debayer_method,
+    )?;
     on_progress(0.4);
 
     // Step 6: Build frame cache — (luminance, ColorFrame) for needed frames

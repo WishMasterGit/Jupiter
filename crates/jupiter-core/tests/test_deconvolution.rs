@@ -1,10 +1,10 @@
 use ndarray::Array2;
 
 use jupiter_core::frame::Frame;
-use jupiter_core::pipeline::config::{
-    DeconvolutionConfig, DeconvolutionMethod, PsfModel,
+use jupiter_core::pipeline::config::{DeconvolutionConfig, DeconvolutionMethod, PsfModel};
+use jupiter_core::sharpen::deconvolution::{
+    bessel_j1, deconvolve, generate_psf, rewrap_psf_padded,
 };
-use jupiter_core::sharpen::deconvolution::{bessel_j1, deconvolve, generate_psf, rewrap_psf_padded};
 
 // ---------------------------------------------------------------------------
 // Helper: create a simple test frame from an Array2
@@ -55,10 +55,7 @@ fn airy_psf_sums_to_one() {
 #[test]
 fn gaussian_psf_peak_at_origin() {
     let psf = generate_psf(&PsfModel::Gaussian { sigma: 2.0 }, 64, 64);
-    let max_val = *psf
-        .iter()
-        .max_by(|a, b| a.total_cmp(b))
-        .unwrap();
+    let max_val = *psf.iter().max_by(|a, b| a.total_cmp(b)).unwrap();
     assert!(
         (psf[[0, 0]] - max_val).abs() < 1e-6,
         "Peak should be at [0,0], got max={max_val} vs origin={}",
@@ -69,10 +66,7 @@ fn gaussian_psf_peak_at_origin() {
 #[test]
 fn airy_psf_peak_at_origin() {
     let psf = generate_psf(&PsfModel::Airy { radius: 3.0 }, 64, 64);
-    let max_val = *psf
-        .iter()
-        .max_by(|a, b| a.total_cmp(b))
-        .unwrap();
+    let max_val = *psf.iter().max_by(|a, b| a.total_cmp(b)).unwrap();
     assert!(
         (psf[[0, 0]] - max_val).abs() < 1e-6,
         "Airy peak should be at origin"
@@ -132,10 +126,7 @@ fn psf_different_sizes() {
         let psf = generate_psf(&PsfModel::Gaussian { sigma: 2.0 }, h, w);
         assert_eq!(psf.dim(), (h, w));
         let sum: f32 = psf.iter().sum();
-        assert!(
-            (sum - 1.0).abs() < 1e-3,
-            "PSF sum for {h}x{w} = {sum}"
-        );
+        assert!((sum - 1.0).abs() < 1e-3, "PSF sum for {h}x{w} = {sum}");
     }
 }
 
@@ -164,10 +155,7 @@ fn bessel_j1_known_values() {
 
     // J1(3.8317) ≈ 0 (first zero after origin)
     let val = bessel_j1(3.8317);
-    assert!(
-        val.abs() < 0.01,
-        "J1(3.8317) = {val}, expected ~0"
-    );
+    assert!(val.abs() < 0.01, "J1(3.8317) = {val}, expected ~0");
 }
 
 #[test]
@@ -383,7 +371,12 @@ fn deconvolve_dispatch_both_methods() {
             psf: PsfModel::Gaussian { sigma: 1.5 },
         };
         let result = deconvolve(&frame, &config);
-        assert_eq!(result.data.dim(), (32, 32), "Failed for method {:?}", method);
+        assert_eq!(
+            result.data.dim(),
+            (32, 32),
+            "Failed for method {:?}",
+            method
+        );
     }
 }
 
@@ -415,8 +408,7 @@ fn rl_recovers_sharpness_from_blurred_image() {
                 for kc in -kernel_rad..=kernel_rad {
                     let sr = (r as i32 + kr).clamp(0, size as i32 - 1) as usize;
                     let sc = (c as i32 + kc).clamp(0, size as i32 - 1) as usize;
-                    let g =
-                        (-(kr * kr + kc * kc) as f32 / (2.0 * sigma * sigma)).exp();
+                    let g = (-(kr * kr + kc * kc) as f32 / (2.0 * sigma * sigma)).exp();
                     sum += sharp[[sr, sc]] * g;
                     wt += g;
                 }
@@ -469,8 +461,7 @@ fn wiener_recovers_sharpness_from_blurred_image() {
                 for kc in -kernel_rad..=kernel_rad {
                     let sr = (r as i32 + kr).clamp(0, size as i32 - 1) as usize;
                     let sc = (c as i32 + kc).clamp(0, size as i32 - 1) as usize;
-                    let g =
-                        (-(kr * kr + kc * kc) as f32 / (2.0 * sigma * sigma)).exp();
+                    let g = (-(kr * kr + kc * kc) as f32 / (2.0 * sigma * sigma)).exp();
                     sum += sharp[[sr, sc]] * g;
                     wt += g;
                 }
@@ -509,11 +500,7 @@ fn rl_black_image_stays_black() {
     };
     let result = deconvolve(&frame, &config);
 
-    let max_val = *result
-        .data
-        .iter()
-        .max_by(|a, b| a.total_cmp(b))
-        .unwrap();
+    let max_val = *result.data.iter().max_by(|a, b| a.total_cmp(b)).unwrap();
     assert!(
         max_val < 1e-5,
         "Black image should stay black after RL, got max={max_val}"
@@ -529,11 +516,7 @@ fn wiener_black_image_stays_black() {
     };
     let result = deconvolve(&frame, &config);
 
-    let max_val = *result
-        .data
-        .iter()
-        .max_by(|a, b| a.total_cmp(b))
-        .unwrap();
+    let max_val = *result.data.iter().max_by(|a, b| a.total_cmp(b)).unwrap();
     assert!(
         max_val < 1e-4,
         "Black image should stay black after Wiener, got max={max_val}"
@@ -631,7 +614,9 @@ fn wiener_higher_noise_ratio_smoother() {
     let frame = make_frame(data);
 
     let config_low = DeconvolutionConfig {
-        method: DeconvolutionMethod::Wiener { noise_ratio: 0.0001 },
+        method: DeconvolutionMethod::Wiener {
+            noise_ratio: 0.0001,
+        },
         psf: PsfModel::Gaussian { sigma: 1.5 },
     };
     let config_high = DeconvolutionConfig {

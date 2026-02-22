@@ -82,8 +82,8 @@ fn build_pyramid(data: &Array2<f32>, levels: usize) -> Vec<Array2<f32>> {
 /// Downsample an image by 2x by taking every other pixel.
 fn downsample_2x(data: &Array2<f32>) -> Array2<f32> {
     let (h, w) = data.dim();
-    let new_h = (h + 1) / 2;
-    let new_w = (w + 1) / 2;
+    let new_h = h.div_ceil(2);
+    let new_w = w.div_ceil(2);
     let mut result = Array2::<f32>::zeros((new_h, new_w));
 
     for r in 0..new_h {

@@ -50,7 +50,8 @@ fn convolve_rows(data: &Array2<f32>, kernel: &[f32]) -> Array2<f32> {
                         let mut sum = 0.0f32;
                         for (ki, &kv) in kernel.iter().enumerate() {
                             let src_col = (col as isize + ki as isize - radius as isize)
-                                .clamp(0, w as isize - 1) as usize;
+                                .clamp(0, w as isize - 1)
+                                as usize;
                             sum += data[[row, src_col]] * kv;
                         }
                         sum
@@ -96,7 +97,8 @@ fn convolve_cols(data: &Array2<f32>, kernel: &[f32]) -> Array2<f32> {
                         let mut sum = 0.0f32;
                         for (ki, &kv) in kernel.iter().enumerate() {
                             let src_row = (row as isize + ki as isize - radius as isize)
-                                .clamp(0, h as isize - 1) as usize;
+                                .clamp(0, h as isize - 1)
+                                as usize;
                             sum += data[[src_row, col]] * kv;
                         }
                         sum

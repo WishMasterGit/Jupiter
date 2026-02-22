@@ -106,11 +106,8 @@ where
                     backend.as_ref(),
                 )?;
                 if backend.is_gpu() {
-                    let shifted_buf = backend.shift_bilinear(
-                        &backend.upload(&frame.data),
-                        offset.dx,
-                        offset.dy,
-                    );
+                    let shifted_buf =
+                        backend.shift_bilinear(&backend.upload(&frame.data), offset.dx, offset.dy);
                     let shifted_data = backend.download(&shifted_buf);
                     Frame::new(shifted_data, frame.original_bit_depth)
                 } else {
@@ -145,50 +142,49 @@ where
     let reference = reader.read_frame(frame_indices[reference_idx])?;
     let counter = AtomicUsize::new(0);
 
-    let results: Vec<Result<AlignmentOffset>> =
-        if frame_indices.len() >= PARALLEL_FRAME_THRESHOLD {
-            frame_indices
-                .par_iter()
-                .enumerate()
-                .map(|(i, &frame_idx)| {
-                    let offset = if i == reference_idx {
-                        AlignmentOffset::default()
-                    } else {
-                        let target = reader.read_frame(frame_idx)?;
-                        compute_offset_configured(
-                            &reference.data,
-                            &target.data,
-                            config,
-                            backend.as_ref(),
-                        )?
-                    };
-                    let done = counter.fetch_add(1, Ordering::Relaxed) + 1;
-                    on_frame_done(done);
-                    Ok(offset)
-                })
-                .collect()
-        } else {
-            frame_indices
-                .iter()
-                .enumerate()
-                .map(|(i, &frame_idx)| {
-                    let offset = if i == reference_idx {
-                        AlignmentOffset::default()
-                    } else {
-                        let target = reader.read_frame(frame_idx)?;
-                        compute_offset_configured(
-                            &reference.data,
-                            &target.data,
-                            config,
-                            backend.as_ref(),
-                        )?
-                    };
-                    let done = counter.fetch_add(1, Ordering::Relaxed) + 1;
-                    on_frame_done(done);
-                    Ok(offset)
-                })
-                .collect()
-        };
+    let results: Vec<Result<AlignmentOffset>> = if frame_indices.len() >= PARALLEL_FRAME_THRESHOLD {
+        frame_indices
+            .par_iter()
+            .enumerate()
+            .map(|(i, &frame_idx)| {
+                let offset = if i == reference_idx {
+                    AlignmentOffset::default()
+                } else {
+                    let target = reader.read_frame(frame_idx)?;
+                    compute_offset_configured(
+                        &reference.data,
+                        &target.data,
+                        config,
+                        backend.as_ref(),
+                    )?
+                };
+                let done = counter.fetch_add(1, Ordering::Relaxed) + 1;
+                on_frame_done(done);
+                Ok(offset)
+            })
+            .collect()
+    } else {
+        frame_indices
+            .iter()
+            .enumerate()
+            .map(|(i, &frame_idx)| {
+                let offset = if i == reference_idx {
+                    AlignmentOffset::default()
+                } else {
+                    let target = reader.read_frame(frame_idx)?;
+                    compute_offset_configured(
+                        &reference.data,
+                        &target.data,
+                        config,
+                        backend.as_ref(),
+                    )?
+                };
+                let done = counter.fetch_add(1, Ordering::Relaxed) + 1;
+                on_frame_done(done);
+                Ok(offset)
+            })
+            .collect()
+    };
 
     results.into_iter().collect()
 }

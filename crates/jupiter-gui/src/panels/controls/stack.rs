@@ -22,7 +22,12 @@ pub(super) fn stack_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
     };
     ui.add_enabled_ui(enabled, |ui| {
         // Method combo
-        if crate::panels::enum_combo(ui, "Method", &mut app.config.stack_method_choice, StackMethodChoice::ALL) {
+        if crate::panels::enum_combo(
+            ui,
+            "Method",
+            &mut app.config.stack_method_choice,
+            StackMethodChoice::ALL,
+        ) {
             app.ui_state.stages.mark_dirty_from(PipelineStage::Stacking);
         }
 
@@ -52,9 +57,7 @@ pub(super) fn stack_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
             }
             StackMethodChoice::Drizzle => {
                 if ui
-                    .add(
-                        egui::Slider::new(&mut app.config.drizzle_scale, 1.0..=4.0).text("Scale"),
-                    )
+                    .add(egui::Slider::new(&mut app.config.drizzle_scale, 1.0..=4.0).text("Scale"))
                     .changed()
                 {
                     app.ui_state.stages.mark_dirty_from(PipelineStage::Stacking);
@@ -139,10 +142,7 @@ fn ap_controls(ui: &mut egui::Ui, app: &mut JupiterApp) {
         app.ui_state.stages.mark_dirty_from(PipelineStage::Stacking);
     }
     if ui
-        .add(
-            egui::Slider::new(&mut app.config.mp_min_brightness, 0.0..=0.5)
-                .text("Min Bright"),
-        )
+        .add(egui::Slider::new(&mut app.config.mp_min_brightness, 0.0..=0.5).text("Min Bright"))
         .changed()
     {
         app.ui_state.stages.mark_dirty_from(PipelineStage::Stacking);

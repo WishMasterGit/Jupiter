@@ -90,7 +90,10 @@ fn test_bilinear_rggb_known_pattern() {
         (cf.green.data[[1, 1]] - 0.5).abs() < 0.1,
         "green at blue pixel"
     );
-    assert!((cf.blue.data[[1, 1]] - 0.0).abs() < 0.01, "blue at blue pixel");
+    assert!(
+        (cf.blue.data[[1, 1]] - 0.0).abs() < 0.01,
+        "blue at blue pixel"
+    );
 }
 
 #[test]
@@ -105,11 +108,7 @@ fn test_bilinear_all_bayer_patterns() {
 
     for mode in &modes {
         let result = debayer(&raw, mode, &DebayerMethod::Bilinear, 8);
-        assert!(
-            result.is_some(),
-            "debayer should succeed for {:?}",
-            mode
-        );
+        assert!(result.is_some(), "debayer should succeed for {:?}", mode);
         let cf = result.unwrap();
         // Uniform input → all channels should be uniform (≈0.4)
         for row in 1..7 {
@@ -132,7 +131,13 @@ fn test_bilinear_all_bayer_patterns() {
 #[test]
 fn test_mhc_uniform() {
     let raw = uniform_bayer(16, 16, 0.6);
-    let cf = debayer(&raw, &ColorMode::BayerRGGB, &DebayerMethod::MalvarHeCutler, 8).unwrap();
+    let cf = debayer(
+        &raw,
+        &ColorMode::BayerRGGB,
+        &DebayerMethod::MalvarHeCutler,
+        8,
+    )
+    .unwrap();
 
     for row in 2..14 {
         for col in 2..14 {
@@ -165,10 +170,10 @@ fn test_mhc_differs_from_bilinear() {
         for col in 0..16 {
             // RGGB: red=high, green=medium, blue=low — creates inter-channel difference
             raw[[row, col]] = match (row % 2, col % 2) {
-                (0, 0) => 0.9,  // R
-                (0, 1) => 0.3,  // G on R row
-                (1, 0) => 0.3,  // G on B row
-                _ => 0.1,       // B
+                (0, 0) => 0.9, // R
+                (0, 1) => 0.3, // G on R row
+                (1, 0) => 0.3, // G on B row
+                _ => 0.1,      // B
             };
         }
     }
@@ -180,7 +185,13 @@ fn test_mhc_differs_from_bilinear() {
     }
 
     let bilinear = debayer(&raw, &ColorMode::BayerRGGB, &DebayerMethod::Bilinear, 8).unwrap();
-    let mhc = debayer(&raw, &ColorMode::BayerRGGB, &DebayerMethod::MalvarHeCutler, 8).unwrap();
+    let mhc = debayer(
+        &raw,
+        &ColorMode::BayerRGGB,
+        &DebayerMethod::MalvarHeCutler,
+        8,
+    )
+    .unwrap();
 
     // They should differ at or near the edge
     let mut any_diff = false;
@@ -192,7 +203,10 @@ fn test_mhc_differs_from_bilinear() {
             }
         }
     }
-    assert!(any_diff, "MHC should produce different results from bilinear near color edges");
+    assert!(
+        any_diff,
+        "MHC should produce different results from bilinear near color edges"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -343,9 +357,9 @@ fn build_bayer_ser(width: u32, height: u32, num_frames: usize) -> Vec<u8> {
             for col in 0..w {
                 // Background: RGGB pattern with distinct values
                 let bg = match (row % 2, col % 2) {
-                    (0, 0) => 180u8, // R
+                    (0, 0) => 180u8,          // R
                     (0, 1) | (1, 0) => 120u8, // G
-                    _ => 60u8,                 // B
+                    _ => 60u8,                // B
                 };
                 frame_data[row * w + col] = bg;
             }
@@ -434,7 +448,9 @@ fn test_color_pipeline_end_to_end() {
             assert_eq!(cf.green.data.dim(), (32, 32));
             assert_eq!(cf.blue.data.dim(), (32, 32));
         }
-        PipelineOutput::Mono(_) => panic!("Expected color output for Bayer input with debayer enabled"),
+        PipelineOutput::Mono(_) => {
+            panic!("Expected color output for Bayer input with debayer enabled")
+        }
     }
 
     assert!(output_path.exists(), "Color output file should exist");

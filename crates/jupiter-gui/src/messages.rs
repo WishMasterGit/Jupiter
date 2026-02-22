@@ -33,9 +33,7 @@ pub enum WorkerCommand {
     },
 
     /// Stage 3: Stack using cached aligned frames.
-    Stack {
-        method: StackMethod,
-    },
+    Stack { method: StackMethod },
 
     /// Stage 4: Apply deconvolution + wavelet sharpening to cached stacked frame.
     Sharpen {

@@ -14,11 +14,7 @@ pub fn screen_to_image(
 }
 
 /// Convert image pixel coordinates to screen coordinates.
-fn image_to_screen(
-    pos: egui::Pos2,
-    img_rect: egui::Rect,
-    image_size: egui::Vec2,
-) -> egui::Pos2 {
+fn image_to_screen(pos: egui::Pos2, img_rect: egui::Rect, image_size: egui::Vec2) -> egui::Pos2 {
     egui::pos2(
         pos.x / image_size.x * img_rect.width() + img_rect.left(),
         pos.y / image_size.y * img_rect.height() + img_rect.top(),
@@ -27,10 +23,7 @@ fn image_to_screen(
 
 /// Build an egui::Rect from a CropRectPixels.
 fn crop_to_egui_rect(c: &CropRectPixels) -> egui::Rect {
-    egui::Rect::from_min_size(
-        egui::pos2(c.x, c.y),
-        egui::vec2(c.width, c.height),
-    )
+    egui::Rect::from_min_size(egui::pos2(c.x, c.y), egui::vec2(c.width, c.height))
 }
 
 /// Compute the on-screen image rect from viewport state.
@@ -95,15 +88,17 @@ fn detect_drag_start(
     if let Some(pos) = response.interact_pointer_pos() {
         let img_pos = screen_to_image(pos, img_rect, image_size);
 
-        let inside = app.ui_state.crop_state.rect.as_ref().is_some_and(|c| {
-            crop_to_egui_rect(c).contains(img_pos)
-        });
+        let inside = app
+            .ui_state
+            .crop_state
+            .rect
+            .as_ref()
+            .is_some_and(|c| crop_to_egui_rect(c).contains(img_pos));
 
         if inside {
             let c = app.ui_state.crop_state.rect.as_ref().unwrap();
             app.ui_state.crop_state.moving = true;
-            app.ui_state.crop_state.move_offset =
-                Some(img_pos.to_vec2() - egui::vec2(c.x, c.y));
+            app.ui_state.crop_state.move_offset = Some(img_pos.to_vec2() - egui::vec2(c.x, c.y));
         } else {
             app.ui_state.crop_state.drag_start = Some(pos);
         }
@@ -189,14 +184,27 @@ fn compute_aspect_constrained_rect(
         w = h * ratio;
     }
 
-    let x = if dx >= 0.0 { img_start.x } else { img_start.x - w };
-    let y = if dy >= 0.0 { img_start.y } else { img_start.y - h };
+    let x = if dx >= 0.0 {
+        img_start.x
+    } else {
+        img_start.x - w
+    };
+    let y = if dy >= 0.0 {
+        img_start.y
+    } else {
+        img_start.y - h
+    };
 
     let x = x.max(0.0).min(image_size.x - w);
     let y = y.max(0.0).min(image_size.y - h);
 
     if w > 1.0 && h > 1.0 {
-        Some(CropRectPixels { x, y, width: w, height: h })
+        Some(CropRectPixels {
+            x,
+            y,
+            width: w,
+            height: h,
+        })
     } else {
         None
     }
@@ -216,7 +224,12 @@ fn compute_free_rect(
     let h = y_max - y_min;
 
     if w > 1.0 && h > 1.0 {
-        Some(CropRectPixels { x: x_min, y: y_min, width: w, height: h })
+        Some(CropRectPixels {
+            x: x_min,
+            y: y_min,
+            width: w,
+            height: h,
+        })
     } else {
         None
     }
@@ -238,9 +251,12 @@ fn update_crop_cursor(
         if response.rect.contains(hover) {
             let img_rect = compute_img_rect(response.rect, image_size, app);
             let img_pos = screen_to_image(hover, img_rect, image_size);
-            let inside = app.ui_state.crop_state.rect.as_ref().is_some_and(|c| {
-                crop_to_egui_rect(c).contains(img_pos)
-            });
+            let inside = app
+                .ui_state
+                .crop_state
+                .rect
+                .as_ref()
+                .is_some_and(|c| crop_to_egui_rect(c).contains(img_pos));
             if inside {
                 ctx.set_cursor_icon(egui::CursorIcon::Grab);
             } else {
@@ -276,13 +292,19 @@ fn draw_dim_regions(ui: &egui::Ui, img_rect: egui::Rect, crop_screen: egui::Rect
 
     // Top
     painter.rect_filled(
-        egui::Rect::from_min_max(img_rect.left_top(), egui::pos2(img_rect.right(), crop_screen.top())),
+        egui::Rect::from_min_max(
+            img_rect.left_top(),
+            egui::pos2(img_rect.right(), crop_screen.top()),
+        ),
         0.0,
         dim_color,
     );
     // Bottom
     painter.rect_filled(
-        egui::Rect::from_min_max(egui::pos2(img_rect.left(), crop_screen.bottom()), img_rect.right_bottom()),
+        egui::Rect::from_min_max(
+            egui::pos2(img_rect.left(), crop_screen.bottom()),
+            img_rect.right_bottom(),
+        ),
         0.0,
         dim_color,
     );
@@ -318,7 +340,11 @@ fn draw_crop_border(ui: &egui::Ui, crop_screen: egui::Rect) {
 
 fn draw_dimensions_label(ui: &egui::Ui, crop: &CropRectPixels, crop_screen: egui::Rect) {
     let border_color = egui::Color32::from_rgb(255, 255, 0);
-    let label = format!("{}x{}", crop.width.round() as u32, crop.height.round() as u32);
+    let label = format!(
+        "{}x{}",
+        crop.width.round() as u32,
+        crop.height.round() as u32
+    );
     let label_pos = egui::pos2(crop_screen.right() - 4.0, crop_screen.bottom() + 4.0);
     ui.painter().text(
         label_pos,

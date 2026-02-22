@@ -121,10 +121,7 @@ fn auto_crop_output_path(source: &Path, w: u32, h: u32) -> PathBuf {
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("output");
-    let ext = source
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("ser");
+    let ext = source.extension().and_then(|e| e.to_str()).unwrap_or("ser");
     let parent = source.parent().unwrap_or(Path::new("."));
     parent.join(format!("{stem}_crop{w}x{h}.{ext}"))
 }

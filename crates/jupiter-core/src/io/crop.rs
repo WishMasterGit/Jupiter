@@ -18,12 +18,7 @@ pub struct CropRect {
 impl CropRect {
     /// Validate and snap the crop rect to fit within source dimensions.
     /// Snaps x/y/width/height to even values for Bayer color modes.
-    pub fn validated(
-        &self,
-        src_w: u32,
-        src_h: u32,
-        color_mode: &ColorMode,
-    ) -> Result<CropRect> {
+    pub fn validated(&self, src_w: u32, src_h: u32, color_mode: &ColorMode) -> Result<CropRect> {
         let needs_even = is_bayer(color_mode);
 
         let mut x = self.x;
@@ -71,7 +66,11 @@ pub fn crop_ser(
     mut progress: impl FnMut(usize, usize),
 ) -> Result<()> {
     let src_header = &reader.header;
-    let validated = crop.validated(src_header.width, src_header.height, &src_header.color_mode())?;
+    let validated = crop.validated(
+        src_header.width,
+        src_header.height,
+        &src_header.color_mode(),
+    )?;
 
     let mut new_header = src_header.clone();
     new_header.width = validated.width;
@@ -79,8 +78,7 @@ pub fn crop_ser(
 
     let mut writer = SerWriter::create(output, &new_header)?;
 
-    let bytes_per_pixel =
-        src_header.bytes_per_pixel_plane() * src_header.planes_per_pixel();
+    let bytes_per_pixel = src_header.bytes_per_pixel_plane() * src_header.planes_per_pixel();
     let src_row_stride = src_header.width as usize * bytes_per_pixel;
     let col_byte_offset = validated.x as usize * bytes_per_pixel;
     let crop_row_bytes = validated.width as usize * bytes_per_pixel;

@@ -137,10 +137,7 @@ pub fn print_pipeline_summary(config: &PipelineConfig, device_name: &str) {
     println!();
 }
 
-pub fn print_sharpen_summary(
-    params: &WaveletParams,
-    deconv: Option<&DeconvolutionConfig>,
-) {
+pub fn print_sharpen_summary(params: &WaveletParams, deconv: Option<&DeconvolutionConfig>) {
     let s = Styles::new();
 
     println!();
@@ -241,7 +238,8 @@ fn print_stack_sub_params(s: &Styles, method: &StackMethod) {
             println!(
                 "    {:<12}{}",
                 s.label.apply_to("Keep"),
-                s.value.apply_to(format!("{:.0}%", select_percentage * 100.0))
+                s.value
+                    .apply_to(format!("{:.0}%", select_percentage * 100.0))
             );
             println!(
                 "    {:<12}{}",
@@ -278,7 +276,8 @@ fn print_stack_sub_params(s: &Styles, method: &StackMethod) {
             println!(
                 "    {:<12}{}",
                 s.label.apply_to("Weighted"),
-                s.value.apply_to(if cfg.quality_weighted { "yes" } else { "no" })
+                s.value
+                    .apply_to(if cfg.quality_weighted { "yes" } else { "no" })
             );
         }
         StackMethod::SurfaceWarp(cfg) => {
@@ -295,7 +294,8 @@ fn print_stack_sub_params(s: &Styles, method: &StackMethod) {
             println!(
                 "    {:<12}{}",
                 s.label.apply_to("Select"),
-                s.value.apply_to(format!("{}%", (cfg.select_percentage * 100.0) as u32))
+                s.value
+                    .apply_to(format!("{}%", (cfg.select_percentage * 100.0) as u32))
             );
             println!(
                 "    {:<12}{}",

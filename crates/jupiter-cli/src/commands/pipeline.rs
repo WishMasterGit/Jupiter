@@ -5,16 +5,16 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use clap::Args;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use jupiter_core::compute::{create_backend, DevicePreference};
 use jupiter_core::color::debayer::DebayerMethod;
+use jupiter_core::compute::{create_backend, DevicePreference};
 use jupiter_core::pipeline::config::{
     AlignmentConfig, AlignmentMethod, CentroidConfig, DebayerConfig, DeconvolutionConfig,
     DeconvolutionMethod, EnhancedPhaseConfig, FilterStep, FrameSelectionConfig, MemoryStrategy,
     PipelineConfig, PsfModel, PyramidConfig, SharpeningConfig, StackMethod, StackingConfig,
 };
-use jupiter_core::stack::drizzle::DrizzleConfig;
 use jupiter_core::pipeline::{run_pipeline_reported, PipelineStage, ProgressReporter};
 use jupiter_core::sharpen::wavelet::WaveletParams;
+use jupiter_core::stack::drizzle::DrizzleConfig;
 use jupiter_core::stack::multi_point::MultiPointConfig;
 use jupiter_core::stack::sigma_clip::SigmaClipParams;
 use jupiter_core::stack::surface_warp::SurfaceWarpConfig;
@@ -379,7 +379,10 @@ fn build_config_from_args(args: &RunArgs) -> PipelineConfig {
 
     // file is always Some when --config is absent (required_unless_present)
     let input = args.file.clone().unwrap_or_default();
-    let output = args.output.clone().unwrap_or_else(|| PathBuf::from("result.tiff"));
+    let output = args
+        .output
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("result.tiff"));
 
     let debayer = if args.mono {
         None

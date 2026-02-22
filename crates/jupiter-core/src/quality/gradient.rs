@@ -7,9 +7,7 @@ use crate::color::debayer::DebayerMethod;
 use crate::error::Result;
 use crate::frame::{ColorMode, Frame, QualityScore};
 use crate::io::ser::SerReader;
-use crate::quality::scoring::{
-    rank_frames_color_streaming_generic, rank_frames_streaming_generic,
-};
+use crate::quality::scoring::{rank_frames_color_streaming_generic, rank_frames_streaming_generic};
 
 /// Compute Sobel gradient magnitude image.
 ///
@@ -25,8 +23,7 @@ pub fn gradient_magnitude_array(data: &Array2<f32>) -> Array2<f32> {
 
     for row in 1..h - 1 {
         for col in 1..w - 1 {
-            let gx = -data[[row - 1, col - 1]] as f64
-                + data[[row - 1, col + 1]] as f64
+            let gx = -data[[row - 1, col - 1]] as f64 + data[[row - 1, col + 1]] as f64
                 - 2.0 * data[[row, col - 1]] as f64
                 + 2.0 * data[[row, col + 1]] as f64
                 - data[[row + 1, col - 1]] as f64
@@ -58,8 +55,7 @@ pub fn gradient_score_array(data: &Array2<f32>) -> f64 {
 
     for row in 1..h - 1 {
         for col in 1..w - 1 {
-            let gx = -data[[row - 1, col - 1]] as f64
-                + data[[row - 1, col + 1]] as f64
+            let gx = -data[[row - 1, col - 1]] as f64 + data[[row - 1, col + 1]] as f64
                 - 2.0 * data[[row, col - 1]] as f64
                 + 2.0 * data[[row, col + 1]] as f64
                 - data[[row + 1, col - 1]] as f64
@@ -133,9 +129,7 @@ pub fn rank_frames_gradient_with_progress(
 }
 
 /// Score all frames using gradient metric by reading in batches from the SER reader.
-pub fn rank_frames_gradient_streaming(
-    reader: &SerReader,
-) -> Result<Vec<(usize, QualityScore)>> {
+pub fn rank_frames_gradient_streaming(reader: &SerReader) -> Result<Vec<(usize, QualityScore)>> {
     rank_frames_streaming_generic(reader, gradient_score, make_gradient_quality_score, None)
 }
 

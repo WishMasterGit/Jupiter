@@ -4,7 +4,9 @@ use std::time::Instant;
 use jupiter_core::frame::ColorMode;
 use jupiter_core::io::ser::SerReader;
 use jupiter_core::pipeline::{PipelineOutput, PipelineStage};
-use jupiter_core::stack::surface_warp::{surface_warp_stack, surface_warp_stack_color, SurfaceWarpConfig};
+use jupiter_core::stack::surface_warp::{
+    surface_warp_stack, surface_warp_stack_color, SurfaceWarpConfig,
+};
 
 use crate::messages::WorkerResult;
 
@@ -24,11 +26,15 @@ pub(crate) fn handle_surface_warp(
         }
     };
     send_log(tx, ctx, "Surface warp stacking...");
-    send(tx, ctx, WorkerResult::Progress {
-        stage: PipelineStage::Stacking,
-        items_done: None,
-        items_total: None,
-    });
+    send(
+        tx,
+        ctx,
+        WorkerResult::Progress {
+            stage: PipelineStage::Stacking,
+            items_done: None,
+            items_total: None,
+        },
+    );
     let start = Instant::now();
     let reader = match SerReader::open(&file_path) {
         Ok(r) => r,
@@ -46,14 +52,8 @@ pub(crate) fn handle_surface_warp(
             }
             mode => mode,
         };
-        let debayer_method = cache.debayer_method.clone().unwrap_or_default();
-        match surface_warp_stack_color(
-            &reader,
-            sw_config,
-            &color_mode,
-            &debayer_method,
-            |_| {},
-        ) {
+        let debayer_method = cache.debayer_method.unwrap_or_default();
+        match surface_warp_stack_color(&reader, sw_config, &color_mode, &debayer_method, |_| {}) {
             Ok(result) => {
                 let elapsed = start.elapsed();
                 let output = PipelineOutput::Color(result);
@@ -66,14 +66,16 @@ pub(crate) fn handle_surface_warp(
                         elapsed.as_secs_f32()
                     ),
                 );
-                send(tx, ctx, WorkerResult::StackComplete {
-                    result: output,
-                    elapsed,
-                });
+                send(
+                    tx,
+                    ctx,
+                    WorkerResult::StackComplete {
+                        result: output,
+                        elapsed,
+                    },
+                );
             }
-            Err(e) => {
-                send_error(tx, ctx, format!("Surface warp color stacking failed: {e}"))
-            }
+            Err(e) => send_error(tx, ctx, format!("Surface warp color stacking failed: {e}")),
         }
     } else {
         match surface_warp_stack(&reader, sw_config, |_| {}) {
@@ -89,10 +91,14 @@ pub(crate) fn handle_surface_warp(
                         elapsed.as_secs_f32()
                     ),
                 );
-                send(tx, ctx, WorkerResult::StackComplete {
-                    result: output,
-                    elapsed,
-                });
+                send(
+                    tx,
+                    ctx,
+                    WorkerResult::StackComplete {
+                        result: output,
+                        elapsed,
+                    },
+                );
             }
             Err(e) => send_error(tx, ctx, format!("Surface warp stacking failed: {e}")),
         }

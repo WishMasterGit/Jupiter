@@ -38,11 +38,16 @@ pub fn frame_to_display_image(frame: &Frame) -> DisplayImage {
     }
 
     let display_scale = MAX_TEXTURE_SIZE as f32 / max_dim as f32;
-    let pixels = bilinear_downscale(original_w, original_h, display_scale, |x0, x1, y0, y1, fx, fy| {
-        let v = bilinear_sample_frame(frame, x0, x1, y0, y1, fx, fy);
-        let byte = (v.clamp(0.0, 1.0) * 255.0) as u8;
-        egui::Color32::from_gray(byte)
-    });
+    let pixels = bilinear_downscale(
+        original_w,
+        original_h,
+        display_scale,
+        |x0, x1, y0, y1, fx, fy| {
+            let v = bilinear_sample_frame(frame, x0, x1, y0, y1, fx, fy);
+            let byte = (v.clamp(0.0, 1.0) * 255.0) as u8;
+            egui::Color32::from_gray(byte)
+        },
+    );
 
     let new_w = ((original_w as f32) * display_scale).round() as usize;
     let new_h = ((original_h as f32) * display_scale).round() as usize;
@@ -96,12 +101,20 @@ pub fn color_frame_to_display_image(cf: &ColorFrame) -> DisplayImage {
     }
 
     let display_scale = MAX_TEXTURE_SIZE as f32 / max_dim as f32;
-    let pixels = bilinear_downscale(original_w, original_h, display_scale, |x0, x1, y0, y1, fx, fy| {
-        let r = (bilinear_sample_frame(&cf.red, x0, x1, y0, y1, fx, fy).clamp(0.0, 1.0) * 255.0) as u8;
-        let g = (bilinear_sample_frame(&cf.green, x0, x1, y0, y1, fx, fy).clamp(0.0, 1.0) * 255.0) as u8;
-        let b = (bilinear_sample_frame(&cf.blue, x0, x1, y0, y1, fx, fy).clamp(0.0, 1.0) * 255.0) as u8;
-        egui::Color32::from_rgb(r, g, b)
-    });
+    let pixels = bilinear_downscale(
+        original_w,
+        original_h,
+        display_scale,
+        |x0, x1, y0, y1, fx, fy| {
+            let r = (bilinear_sample_frame(&cf.red, x0, x1, y0, y1, fx, fy).clamp(0.0, 1.0) * 255.0)
+                as u8;
+            let g = (bilinear_sample_frame(&cf.green, x0, x1, y0, y1, fx, fy).clamp(0.0, 1.0)
+                * 255.0) as u8;
+            let b = (bilinear_sample_frame(&cf.blue, x0, x1, y0, y1, fx, fy).clamp(0.0, 1.0)
+                * 255.0) as u8;
+            egui::Color32::from_rgb(r, g, b)
+        },
+    );
 
     let new_w = ((original_w as f32) * display_scale).round() as usize;
     let new_h = ((original_h as f32) * display_scale).round() as usize;
@@ -143,9 +156,12 @@ fn color_frame_to_color_image(cf: &ColorFrame) -> egui::ColorImage {
 /// Bilinear interpolation of a single sample from a Frame.
 fn bilinear_sample_frame(
     frame: &Frame,
-    x0: usize, x1: usize,
-    y0: usize, y1: usize,
-    fx: f32, fy: f32,
+    x0: usize,
+    x1: usize,
+    y0: usize,
+    y1: usize,
+    fx: f32,
+    fy: f32,
 ) -> f32 {
     frame.data[[y0, x0]] * (1.0 - fx) * (1.0 - fy)
         + frame.data[[y0, x1]] * fx * (1.0 - fy)

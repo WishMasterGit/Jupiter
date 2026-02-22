@@ -1,5 +1,5 @@
-pub mod config;
 mod color;
+pub mod config;
 mod helpers;
 mod mono;
 mod orchestrator;

@@ -17,11 +17,7 @@ use jupiter_core::sharpen::wavelet::{self, WaveletParams};
 use jupiter_core::stack::mean::mean_stack;
 
 /// Build a synthetic SER file with a bright square that shifts across frames.
-fn build_test_ser(
-    width: u32,
-    height: u32,
-    num_frames: usize,
-) -> Vec<u8> {
+fn build_test_ser(width: u32, height: u32, num_frames: usize) -> Vec<u8> {
     let mut buf = common::build_ser_header(width, height, num_frames);
 
     // Generate frames: a bright square that shifts slightly between frames
@@ -178,7 +174,11 @@ fn test_align_stack_sharpen_manual_pipeline() {
 
     // Select top 50%
     let keep = 5;
-    let selected: Vec<_> = ranked.iter().take(keep).map(|(i, _)| frames[*i].clone()).collect();
+    let selected: Vec<_> = ranked
+        .iter()
+        .take(keep)
+        .map(|(i, _)| frames[*i].clone())
+        .collect();
     assert_eq!(selected.len(), 5);
 
     // Align to best frame
@@ -196,7 +196,11 @@ fn test_align_stack_sharpen_manual_pipeline() {
 
     // Stacked image should have non-zero content
     let center_val = stacked.data[[32, 32]];
-    assert!(center_val > 0.1, "Center should be bright, got {}", center_val);
+    assert!(
+        center_val > 0.1,
+        "Center should be bright, got {}",
+        center_val
+    );
 
     // Sharpen
     let params = WaveletParams {

@@ -14,17 +14,21 @@ pub(super) fn debayer_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
         .checkbox(&mut app.config.debayer_enabled, "Enable debayering")
         .changed()
     {
-        app.ui_state.stages.mark_dirty_from(PipelineStage::QualityAssessment);
+        app.ui_state
+            .stages
+            .mark_dirty_from(PipelineStage::QualityAssessment);
     }
 
-    if app.config.debayer_enabled {
-        if crate::panels::enum_combo(
+    if app.config.debayer_enabled
+        && crate::panels::enum_combo(
             ui,
             "Debayer Method",
             &mut app.config.debayer_method,
             &[DebayerMethod::Bilinear, DebayerMethod::MalvarHeCutler],
-        ) {
-            app.ui_state.stages.mark_dirty_from(PipelineStage::QualityAssessment);
-        }
+        )
+    {
+        app.ui_state
+            .stages
+            .mark_dirty_from(PipelineStage::QualityAssessment);
     }
 }

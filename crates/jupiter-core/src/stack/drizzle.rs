@@ -198,7 +198,14 @@ pub fn drizzle_stack_with_progress(
             .zip(frame_weights.par_iter())
             .map(|((frame, offset), &weight)| {
                 let mut acc = DrizzleAccumulator::new(h, w, config.scale);
-                drizzle_frame_into(&frame.data, offset, config.scale, config.pixfrac, weight, &mut acc);
+                drizzle_frame_into(
+                    &frame.data,
+                    offset,
+                    config.scale,
+                    config.pixfrac,
+                    weight,
+                    &mut acc,
+                );
                 let completed = done.fetch_add(1, Ordering::Relaxed) + 1;
                 on_progress(completed);
                 acc
@@ -213,9 +220,20 @@ pub fn drizzle_stack_with_progress(
     } else {
         // Sequential: single accumulator.
         let mut acc = DrizzleAccumulator::new(h, w, config.scale);
-        for (i, ((frame, offset), &weight)) in frames.iter().zip(offsets.iter()).zip(frame_weights.iter()).enumerate()
+        for (i, ((frame, offset), &weight)) in frames
+            .iter()
+            .zip(offsets.iter())
+            .zip(frame_weights.iter())
+            .enumerate()
         {
-            drizzle_frame_into(&frame.data, offset, config.scale, config.pixfrac, weight, &mut acc);
+            drizzle_frame_into(
+                &frame.data,
+                offset,
+                config.scale,
+                config.pixfrac,
+                weight,
+                &mut acc,
+            );
             on_progress(i + 1);
         }
         acc

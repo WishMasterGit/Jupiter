@@ -423,10 +423,7 @@ pub fn bilinear_sample(data: &Array2<f32>, y: f64, x: f64) -> f32 {
     let v01 = sample(y1, x0);
     let v11 = sample(y1, x1);
 
-    v00 * (1.0 - fx) * (1.0 - fy)
-        + v10 * fx * (1.0 - fy)
-        + v01 * (1.0 - fx) * fy
-        + v11 * fx * fy
+    v00 * (1.0 - fx) * (1.0 - fy) + v10 * fx * (1.0 - fy) + v01 * (1.0 - fx) * fy + v11 * fx * fy
 }
 
 // ---------------------------------------------------------------------------
@@ -447,8 +444,7 @@ fn convolve_rows_clamped(data: &Array2<f32>, kernel: &[f32]) -> Array2<f32> {
                         for (k, &kv) in kernel.iter().enumerate() {
                             let c = (col as isize + k as isize - radius as isize)
                                 .max(0)
-                                .min(w as isize - 1)
-                                as usize;
+                                .min(w as isize - 1) as usize;
                             sum += data[[row, c]] * kv;
                         }
                         sum
@@ -496,8 +492,7 @@ fn convolve_cols_clamped(data: &Array2<f32>, kernel: &[f32]) -> Array2<f32> {
                         for (k, &kv) in kernel.iter().enumerate() {
                             let r = (row as isize + k as isize - radius as isize)
                                 .max(0)
-                                .min(h as isize - 1)
-                                as usize;
+                                .min(h as isize - 1) as usize;
                             sum += data[[r, col]] * kv;
                         }
                         sum

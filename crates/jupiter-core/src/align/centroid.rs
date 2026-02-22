@@ -63,12 +63,11 @@ fn compute_centroid(data: &Array2<f32>, threshold: f32) -> (f64, f64) {
             })
             .collect();
 
-        let (total_r, total_c, total_w) =
-            row_sums
-                .into_iter()
-                .fold((0.0, 0.0, 0.0), |(ar, ac, aw), (r, c, w)| {
-                    (ar + r, ac + c, aw + w)
-                });
+        let (total_r, total_c, total_w) = row_sums
+            .into_iter()
+            .fold((0.0, 0.0, 0.0), |(ar, ac, aw), (r, c, w)| {
+                (ar + r, ac + c, aw + w)
+            });
 
         if total_w > 0.0 {
             (total_r / total_w, total_c / total_w)

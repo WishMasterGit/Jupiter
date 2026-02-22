@@ -34,7 +34,13 @@ pub(crate) fn send_log(
     ctx: &egui::Context,
     msg: impl Into<String>,
 ) {
-    send(tx, ctx, WorkerResult::Log { message: msg.into() });
+    send(
+        tx,
+        ctx,
+        WorkerResult::Log {
+            message: msg.into(),
+        },
+    );
 }
 
 pub(crate) fn send_error(
@@ -42,7 +48,13 @@ pub(crate) fn send_error(
     ctx: &egui::Context,
     msg: impl Into<String>,
 ) {
-    send(tx, ctx, WorkerResult::Error { message: msg.into() });
+    send(
+        tx,
+        ctx,
+        WorkerResult::Error {
+            message: msg.into(),
+        },
+    );
 }
 
 /// Create a progress callback that sends `WorkerResult::Progress` messages.

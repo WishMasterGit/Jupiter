@@ -50,11 +50,15 @@ pub(crate) fn handle_standard(
 
         send_log(tx, ctx, "Stacking color channels...");
         let color_frame_count = aligned_color.len();
-        send(tx, ctx, WorkerResult::Progress {
-            stage: PipelineStage::Stacking,
-            items_done: Some(0),
-            items_total: Some(color_frame_count),
-        });
+        send(
+            tx,
+            ctx,
+            WorkerResult::Progress {
+                stage: PipelineStage::Stacking,
+                items_done: Some(0),
+                items_total: Some(color_frame_count),
+            },
+        );
 
         let red_frames: Vec<Frame> = aligned_color.iter().map(|cf| cf.red.clone()).collect();
         let green_frames: Vec<Frame> = aligned_color.iter().map(|cf| cf.green.clone()).collect();
@@ -64,9 +68,7 @@ pub(crate) fn handle_standard(
             make_progress_callback(tx, ctx, PipelineStage::Stacking, color_frame_count);
 
         let stack_fn =
-            |frames: &[Frame],
-             on_progress: &dyn Fn(usize)|
-             -> jupiter_core::error::Result<Frame> {
+            |frames: &[Frame], on_progress: &dyn Fn(usize)| -> jupiter_core::error::Result<Frame> {
                 match method {
                     StackMethod::Mean => mean_stack_with_progress(frames, on_progress),
                     StackMethod::Median => {
@@ -104,15 +106,16 @@ pub(crate) fn handle_standard(
                 send_log(
                     tx,
                     ctx,
-                    format!(
-                        "Color stacking complete in {:.1}s",
-                        elapsed.as_secs_f32()
-                    ),
+                    format!("Color stacking complete in {:.1}s", elapsed.as_secs_f32()),
                 );
-                send(tx, ctx, WorkerResult::StackComplete {
-                    result: output,
-                    elapsed,
-                });
+                send(
+                    tx,
+                    ctx,
+                    WorkerResult::StackComplete {
+                        result: output,
+                        elapsed,
+                    },
+                );
             }
             _ => send_error(tx, ctx, "Color stacking failed"),
         }
@@ -126,11 +129,15 @@ pub(crate) fn handle_standard(
 
         send_log(tx, ctx, "Stacking...");
         let frame_count = aligned.len();
-        send(tx, ctx, WorkerResult::Progress {
-            stage: PipelineStage::Stacking,
-            items_done: Some(0),
-            items_total: Some(frame_count),
-        });
+        send(
+            tx,
+            ctx,
+            WorkerResult::Progress {
+                stage: PipelineStage::Stacking,
+                items_done: Some(0),
+                items_total: Some(frame_count),
+            },
+        );
 
         let stacking_progress =
             make_progress_callback(tx, ctx, PipelineStage::Stacking, frame_count);
@@ -160,10 +167,14 @@ pub(crate) fn handle_standard(
                     ctx,
                     format!("Stacking complete in {:.1}s", elapsed.as_secs_f32()),
                 );
-                send(tx, ctx, WorkerResult::StackComplete {
-                    result: output,
-                    elapsed,
-                });
+                send(
+                    tx,
+                    ctx,
+                    WorkerResult::StackComplete {
+                        result: output,
+                        elapsed,
+                    },
+                );
             }
             Err(e) => send_error(tx, ctx, format!("Stacking failed: {e}")),
         }

@@ -136,11 +136,15 @@ pub(super) fn handle_align(
         ctx,
         format!("Selected {frame_count}/{total} frames, aligning..."),
     );
-    send(tx, ctx, WorkerResult::Progress {
-        stage: PipelineStage::Alignment,
-        items_done: Some(0),
-        items_total: Some(frame_count),
-    });
+    send(
+        tx,
+        ctx,
+        WorkerResult::Progress {
+            stage: PipelineStage::Alignment,
+            items_done: Some(0),
+            items_total: Some(frame_count),
+        },
+    );
 
     let backend = create_backend(device);
     let reference = &selected_frames[0];
@@ -157,11 +161,15 @@ pub(super) fn handle_align(
         )
         .unwrap_or_default();
         offsets.push(offset);
-        send(tx, ctx, WorkerResult::Progress {
-            stage: PipelineStage::Alignment,
-            items_done: Some(i + 1),
-            items_total: Some(frame_count),
-        });
+        send(
+            tx,
+            ctx,
+            WorkerResult::Progress {
+                stage: PipelineStage::Alignment,
+                items_done: Some(i + 1),
+                items_total: Some(frame_count),
+            },
+        );
     }
 
     // Cache alignment results
@@ -180,8 +188,12 @@ pub(super) fn handle_align(
             elapsed.as_secs_f32()
         ),
     );
-    send(tx, ctx, WorkerResult::AlignComplete {
-        frame_count,
-        elapsed,
-    });
+    send(
+        tx,
+        ctx,
+        WorkerResult::AlignComplete {
+            frame_count,
+            elapsed,
+        },
+    );
 }

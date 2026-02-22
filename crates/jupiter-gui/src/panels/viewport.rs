@@ -9,9 +9,11 @@ pub fn show(ctx: &egui::Context, app: &mut JupiterApp) {
         let rect = ui.available_rect_before_wrap();
         paint_background(ui, rect);
 
-        let texture_info = app.viewport.texture.as_ref().map(|t| {
-            (t.id(), [t.size()[0] as f32, t.size()[1] as f32])
-        });
+        let texture_info = app
+            .viewport
+            .texture
+            .as_ref()
+            .map(|t| (t.id(), [t.size()[0] as f32, t.size()[1] as f32]));
 
         if let Some((texture_id, tex_size)) = texture_info {
             let image_size = resolve_image_size(app, tex_size);
@@ -25,7 +27,12 @@ pub fn show(ctx: &egui::Context, app: &mut JupiterApp) {
             }
 
             if response.double_clicked() {
-                fit_to_rect(&mut app.viewport.zoom, &mut app.viewport.pan_offset, image_size, rect);
+                fit_to_rect(
+                    &mut app.viewport.zoom,
+                    &mut app.viewport.pan_offset,
+                    image_size,
+                    rect,
+                );
             }
 
             let img_rect = compute_img_rect(rect, image_size, app);
@@ -55,12 +62,7 @@ fn resolve_image_size(app: &JupiterApp, tex_size: [f32; 2]) -> egui::Vec2 {
     }
 }
 
-fn handle_zoom(
-    ui: &egui::Ui,
-    response: &egui::Response,
-    app: &mut JupiterApp,
-    rect: egui::Rect,
-) {
+fn handle_zoom(ui: &egui::Ui, response: &egui::Response, app: &mut JupiterApp, rect: egui::Rect) {
     let scroll_delta = ui.input(|i| i.smooth_scroll_delta.y);
     if scroll_delta == 0.0 || !response.hovered() {
         return;
@@ -82,8 +84,7 @@ fn handle_zoom(
 
 fn handle_pan(ui: &egui::Ui, response: &egui::Response, app: &mut JupiterApp) {
     if response.dragged_by(egui::PointerButton::Middle)
-        || (response.dragged_by(egui::PointerButton::Primary)
-            && ui.input(|i| i.modifiers.command))
+        || (response.dragged_by(egui::PointerButton::Primary) && ui.input(|i| i.modifiers.command))
     {
         app.viewport.pan_offset += response.drag_delta();
     }

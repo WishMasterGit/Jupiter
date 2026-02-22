@@ -86,7 +86,12 @@ fn test_crop_8bit_mono() {
     let src = write_temp(&ser_data);
 
     let reader = SerReader::open(src.path()).unwrap();
-    let crop = CropRect { x: 1, y: 1, width: 2, height: 2 };
+    let crop = CropRect {
+        x: 1,
+        y: 1,
+        width: 2,
+        height: 2,
+    };
 
     let dst = NamedTempFile::new().unwrap();
     crop_ser(&reader, dst.path(), &crop, |_, _| {}).unwrap();
@@ -119,7 +124,12 @@ fn test_crop_16bit_mono() {
     let src = write_temp(&ser_data);
 
     let reader = SerReader::open(src.path()).unwrap();
-    let crop = CropRect { x: 0, y: 0, width: 2, height: 2 };
+    let crop = CropRect {
+        x: 0,
+        y: 0,
+        width: 2,
+        height: 2,
+    };
 
     let dst = NamedTempFile::new().unwrap();
     crop_ser(&reader, dst.path(), &crop, |_, _| {}).unwrap();
@@ -151,10 +161,13 @@ fn test_crop_bayer_snaps_to_even() {
     assert_eq!(reader.header.color_mode(), ColorMode::BayerRGGB);
 
     // Request crop at odd x=1, y=1, 3x3 — should snap to 0,0, 2x2
-    let crop = CropRect { x: 1, y: 1, width: 3, height: 3 };
-    let validated = crop
-        .validated(w, h, &reader.header.color_mode())
-        .unwrap();
+    let crop = CropRect {
+        x: 1,
+        y: 1,
+        width: 3,
+        height: 3,
+    };
+    let validated = crop.validated(w, h, &reader.header.color_mode()).unwrap();
     assert_eq!(validated.x, 0);
     assert_eq!(validated.y, 0);
     assert_eq!(validated.width, 2);
@@ -172,11 +185,21 @@ fn test_crop_out_of_bounds_rejected() {
     let reader = SerReader::open(src.path()).unwrap();
 
     // Entirely out of bounds
-    let crop = CropRect { x: 5, y: 0, width: 2, height: 2 };
+    let crop = CropRect {
+        x: 5,
+        y: 0,
+        width: 2,
+        height: 2,
+    };
     assert!(crop.validated(w, h, &reader.header.color_mode()).is_err());
 
     // Partially out of bounds
-    let crop = CropRect { x: 3, y: 3, width: 2, height: 2 };
+    let crop = CropRect {
+        x: 3,
+        y: 3,
+        width: 2,
+        height: 2,
+    };
     assert!(crop.validated(w, h, &reader.header.color_mode()).is_err());
 }
 
@@ -190,18 +213,16 @@ fn test_crop_multi_frame_with_timestamps() {
     let frame3: Vec<u8> = (20..28).collect();
     let timestamps = vec![100u64, 200, 300];
 
-    let ser_data = build_synthetic_ser(
-        w,
-        h,
-        8,
-        0,
-        &[frame1, frame2, frame3],
-        Some(&timestamps),
-    );
+    let ser_data = build_synthetic_ser(w, h, 8, 0, &[frame1, frame2, frame3], Some(&timestamps));
     let src = write_temp(&ser_data);
 
     let reader = SerReader::open(src.path()).unwrap();
-    let crop = CropRect { x: 1, y: 0, width: 2, height: 2 };
+    let crop = CropRect {
+        x: 1,
+        y: 0,
+        width: 2,
+        height: 2,
+    };
 
     let dst = NamedTempFile::new().unwrap();
     let mut progress_calls = Vec::new();
@@ -250,7 +271,12 @@ fn test_crop_round_trip() {
     let src = write_temp(&ser_data);
 
     let reader = SerReader::open(src.path()).unwrap();
-    let crop = CropRect { x: 1, y: 1, width: 4, height: 2 };
+    let crop = CropRect {
+        x: 1,
+        y: 1,
+        width: 4,
+        height: 2,
+    };
 
     let dst = NamedTempFile::new().unwrap();
     crop_ser(&reader, dst.path(), &crop, |_, _| {}).unwrap();
@@ -279,7 +305,12 @@ fn test_crop_preserves_metadata() {
     let src = write_temp(&ser_data);
 
     let reader = SerReader::open(src.path()).unwrap();
-    let crop = CropRect { x: 0, y: 0, width: 2, height: 2 };
+    let crop = CropRect {
+        x: 0,
+        y: 0,
+        width: 2,
+        height: 2,
+    };
 
     let dst = NamedTempFile::new().unwrap();
     crop_ser(&reader, dst.path(), &crop, |_, _| {}).unwrap();

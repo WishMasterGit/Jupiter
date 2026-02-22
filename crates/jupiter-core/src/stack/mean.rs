@@ -11,10 +11,7 @@ pub fn mean_stack(frames: &[Frame]) -> Result<Frame> {
 /// Stack frames by computing the mean at each pixel, with per-frame progress.
 ///
 /// `on_progress` is called with the cumulative number of frames accumulated.
-pub fn mean_stack_with_progress(
-    frames: &[Frame],
-    on_progress: impl Fn(usize),
-) -> Result<Frame> {
+pub fn mean_stack_with_progress(frames: &[Frame], on_progress: impl Fn(usize)) -> Result<Frame> {
     if frames.is_empty() {
         return Err(JupiterError::EmptySequence);
     }

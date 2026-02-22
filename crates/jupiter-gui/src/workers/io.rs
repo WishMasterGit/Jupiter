@@ -27,10 +27,14 @@ pub(super) fn handle_load_file_info(
     match SerReader::open(path) {
         Ok(reader) => {
             let info = reader.source_info(path);
-            send(tx, ctx, WorkerResult::FileInfo {
-                path: path.to_path_buf(),
-                info,
-            });
+            send(
+                tx,
+                ctx,
+                WorkerResult::FileInfo {
+                    path: path.to_path_buf(),
+                    info,
+                },
+            );
         }
         Err(e) => send_error(tx, ctx, format!("Failed to open file: {e}")),
     }
@@ -56,11 +60,7 @@ pub(super) fn handle_preview_frame(
         match reader.read_frame_color(frame_index, &DebayerMethod::Bilinear) {
             Ok(cf) => PipelineOutput::Color(cf),
             Err(e) => {
-                send_error(
-                    tx,
-                    ctx,
-                    format!("Failed to read frame {frame_index}: {e}"),
-                );
+                send_error(tx, ctx, format!("Failed to read frame {frame_index}: {e}"));
                 return;
             }
         }
@@ -68,11 +68,7 @@ pub(super) fn handle_preview_frame(
         match reader.read_frame_rgb(frame_index) {
             Ok(cf) => PipelineOutput::Color(cf),
             Err(e) => {
-                send_error(
-                    tx,
-                    ctx,
-                    format!("Failed to read frame {frame_index}: {e}"),
-                );
+                send_error(tx, ctx, format!("Failed to read frame {frame_index}: {e}"));
                 return;
             }
         }
@@ -80,20 +76,20 @@ pub(super) fn handle_preview_frame(
         match reader.read_frame(frame_index) {
             Ok(frame) => PipelineOutput::Mono(frame),
             Err(e) => {
-                send_error(
-                    tx,
-                    ctx,
-                    format!("Failed to read frame {frame_index}: {e}"),
-                );
+                send_error(tx, ctx, format!("Failed to read frame {frame_index}: {e}"));
                 return;
             }
         }
     };
 
-    send(tx, ctx, WorkerResult::FramePreview {
-        output,
-        index: frame_index,
-    });
+    send(
+        tx,
+        ctx,
+        WorkerResult::FramePreview {
+            output,
+            index: frame_index,
+        },
+    );
 }
 
 pub(super) fn handle_save_image(
@@ -118,9 +114,13 @@ pub(super) fn handle_save_image(
     match result {
         Ok(()) => {
             send_log(tx, ctx, format!("Saved to {}", path.display()));
-            send(tx, ctx, WorkerResult::ImageSaved {
-                path: path.to_path_buf(),
-            });
+            send(
+                tx,
+                ctx,
+                WorkerResult::ImageSaved {
+                    path: path.to_path_buf(),
+                },
+            );
         }
         Err(e) => send_error(tx, ctx, format!("Failed to save: {e}")),
     }
@@ -278,10 +278,14 @@ pub(super) fn handle_crop_and_save(
                     output_path.display()
                 ),
             );
-            send(tx, ctx, WorkerResult::CropComplete {
-                output_path: output_path.to_path_buf(),
-                elapsed,
-            });
+            send(
+                tx,
+                ctx,
+                WorkerResult::CropComplete {
+                    output_path: output_path.to_path_buf(),
+                    elapsed,
+                },
+            );
         }
         Err(e) => send_error(tx, ctx, format!("Crop failed: {e}")),
     }
@@ -345,10 +349,14 @@ pub(super) fn handle_auto_crop_and_save(
                     output_path.display()
                 ),
             );
-            send(tx, ctx, WorkerResult::CropComplete {
-                output_path,
-                elapsed,
-            });
+            send(
+                tx,
+                ctx,
+                WorkerResult::CropComplete {
+                    output_path,
+                    elapsed,
+                },
+            );
         }
         Err(e) => send_error(tx, ctx, format!("Auto-crop failed: {e}")),
     }
@@ -360,10 +368,7 @@ fn auto_crop_output_path(source: &Path, crop_w: u32, crop_h: u32) -> PathBuf {
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("output");
-    let ext = source
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("ser");
+    let ext = source.extension().and_then(|e| e.to_str()).unwrap_or("ser");
     let parent = source.parent().unwrap_or(Path::new("."));
     parent.join(format!("{stem}_crop{crop_w}x{crop_h}.{ext}"))
 }

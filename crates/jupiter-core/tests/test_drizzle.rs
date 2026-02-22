@@ -151,18 +151,9 @@ fn test_drizzle_multiple_frames_converge() {
     let offsets = vec![
         AlignmentOffset { dx: 0.0, dy: 0.0 },
         AlignmentOffset { dx: 0.3, dy: 0.1 },
-        AlignmentOffset {
-            dx: -0.2,
-            dy: 0.4,
-        },
-        AlignmentOffset {
-            dx: 0.5,
-            dy: -0.3,
-        },
-        AlignmentOffset {
-            dx: -0.1,
-            dy: -0.2,
-        },
+        AlignmentOffset { dx: -0.2, dy: 0.4 },
+        AlignmentOffset { dx: 0.5, dy: -0.3 },
+        AlignmentOffset { dx: -0.1, dy: -0.2 },
     ];
     let frames: Vec<Frame> = (0..5).map(|_| Frame::new(data.clone(), 8)).collect();
 

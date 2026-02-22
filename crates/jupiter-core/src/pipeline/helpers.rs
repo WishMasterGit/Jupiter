@@ -111,9 +111,7 @@ pub(super) fn compute_offsets_with_progress(
 }
 
 /// Split a slice of color frames into per-channel frame vectors (R, G, B).
-pub(super) fn split_color_channels(
-    frames: &[ColorFrame],
-) -> (Vec<Frame>, Vec<Frame>, Vec<Frame>) {
+pub(super) fn split_color_channels(frames: &[ColorFrame]) -> (Vec<Frame>, Vec<Frame>, Vec<Frame>) {
     let red: Vec<Frame> = frames.iter().map(|cf| cf.red.clone()).collect();
     let green: Vec<Frame> = frames.iter().map(|cf| cf.green.clone()).collect();
     let blue: Vec<Frame> = frames.iter().map(|cf| cf.blue.clone()).collect();

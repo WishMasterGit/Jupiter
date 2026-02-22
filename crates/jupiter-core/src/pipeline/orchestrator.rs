@@ -11,8 +11,8 @@ use crate::io::ser::SerReader;
 use crate::stack::multi_point::{multi_point_stack, multi_point_stack_color};
 use crate::stack::surface_warp::{surface_warp_stack, surface_warp_stack_color};
 
-use super::config::{MemoryStrategy, PipelineConfig, StackMethod};
 use super::color::apply_post_stack_color;
+use super::config::{MemoryStrategy, PipelineConfig, StackMethod};
 use super::mono::apply_post_stack_mono;
 use super::types::{NoOpReporter, PipelineOutput, PipelineStage, ProgressReporter};
 

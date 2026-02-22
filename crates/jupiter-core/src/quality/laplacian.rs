@@ -7,9 +7,7 @@ use crate::color::debayer::DebayerMethod;
 use crate::error::Result;
 use crate::frame::{ColorMode, Frame, QualityScore};
 use crate::io::ser::SerReader;
-use crate::quality::scoring::{
-    rank_frames_color_streaming_generic, rank_frames_streaming_generic,
-};
+use crate::quality::scoring::{rank_frames_color_streaming_generic, rank_frames_streaming_generic};
 
 /// Compute Laplacian variance of a frame — higher means sharper.
 ///
@@ -99,7 +97,12 @@ pub fn select_best(frames: &[Frame], percentage: f32) -> Vec<usize> {
 
 /// Score all frames by reading them in batches from the SER reader.
 pub fn rank_frames_streaming(reader: &SerReader) -> Result<Vec<(usize, QualityScore)>> {
-    rank_frames_streaming_generic(reader, laplacian_variance, make_laplacian_quality_score, None)
+    rank_frames_streaming_generic(
+        reader,
+        laplacian_variance,
+        make_laplacian_quality_score,
+        None,
+    )
 }
 
 /// Score all frames streaming with per-frame progress reporting.

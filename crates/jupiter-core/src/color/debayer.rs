@@ -175,10 +175,7 @@ fn avg_cross(raw: &Array2<f32>, r: isize, c: isize) -> f32 {
 /// Average of 4 diagonal neighbours.
 #[inline]
 fn avg_diagonal(raw: &Array2<f32>, r: isize, c: isize) -> f32 {
-    (px(raw, r - 1, c - 1)
-        + px(raw, r - 1, c + 1)
-        + px(raw, r + 1, c - 1)
-        + px(raw, r + 1, c + 1))
+    (px(raw, r - 1, c - 1) + px(raw, r - 1, c + 1) + px(raw, r + 1, c - 1) + px(raw, r + 1, c + 1))
         * 0.25
 }
 
@@ -245,7 +242,13 @@ const MHC_RB_AT_BR: [[i32; 5]; 5] = [
 
 /// Apply a 5x5 i32 kernel centred at (r,c) then divide by `divisor`.
 #[inline]
-fn apply_kernel(raw: &Array2<f32>, r: isize, c: isize, kernel: &[[i32; 5]; 5], divisor: f32) -> f32 {
+fn apply_kernel(
+    raw: &Array2<f32>,
+    r: isize,
+    c: isize,
+    kernel: &[[i32; 5]; 5],
+    divisor: f32,
+) -> f32 {
     let mut sum = 0.0_f32;
     for (kr, krow) in kernel.iter().enumerate() {
         for (kc, &kval) in krow.iter().enumerate() {

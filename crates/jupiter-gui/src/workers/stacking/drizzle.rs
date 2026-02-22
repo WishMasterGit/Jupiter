@@ -2,9 +2,9 @@ use std::sync::mpsc;
 use std::time::Instant;
 
 use jupiter_core::frame::{ColorFrame, Frame};
-use jupiter_core::stack::drizzle::DrizzleConfig;
 use jupiter_core::pipeline::{PipelineOutput, PipelineStage};
 use jupiter_core::stack::drizzle::drizzle_stack_with_progress;
+use jupiter_core::stack::drizzle::DrizzleConfig;
 
 use crate::messages::WorkerResult;
 
@@ -35,11 +35,15 @@ pub(crate) fn handle_drizzle(
     let frame_count = selected_frames.len();
 
     send_log(tx, ctx, "Drizzle stacking...");
-    send(tx, ctx, WorkerResult::Progress {
-        stage: PipelineStage::Stacking,
-        items_done: Some(0),
-        items_total: Some(frame_count),
-    });
+    send(
+        tx,
+        ctx,
+        WorkerResult::Progress {
+            stage: PipelineStage::Stacking,
+            items_done: Some(0),
+            items_total: Some(frame_count),
+        },
+    );
 
     let scores = if drizzle_config.quality_weighted {
         cache.selected_quality_scores.as_deref()
@@ -47,13 +51,11 @@ pub(crate) fn handle_drizzle(
         None
     };
 
-    let drizzle_progress =
-        make_progress_callback(tx, ctx, PipelineStage::Stacking, frame_count);
+    let drizzle_progress = make_progress_callback(tx, ctx, PipelineStage::Stacking, frame_count);
 
     if let Some(ref color_frames) = cache.selected_color_frames {
         let red_frames: Vec<Frame> = color_frames.iter().map(|cf| cf.red.clone()).collect();
-        let green_frames: Vec<Frame> =
-            color_frames.iter().map(|cf| cf.green.clone()).collect();
+        let green_frames: Vec<Frame> = color_frames.iter().map(|cf| cf.green.clone()).collect();
         let blue_frames: Vec<Frame> = color_frames.iter().map(|cf| cf.blue.clone()).collect();
 
         let (dr, (dg, db)) = rayon::join(
@@ -103,10 +105,14 @@ pub(crate) fn handle_drizzle(
                     ctx,
                     format!("Color drizzle complete in {:.1}s", elapsed.as_secs_f32()),
                 );
-                send(tx, ctx, WorkerResult::StackComplete {
-                    result: output,
-                    elapsed,
-                });
+                send(
+                    tx,
+                    ctx,
+                    WorkerResult::StackComplete {
+                        result: output,
+                        elapsed,
+                    },
+                );
             }
             _ => send_error(tx, ctx, "Color drizzle stacking failed"),
         }
@@ -127,10 +133,14 @@ pub(crate) fn handle_drizzle(
                     ctx,
                     format!("Drizzle complete in {:.1}s", elapsed.as_secs_f32()),
                 );
-                send(tx, ctx, WorkerResult::StackComplete {
-                    result: output,
-                    elapsed,
-                });
+                send(
+                    tx,
+                    ctx,
+                    WorkerResult::StackComplete {
+                        result: output,
+                        elapsed,
+                    },
+                );
             }
             Err(e) => send_error(tx, ctx, format!("Drizzle stacking failed: {e}")),
         }

@@ -23,7 +23,9 @@ pub(super) fn score_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
         &mut app.config.quality_metric,
         &[QualityMetric::Laplacian, QualityMetric::Gradient],
     ) {
-        app.ui_state.stages.mark_dirty_from(PipelineStage::QualityAssessment);
+        app.ui_state
+            .stages
+            .mark_dirty_from(PipelineStage::QualityAssessment);
     }
 
     // Score button
@@ -48,7 +50,11 @@ pub(super) fn score_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
     // Quality score chart
     if !app.ui_state.ranked_preview.is_empty() {
         ui.add_space(4.0);
-        quality_chart(ui, &app.ui_state.ranked_preview, app.config.select_percentage);
+        quality_chart(
+            ui,
+            &app.ui_state.ranked_preview,
+            app.config.select_percentage,
+        );
     }
 }
 

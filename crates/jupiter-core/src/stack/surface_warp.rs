@@ -141,8 +141,7 @@ pub fn interpolate_shift_field(
             let dy10 = shift_dy_grid[[ri0, ci1]];
             let dy01 = shift_dy_grid[[ri1, ci0]];
             let dy11 = shift_dy_grid[[ri1, ci1]];
-            field_dy[[row, col]] =
-                dy00 * (1.0 - fx) * (1.0 - fy)
+            field_dy[[row, col]] = dy00 * (1.0 - fx) * (1.0 - fy)
                 + dy10 * fx * (1.0 - fy)
                 + dy01 * (1.0 - fx) * fy
                 + dy11 * fx * fy;
@@ -151,8 +150,7 @@ pub fn interpolate_shift_field(
             let dx10 = shift_dx_grid[[ri0, ci1]];
             let dx01 = shift_dx_grid[[ri1, ci0]];
             let dx11 = shift_dx_grid[[ri1, ci1]];
-            field_dx[[row, col]] =
-                dx00 * (1.0 - fx) * (1.0 - fy)
+            field_dx[[row, col]] = dx00 * (1.0 - fx) * (1.0 - fy)
                 + dx10 * fx * (1.0 - fy)
                 + dx01 * (1.0 - fx) * fy
                 + dx11 * fx * fy;
@@ -232,17 +230,11 @@ fn compute_local_shifts(
 
     for ap in &grid.points {
         let ref_search = extract_region(reference, ap.cy, ap.cx, search_half);
-        let tgt_search = extract_region_shifted(
-            frame_data,
-            ap.cy,
-            ap.cx,
-            search_half,
-            global_offset,
-        );
+        let tgt_search =
+            extract_region_shifted(frame_data, ap.cy, ap.cx, search_half, global_offset);
 
-        let (local_offset, confidence) =
-            compute_offset_with_confidence(&ref_search, &tgt_search)
-                .unwrap_or((AlignmentOffset::default(), 0.0));
+        let (local_offset, confidence) = compute_offset_with_confidence(&ref_search, &tgt_search)
+            .unwrap_or((AlignmentOffset::default(), 0.0));
 
         if confidence >= MIN_CORRELATION_CONFIDENCE {
             shifts.insert(ap.index, local_offset);
@@ -309,9 +301,7 @@ where
     let grid = build_ap_grid(&mean_ref, &mp_config);
     info!("Surface warp: {} alignment points", grid.points.len());
     if grid.points.is_empty() {
-        return Err(JupiterError::Pipeline(
-            "No alignment points created".into(),
-        ));
+        return Err(JupiterError::Pipeline("No alignment points created".into()));
     }
 
     // Step 4: Score + select
@@ -336,13 +326,8 @@ where
             config.search_radius,
         );
 
-        let (field_dy, field_dx) = interpolate_shift_field(
-            &grid,
-            &local_shifts,
-            &global_offsets[frame_idx],
-            h,
-            w,
-        );
+        let (field_dy, field_dx) =
+            interpolate_shift_field(&grid, &local_shifts, &global_offsets[frame_idx], h, w);
 
         let warped = warp_frame(&frame.data, &field_dy, &field_dx);
 
@@ -390,7 +375,10 @@ where
     let bit_depth = ref_color.red.original_bit_depth;
 
     // Step 2: Global alignment on luminance
-    info!("Surface warp color: global alignment of {} frames", total_frames);
+    info!(
+        "Surface warp color: global alignment of {} frames",
+        total_frames
+    );
     let rest_offsets: Vec<Result<AlignmentOffset>> = (1..total_frames)
         .into_par_iter()
         .map(|i| {
@@ -423,19 +411,12 @@ where
     let grid = build_ap_grid(&mean_ref, &mp_config);
     info!("Surface warp color: {} alignment points", grid.points.len());
     if grid.points.is_empty() {
-        return Err(JupiterError::Pipeline(
-            "No alignment points created".into(),
-        ));
+        return Err(JupiterError::Pipeline("No alignment points created".into()));
     }
 
     // Step 5: Score + select (on luminance)
-    let selected = score_and_select_frames_color(
-        reader,
-        &global_offsets,
-        config,
-        color_mode,
-        debayer_method,
-    )?;
+    let selected =
+        score_and_select_frames_color(reader, &global_offsets, config, color_mode, debayer_method)?;
     let frame_count = selected.len();
     info!("Surface warp color: selected {} frames", frame_count);
     on_progress(0.3);
@@ -460,13 +441,8 @@ where
             config.search_radius,
         );
 
-        let (field_dy, field_dx) = interpolate_shift_field(
-            &grid,
-            &local_shifts,
-            &global_offsets[frame_idx],
-            h,
-            w,
-        );
+        let (field_dy, field_dx) =
+            interpolate_shift_field(&grid, &local_shifts, &global_offsets[frame_idx], h, w);
 
         // Warp each channel
         let warped_r = warp_frame(&cf.red.data, &field_dy, &field_dx);

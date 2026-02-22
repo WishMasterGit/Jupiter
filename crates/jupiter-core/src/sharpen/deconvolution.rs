@@ -314,7 +314,11 @@ fn wiener_filter(frame: &Frame, psf: &Array2<f32>, noise_ratio: f32) -> Frame {
 // ---------------------------------------------------------------------------
 
 /// GPU-accelerated deconvolution dispatch.
-pub fn deconvolve_gpu(frame: &Frame, config: &DeconvolutionConfig, backend: &dyn ComputeBackend) -> Frame {
+pub fn deconvolve_gpu(
+    frame: &Frame,
+    config: &DeconvolutionConfig,
+    backend: &dyn ComputeBackend,
+) -> Frame {
     let (h, w) = frame.data.dim();
     let psf = generate_psf(&config.psf, h, w);
 

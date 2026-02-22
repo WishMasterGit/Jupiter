@@ -3,8 +3,8 @@ use std::sync::mpsc;
 
 use jupiter_core::color::debayer::{debayer, is_bayer, luminance};
 use jupiter_core::consts::{COLOR_CHANNEL_COUNT, LOW_MEMORY_THRESHOLD_BYTES};
-use jupiter_core::frame::{ColorFrame, ColorMode, Frame};
 use jupiter_core::detection::{detect_planet_in_frame, DetectionConfig};
+use jupiter_core::frame::{ColorFrame, ColorMode, Frame};
 use jupiter_core::io::ser::SerReader;
 use jupiter_core::pipeline::config::{DebayerConfig, QualityMetric};
 use jupiter_core::pipeline::PipelineStage;
@@ -29,11 +29,15 @@ pub(super) fn handle_load_and_score(
     tx: &mpsc::Sender<WorkerResult>,
     ctx: &egui::Context,
 ) {
-    send(tx, ctx, WorkerResult::Progress {
-        stage: PipelineStage::Reading,
-        items_done: None,
-        items_total: None,
-    });
+    send(
+        tx,
+        ctx,
+        WorkerResult::Progress {
+            stage: PipelineStage::Reading,
+            items_done: None,
+            items_total: None,
+        },
+    );
     send_log(tx, ctx, "Reading frames...");
 
     let reader = match SerReader::open(path) {
@@ -62,7 +66,7 @@ pub(super) fn handle_load_and_score(
     if use_streaming {
         let debayer_method = debayer_config
             .as_ref()
-            .map(|c| c.method.clone())
+            .map(|c| c.method)
             .unwrap_or_default();
 
         let mode_label = if use_color { "color " } else { "" };
@@ -71,11 +75,15 @@ pub(super) fn handle_load_and_score(
             ctx,
             format!("Scoring {total} {mode_label}frames (streaming)..."),
         );
-        send(tx, ctx, WorkerResult::Progress {
-            stage: PipelineStage::QualityAssessment,
-            items_done: Some(0),
-            items_total: Some(total),
-        });
+        send(
+            tx,
+            ctx,
+            WorkerResult::Progress {
+                stage: PipelineStage::QualityAssessment,
+                items_done: Some(0),
+                items_total: Some(total),
+            },
+        );
 
         let streaming_progress =
             make_progress_callback(tx, ctx, PipelineStage::QualityAssessment, total);
@@ -91,11 +99,7 @@ pub(super) fn handle_load_and_score(
                     ) {
                         Ok(r) => r,
                         Err(e) => {
-                            send_error(
-                                tx,
-                                ctx,
-                                format!("Streaming color scoring failed: {e}"),
-                            );
+                            send_error(tx, ctx, format!("Streaming color scoring failed: {e}"));
                             return;
                         }
                     }
@@ -109,11 +113,7 @@ pub(super) fn handle_load_and_score(
                     ) {
                         Ok(r) => r,
                         Err(e) => {
-                            send_error(
-                                tx,
-                                ctx,
-                                format!("Streaming color scoring failed: {e}"),
-                            );
+                            send_error(tx, ctx, format!("Streaming color scoring failed: {e}"));
                             return;
                         }
                     }
@@ -175,19 +175,20 @@ pub(super) fn handle_load_and_score(
             ctx,
             format!("Scored {total} {mode_label}frames (streaming mode)"),
         );
-        send(tx, ctx, WorkerResult::LoadAndScoreComplete {
-            frame_count: total,
-            ranked_preview,
-            detected_planet_diameter,
-        });
+        send(
+            tx,
+            ctx,
+            WorkerResult::LoadAndScoreComplete {
+                frame_count: total,
+                ranked_preview,
+                detected_planet_diameter,
+            },
+        );
         return;
     }
 
     // Eager mode: load all frames
-    let frames: Vec<Frame> = match reader
-        .frames()
-        .collect::<jupiter_core::error::Result<_>>()
-    {
+    let frames: Vec<Frame> = match reader.frames().collect::<jupiter_core::error::Result<_>>() {
         Ok(f) => f,
         Err(e) => {
             send_error(tx, ctx, format!("Failed to read frames: {e}"));
@@ -198,15 +199,19 @@ pub(super) fn handle_load_and_score(
     // Debayer if needed
     let (scoring_frames, color_frames) = if use_color {
         send_log(tx, ctx, format!("Debayering {total} frames..."));
-        send(tx, ctx, WorkerResult::Progress {
-            stage: PipelineStage::Debayering,
-            items_done: None,
-            items_total: Some(total),
-        });
+        send(
+            tx,
+            ctx,
+            WorkerResult::Progress {
+                stage: PipelineStage::Debayering,
+                items_done: None,
+                items_total: Some(total),
+            },
+        );
 
         let debayer_method = debayer_config
             .as_ref()
-            .map(|c| c.method.clone())
+            .map(|c| c.method)
             .unwrap_or_default();
 
         let color_frames: Vec<ColorFrame> = if is_rgb_bgr {
@@ -242,14 +247,17 @@ pub(super) fn handle_load_and_score(
     };
 
     send_log(tx, ctx, format!("Read {total} frames, scoring quality..."));
-    send(tx, ctx, WorkerResult::Progress {
-        stage: PipelineStage::QualityAssessment,
-        items_done: Some(0),
-        items_total: Some(total),
-    });
+    send(
+        tx,
+        ctx,
+        WorkerResult::Progress {
+            stage: PipelineStage::QualityAssessment,
+            items_done: Some(0),
+            items_total: Some(total),
+        },
+    );
 
-    let eager_progress =
-        make_progress_callback(tx, ctx, PipelineStage::QualityAssessment, total);
+    let eager_progress = make_progress_callback(tx, ctx, PipelineStage::QualityAssessment, total);
 
     let ranked = match metric {
         QualityMetric::Laplacian => rank_frames_with_progress(&scoring_frames, &eager_progress),
@@ -258,8 +266,7 @@ pub(super) fn handle_load_and_score(
         }
     };
 
-    let ranked_preview: Vec<(usize, f64)> =
-        ranked.iter().map(|(i, s)| (*i, s.composite)).collect();
+    let ranked_preview: Vec<(usize, f64)> = ranked.iter().map(|(i, s)| (*i, s.composite)).collect();
 
     // Detect planet diameter on first frame for auto AP size
     let detected_planet_diameter = detect_planet_diameter(&scoring_frames[0]);
@@ -276,11 +283,15 @@ pub(super) fn handle_load_and_score(
     cache.invalidate_downstream();
 
     send_log(tx, ctx, format!("Scored {total} frames"));
-    send(tx, ctx, WorkerResult::LoadAndScoreComplete {
-        frame_count: total,
-        ranked_preview,
-        detected_planet_diameter,
-    });
+    send(
+        tx,
+        ctx,
+        WorkerResult::LoadAndScoreComplete {
+            frame_count: total,
+            ranked_preview,
+            detected_planet_diameter,
+        },
+    );
 }
 
 /// Run planet detection on a single frame and return the diameter (max of bbox width/height).

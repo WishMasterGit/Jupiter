@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::color::debayer::DebayerMethod;
 use crate::compute::DevicePreference;
-use crate::consts::{DEFAULT_CENTROID_THRESHOLD, DEFAULT_ENHANCED_PHASE_UPSAMPLE, DEFAULT_PYRAMID_LEVELS};
+use crate::consts::{
+    DEFAULT_CENTROID_THRESHOLD, DEFAULT_ENHANCED_PHASE_UPSAMPLE, DEFAULT_PYRAMID_LEVELS,
+};
 use crate::sharpen::wavelet::WaveletParams;
 use crate::stack::drizzle::DrizzleConfig;
 use crate::stack::multi_point::{LocalStackMethod, MultiPointConfig};
@@ -333,11 +335,17 @@ impl fmt::Display for FilterStep {
             FilterStep::HistogramStretch {
                 black_point,
                 white_point,
-            } => write!(f, "Histogram Stretch (black={black_point}, white={white_point})"),
+            } => write!(
+                f,
+                "Histogram Stretch (black={black_point}, white={white_point})"
+            ),
             FilterStep::AutoStretch {
                 low_percentile,
                 high_percentile,
-            } => write!(f, "Auto Stretch (low={low_percentile}, high={high_percentile})"),
+            } => write!(
+                f,
+                "Auto Stretch (low={low_percentile}, high={high_percentile})"
+            ),
             FilterStep::Gamma(g) => write!(f, "Gamma ({g})"),
             FilterStep::BrightnessContrast {
                 brightness,

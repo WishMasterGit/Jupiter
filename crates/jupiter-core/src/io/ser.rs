@@ -31,7 +31,11 @@ pub struct SerHeader {
 impl SerHeader {
     /// Bytes per pixel plane (1 for 8-bit, 2 for 9-16 bit).
     pub fn bytes_per_pixel_plane(&self) -> usize {
-        if self.pixel_depth <= 8 { 1 } else { 2 }
+        if self.pixel_depth <= 8 {
+            1
+        } else {
+            2
+        }
     }
 
     /// Number of planes per pixel (1 for mono/bayer, 3 for RGB/BGR).
@@ -134,12 +138,25 @@ impl SerReader {
 
         // For mono/bayer: single plane. For RGB/BGR: average to luminance for now.
         let data = if planes == 1 {
-            decode_mono_plane(raw, h, w, bpp, self.header.pixel_depth, self.header.little_endian)?
+            decode_mono_plane(
+                raw,
+                h,
+                w,
+                bpp,
+                self.header.pixel_depth,
+                self.header.little_endian,
+            )?
         } else {
             // RGB/BGR: extract green channel as luminance approximation
             decode_plane_from_interleaved(
-                raw, h, w, bpp, planes, 1, // green channel index
-                self.header.pixel_depth, self.header.little_endian,
+                raw,
+                h,
+                w,
+                bpp,
+                planes,
+                1, // green channel index
+                self.header.pixel_depth,
+                self.header.little_endian,
             )?
         };
 
@@ -188,11 +205,7 @@ impl SerReader {
     /// Read a Bayer frame and debayer it into a `ColorFrame`.
     ///
     /// Returns an error if the SER file's color mode is not a Bayer pattern.
-    pub fn read_frame_color(
-        &self,
-        index: usize,
-        method: &DebayerMethod,
-    ) -> Result<ColorFrame> {
+    pub fn read_frame_color(&self, index: usize, method: &DebayerMethod) -> Result<ColorFrame> {
         let mode = self.header.color_mode();
         if !is_bayer(&mode) {
             return Err(JupiterError::InvalidSer(format!(
@@ -206,16 +219,17 @@ impl SerReader {
         let w = self.header.width as usize;
         let bpp = self.header.bytes_per_pixel_plane();
         let mosaic = decode_mono_plane(
-            raw, h, w, bpp,
+            raw,
+            h,
+            w,
+            bpp,
             self.header.pixel_depth,
             self.header.little_endian,
         )?;
         let bit_depth = (bpp as u8) * 8;
 
         debayer(&mosaic, &mode, method, bit_depth)
-            .ok_or_else(|| {
-                JupiterError::InvalidSer("Debayer failed for Bayer mode".into())
-            })
+            .ok_or_else(|| JupiterError::InvalidSer("Debayer failed for Bayer mode".into()))
     }
 
     /// Read a single frame as a `ColorFrame` from an RGB or BGR SER file.
@@ -241,16 +255,34 @@ impl SerReader {
         };
 
         let red_data = decode_plane_from_interleaved(
-            raw, h, w, bpp, 3, r_idx,
-            self.header.pixel_depth, self.header.little_endian,
+            raw,
+            h,
+            w,
+            bpp,
+            3,
+            r_idx,
+            self.header.pixel_depth,
+            self.header.little_endian,
         )?;
         let green_data = decode_plane_from_interleaved(
-            raw, h, w, bpp, 3, 1,
-            self.header.pixel_depth, self.header.little_endian,
+            raw,
+            h,
+            w,
+            bpp,
+            3,
+            1,
+            self.header.pixel_depth,
+            self.header.little_endian,
         )?;
         let blue_data = decode_plane_from_interleaved(
-            raw, h, w, bpp, 3, b_idx,
-            self.header.pixel_depth, self.header.little_endian,
+            raw,
+            h,
+            w,
+            bpp,
+            3,
+            b_idx,
+            self.header.pixel_depth,
+            self.header.little_endian,
         )?;
 
         Ok(ColorFrame {
@@ -337,7 +369,11 @@ fn read_fixed_string(buf: &[u8]) -> String {
 }
 
 fn non_empty(s: &str) -> Option<String> {
-    if s.is_empty() { None } else { Some(s.to_string()) }
+    if s.is_empty() {
+        None
+    } else {
+        Some(s.to_string())
+    }
 }
 
 fn decode_mono_plane(

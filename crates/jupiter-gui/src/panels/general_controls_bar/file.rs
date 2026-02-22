@@ -78,7 +78,11 @@ pub(super) fn file_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
 
             ui.horizontal(|ui| {
                 ui.label("View:");
-                if ui.add(egui::Button::new("Raw").selected(viewing_raw)).clicked() && !viewing_raw {
+                if ui
+                    .add(egui::Button::new("Raw").selected(viewing_raw))
+                    .clicked()
+                    && !viewing_raw
+                {
                     switch_to_raw = true;
                 }
                 let processed_response = ui.add_enabled(

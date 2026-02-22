@@ -36,7 +36,10 @@ pub(super) fn actions_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
     // Run All button
     let can_run = app.ui_state.file_path.is_some() && !app.ui_state.is_busy();
     if ui
-        .add_enabled(can_run, egui::Button::new("Run All").min_size(egui::vec2(ui.available_width(), 28.0)))
+        .add_enabled(
+            can_run,
+            egui::Button::new("Run All").min_size(egui::vec2(ui.available_width(), 28.0)),
+        )
         .clicked()
     {
         if let Some(ref path) = app.ui_state.file_path {

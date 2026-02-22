@@ -7,14 +7,28 @@ pub fn show(ctx: &egui::Context, app: &mut JupiterApp) {
     egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| {
-                let open_shortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::O);
-                if ui.add(egui::Button::new("Open...").shortcut_text(ctx.format_shortcut(&open_shortcut))).clicked() {
+                let open_shortcut =
+                    egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::O);
+                if ui
+                    .add(
+                        egui::Button::new("Open...")
+                            .shortcut_text(ctx.format_shortcut(&open_shortcut)),
+                    )
+                    .clicked()
+                {
                     ui.close();
                     open_file(app);
                 }
 
-                let save_shortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::S);
-                if ui.add(egui::Button::new("Save As...").shortcut_text(ctx.format_shortcut(&save_shortcut))).clicked() {
+                let save_shortcut =
+                    egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::S);
+                if ui
+                    .add(
+                        egui::Button::new("Save As...")
+                            .shortcut_text(ctx.format_shortcut(&save_shortcut)),
+                    )
+                    .clicked()
+                {
                     ui.close();
                     save_file(app);
                 }
@@ -33,8 +47,15 @@ pub fn show(ctx: &egui::Context, app: &mut JupiterApp) {
 
                 ui.separator();
 
-                let quit_shortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Q);
-                if ui.add(egui::Button::new("Quit").shortcut_text(ctx.format_shortcut(&quit_shortcut))).clicked() {
+                let quit_shortcut =
+                    egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Q);
+                if ui
+                    .add(
+                        egui::Button::new("Quit")
+                            .shortcut_text(ctx.format_shortcut(&quit_shortcut)),
+                    )
+                    .clicked()
+                {
                     ui.close();
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
@@ -44,7 +65,9 @@ pub fn show(ctx: &egui::Context, app: &mut JupiterApp) {
                 if ui.button("Reset Defaults").clicked() {
                     ui.close();
                     app.config = ConfigState::default();
-                    app.ui_state.stages.mark_dirty_from(PipelineStage::QualityAssessment);
+                    app.ui_state
+                        .stages
+                        .mark_dirty_from(PipelineStage::QualityAssessment);
                     app.ui_state.add_log("Config reset to defaults".into());
                 }
             });
@@ -58,13 +81,28 @@ pub fn show(ctx: &egui::Context, app: &mut JupiterApp) {
         });
 
         // Keyboard shortcuts (consumed outside menus)
-        if ctx.input_mut(|i| i.consume_shortcut(&egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::O))) {
+        if ctx.input_mut(|i| {
+            i.consume_shortcut(&egui::KeyboardShortcut::new(
+                egui::Modifiers::COMMAND,
+                egui::Key::O,
+            ))
+        }) {
             open_file(app);
         }
-        if ctx.input_mut(|i| i.consume_shortcut(&egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::S))) {
+        if ctx.input_mut(|i| {
+            i.consume_shortcut(&egui::KeyboardShortcut::new(
+                egui::Modifiers::COMMAND,
+                egui::Key::S,
+            ))
+        }) {
             save_file(app);
         }
-        if ctx.input_mut(|i| i.consume_shortcut(&egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Q))) {
+        if ctx.input_mut(|i| {
+            i.consume_shortcut(&egui::KeyboardShortcut::new(
+                egui::Modifiers::COMMAND,
+                egui::Key::Q,
+            ))
+        }) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     });
@@ -79,7 +117,12 @@ fn open_file(app: &mut JupiterApp) {
             .add_filter("All files", &["*"])
             .pick_file()
         {
-            let cmd = match path.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref() {
+            let cmd = match path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.to_ascii_lowercase())
+                .as_deref()
+            {
                 Some("ser") => WorkerCommand::LoadFileInfo { path },
                 _ => WorkerCommand::LoadImageFile { path },
             };

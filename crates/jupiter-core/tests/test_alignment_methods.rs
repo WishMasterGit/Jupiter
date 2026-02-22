@@ -3,11 +3,11 @@ use std::sync::Arc;
 use ndarray::Array2;
 
 use jupiter_core::align::centroid::compute_offset_centroid;
+use jupiter_core::align::compute_offset_configured;
 use jupiter_core::align::enhanced_phase::compute_offset_enhanced;
 use jupiter_core::align::gradient_correlation::compute_offset_gradient;
 use jupiter_core::align::phase_correlation::bilinear_sample;
 use jupiter_core::align::pyramid::compute_offset_pyramid;
-use jupiter_core::align::compute_offset_configured;
 use jupiter_core::compute::cpu::CpuBackend;
 use jupiter_core::compute::ComputeBackend;
 use jupiter_core::frame::Frame;
@@ -124,8 +124,18 @@ fn test_enhanced_phase_subpixel_accuracy() {
     let err_dx = (offset.dx.abs() - 4.7).abs();
     let err_dy = (offset.dy.abs() - 2.3).abs();
     // Sub-pixel accuracy on a 128x128 image with synthetic data; tolerance ~1px
-    assert!(err_dx < 1.0, "dx error {} too large (dx={})", err_dx, offset.dx);
-    assert!(err_dy < 1.0, "dy error {} too large (dy={})", err_dy, offset.dy);
+    assert!(
+        err_dx < 1.0,
+        "dx error {} too large (dx={})",
+        err_dx,
+        offset.dx
+    );
+    assert!(
+        err_dy < 1.0,
+        "dy error {} too large (dy={})",
+        err_dy,
+        offset.dy
+    );
 }
 
 #[test]
@@ -133,23 +143,13 @@ fn test_enhanced_phase_upsample_factor_1() {
     // With upsample_factor=1, should give integer-only result (no refinement)
     let reference = make_bright_square(64, 64, 32, 32, 12);
     let target = shift_array(&reference, 3.0, 5.0);
-    let config = EnhancedPhaseConfig {
-        upsample_factor: 1,
-    };
+    let config = EnhancedPhaseConfig { upsample_factor: 1 };
     let backend = cpu();
 
     let offset = compute_offset_enhanced(&reference, &target, &config, backend.as_ref()).unwrap();
     // Should still detect the shift approximately
-    assert!(
-        (offset.dx.abs() - 5.0).abs() < 1.5,
-        "dx={}",
-        offset.dx
-    );
-    assert!(
-        (offset.dy.abs() - 3.0).abs() < 1.5,
-        "dy={}",
-        offset.dy
-    );
+    assert!((offset.dx.abs() - 5.0).abs() < 1.5, "dx={}", offset.dx);
+    assert!((offset.dy.abs() - 3.0).abs() < 1.5, "dy={}", offset.dy);
 }
 
 // ===== Centroid Alignment =====
@@ -254,7 +254,7 @@ fn test_gradient_magnitude_array() {
     // Interior near edges of the square should have high gradient
     let center_val = grad[[16, 16]];
     let edge_val = grad[[12, 16]]; // Near the edge of the square
-    // Edge should have higher gradient than center (which is flat)
+                                   // Edge should have higher gradient than center (which is flat)
     assert!(
         edge_val > center_val || center_val < 0.1,
         "edge={} center={}",

@@ -70,13 +70,20 @@ impl JupiterApp {
                     ranked_preview,
                     detected_planet_diameter,
                 } => {
-                    self.ui_state.stages.score.set_complete(format!("{frame_count} scored"));
+                    self.ui_state
+                        .stages
+                        .score
+                        .set_complete(format!("{frame_count} scored"));
                     self.ui_state.ranked_preview = ranked_preview;
                     self.ui_state.detected_planet_diameter = detected_planet_diameter;
                     self.ui_state.running_stage = None;
-                    self.ui_state.add_log(format!("{frame_count} frames scored"));
+                    self.ui_state
+                        .add_log(format!("{frame_count} frames scored"));
                 }
-                WorkerResult::AlignComplete { frame_count, elapsed } => {
+                WorkerResult::AlignComplete {
+                    frame_count,
+                    elapsed,
+                } => {
                     self.ui_state.stages.align.set_complete(format!(
                         "{frame_count} aligned ({})",
                         format_duration(elapsed)
@@ -90,10 +97,10 @@ impl JupiterApp {
                     ));
                 }
                 WorkerResult::StackComplete { result, elapsed } => {
-                    self.ui_state.stages.stack.set_complete(format!(
-                        "Stacked ({})",
-                        format_duration(elapsed)
-                    ));
+                    self.ui_state
+                        .stages
+                        .stack
+                        .set_complete(format!("Stacked ({})", format_duration(elapsed)));
                     self.ui_state.running_stage = None;
                     self.ui_state.clear_progress();
                     self.ui_state.viewing_raw = false;
@@ -103,23 +110,26 @@ impl JupiterApp {
                     self.ui_state.stages.sharpen.set_complete("Done".into());
                     self.ui_state.running_stage = None;
                     self.ui_state.clear_progress();
-                    self.ui_state.add_log(format!("Sharpened in {}", format_duration(elapsed)));
+                    self.ui_state
+                        .add_log(format!("Sharpened in {}", format_duration(elapsed)));
                     self.update_processed_output(ctx, &result, "Sharpened");
                 }
                 WorkerResult::FilterComplete { result, elapsed } => {
-                    self.ui_state.stages.filter.set_complete(format!("{} applied", self.config.filters.len()));
+                    self.ui_state
+                        .stages
+                        .filter
+                        .set_complete(format!("{} applied", self.config.filters.len()));
                     self.ui_state.running_stage = None;
                     self.ui_state.clear_progress();
-                    self.ui_state.add_log(format!("Filters applied in {}", format_duration(elapsed)));
+                    self.ui_state
+                        .add_log(format!("Filters applied in {}", format_duration(elapsed)));
                     self.update_processed_output(ctx, &result, "Filtered");
                 }
                 WorkerResult::PipelineComplete { result, elapsed } => {
                     self.ui_state.running_stage = None;
                     self.ui_state.clear_progress();
-                    self.ui_state.add_log(format!(
-                        "Pipeline complete in {}",
-                        format_duration(elapsed)
-                    ));
+                    self.ui_state
+                        .add_log(format!("Pipeline complete in {}", format_duration(elapsed)));
                     self.ui_state.viewing_raw = false;
                     self.update_processed_output(ctx, &result, "Pipeline Result");
                 }
@@ -156,7 +166,10 @@ impl JupiterApp {
                         instrument: None,
                     });
                     self.ui_state.reset_pipeline();
-                    self.ui_state.stages.stack.set_complete("Image loaded".into());
+                    self.ui_state
+                        .stages
+                        .stack
+                        .set_complete("Image loaded".into());
                     self.viewport.zoom = 1.0;
                     self.viewport.pan_offset = egui::Vec2::ZERO;
                     self.ui_state.add_log(format!(
@@ -167,7 +180,10 @@ impl JupiterApp {
                     ));
                     self.update_viewport_from_output(ctx, &output, "Loaded Image");
                 }
-                WorkerResult::CropComplete { output_path, elapsed } => {
+                WorkerResult::CropComplete {
+                    output_path,
+                    elapsed,
+                } => {
                     self.ui_state.running_stage = None;
                     self.ui_state.crop_state.is_saving = false;
                     self.ui_state.crop_state.active = false;
@@ -185,12 +201,8 @@ impl JupiterApp {
                         .map(|e| e.to_ascii_lowercase())
                         .as_deref()
                     {
-                        Some("ser") => WorkerCommand::LoadFileInfo {
-                            path: output_path,
-                        },
-                        _ => WorkerCommand::LoadImageFile {
-                            path: output_path,
-                        },
+                        Some("ser") => WorkerCommand::LoadFileInfo { path: output_path },
+                        _ => WorkerCommand::LoadImageFile { path: output_path },
                     };
                     self.send_command(cmd);
                 }
@@ -204,7 +216,9 @@ impl JupiterApp {
                 }
                 WorkerResult::ConfigImported { config } => {
                     self.config = ConfigState::from_pipeline_config(&config);
-                    self.ui_state.stages.mark_dirty_from(PipelineStage::QualityAssessment);
+                    self.ui_state
+                        .stages
+                        .mark_dirty_from(PipelineStage::QualityAssessment);
                     self.ui_state.add_log("Config imported".into());
                 }
                 WorkerResult::Log { message } => {
@@ -214,13 +228,14 @@ impl JupiterApp {
         }
     }
 
-    fn update_viewport_from_output(&mut self, ctx: &egui::Context, output: &PipelineOutput, label: &str) {
+    fn update_viewport_from_output(
+        &mut self,
+        ctx: &egui::Context,
+        output: &PipelineOutput,
+        label: &str,
+    ) {
         let display = output_to_display_image(output);
-        let texture = ctx.load_texture(
-            "viewport",
-            display.image,
-            egui::TextureOptions::NEAREST,
-        );
+        let texture = ctx.load_texture("viewport", display.image, egui::TextureOptions::NEAREST);
         self.viewport.texture = Some(texture);
         self.viewport.image_size = Some(display.original_size);
         self.viewport.display_scale = display.display_scale;
@@ -228,13 +243,14 @@ impl JupiterApp {
     }
 
     /// Store a processed result and update viewport only if not viewing raw.
-    fn update_processed_output(&mut self, ctx: &egui::Context, output: &PipelineOutput, label: &str) {
+    fn update_processed_output(
+        &mut self,
+        ctx: &egui::Context,
+        output: &PipelineOutput,
+        label: &str,
+    ) {
         let display = output_to_display_image(output);
-        let texture = ctx.load_texture(
-            "processed",
-            display.image,
-            egui::TextureOptions::NEAREST,
-        );
+        let texture = ctx.load_texture("processed", display.image, egui::TextureOptions::NEAREST);
         // Always store the processed result for later switching.
         self.viewport.processed_texture = Some(texture.clone());
         self.viewport.processed_image_size = Some(display.original_size);
@@ -290,7 +306,9 @@ impl JupiterApp {
 
         if can_sharpen {
             if let Some(config) = self.config.sharpening_config() {
-                self.ui_state.stages.clear_downstream(PipelineStage::Sharpening);
+                self.ui_state
+                    .stages
+                    .clear_downstream(PipelineStage::Sharpening);
                 self.ui_state.running_stage = Some(PipelineStage::Sharpening);
                 self.send_command(WorkerCommand::Sharpen {
                     config,

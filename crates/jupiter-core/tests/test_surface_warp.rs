@@ -31,8 +31,16 @@ fn build_mono_ser(width: u32, height: u32, num_frames: usize, jitter: bool) -> V
         let mut frame_data = vec![0u8; w * h];
         let center_y = h / 2;
         let center_x = w / 2;
-        let dy = if jitter { (frame_idx % 3) as isize - 1 } else { 0 };
-        let dx = if jitter { ((frame_idx + 1) % 3) as isize - 1 } else { 0 };
+        let dy = if jitter {
+            (frame_idx % 3) as isize - 1
+        } else {
+            0
+        };
+        let dx = if jitter {
+            ((frame_idx + 1) % 3) as isize - 1
+        } else {
+            0
+        };
         let square_size = 16;
 
         // Draw a bright square with slight jitter
@@ -82,7 +90,11 @@ fn test_surface_warp_identity() {
     };
 
     let result = surface_warp_stack(&reader, &config, |_| {});
-    assert!(result.is_ok(), "surface_warp_stack failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "surface_warp_stack failed: {:?}",
+        result.err()
+    );
 
     let frame = result.unwrap();
     assert_eq!(frame.data.dim(), (64, 64));
@@ -91,7 +103,7 @@ fn test_surface_warp_identity() {
     for row in 0..64 {
         for col in 0..64 {
             let v = frame.data[[row, col]];
-            assert!(v >= 0.0 && v <= 1.0, "pixel out of range: {v}");
+            assert!((0.0..=1.0).contains(&v), "pixel out of range: {v}");
         }
     }
 }
@@ -143,16 +155,12 @@ fn test_shift_field_interpolation() {
     // Set all APs to a known local offset
     let mut local_offsets = HashMap::new();
     for ap in &grid.points {
-        local_offsets.insert(
-            ap.index,
-            AlignmentOffset { dx: 1.0, dy: 2.0 },
-        );
+        local_offsets.insert(ap.index, AlignmentOffset { dx: 1.0, dy: 2.0 });
     }
 
     let global_offset = AlignmentOffset { dx: 0.5, dy: 0.5 };
 
-    let (field_dy, field_dx) =
-        interpolate_shift_field(&grid, &local_offsets, &global_offset, h, w);
+    let (field_dy, field_dx) = interpolate_shift_field(&grid, &local_offsets, &global_offset, h, w);
 
     assert_eq!(field_dy.dim(), (h, w));
     assert_eq!(field_dx.dim(), (h, w));
@@ -207,7 +215,11 @@ fn test_confidence_check() {
 
     // Should not panic even with noisy data
     let result = surface_warp_stack(&reader, &config, |_| {});
-    assert!(result.is_ok(), "noisy data should still succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "noisy data should still succeed: {:?}",
+        result.err()
+    );
 
     let frame = result.unwrap();
     assert_eq!(frame.data.dim(), (64, 64));
@@ -251,14 +263,17 @@ fn test_quality_weighted_mean() {
     let patch_b = Array2::<f32>::from_elem((4, 4), 0.8);
 
     // Weight B much more than A
-    let _patches = vec![patch_a, patch_b];
-    let _weights = vec![1.0, 9.0];
+    let _patches = [patch_a, patch_b];
+    let _weights = [1.0, 9.0];
 
     // Use the weighted mean helper indirectly through the public API:
     // We can't call the private function directly, but we can verify via
     // surface warp with known inputs. Instead, test the expected behavior.
     let expected: f64 = 0.2 * (1.0 / 10.0) + 0.8 * (9.0 / 10.0);
-    assert!((expected - 0.74).abs() < 0.01, "expected ~0.74, got {expected}");
+    assert!(
+        (expected - 0.74).abs() < 0.01,
+        "expected ~0.74, got {expected}"
+    );
 }
 
 #[test]

@@ -8,7 +8,10 @@ fn test_flat_image_has_zero_variance() {
     let data = Array2::<f32>::from_elem((10, 10), 0.5);
     let frame = Frame::new(data, 8);
     let lv = laplacian_variance(&frame);
-    assert!(lv.abs() < 1e-10, "Flat image should have ~0 Laplacian variance");
+    assert!(
+        lv.abs() < 1e-10,
+        "Flat image should have ~0 Laplacian variance"
+    );
 }
 
 #[test]

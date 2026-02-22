@@ -117,10 +117,7 @@ pub(super) fn crop_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
                         crop,
                     });
                 } else {
-                    app.send_command(WorkerCommand::CropAndSaveImage {
-                        output_path,
-                        crop,
-                    });
+                    app.send_command(WorkerCommand::CropAndSaveImage { output_path, crop });
                 }
 
                 app.ui_state.crop_state.is_saving = true;

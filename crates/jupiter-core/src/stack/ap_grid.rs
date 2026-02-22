@@ -2,9 +2,7 @@ use ndarray::Array2;
 use serde::{Deserialize, Serialize};
 
 use crate::align::phase_correlation::bilinear_sample;
-use crate::consts::{
-    AUTO_AP_DIVISOR, AUTO_AP_SIZE_ALIGN, AUTO_AP_SIZE_MAX, AUTO_AP_SIZE_MIN,
-};
+use crate::consts::{AUTO_AP_DIVISOR, AUTO_AP_SIZE_ALIGN, AUTO_AP_SIZE_MAX, AUTO_AP_SIZE_MIN};
 use crate::frame::AlignmentOffset;
 use crate::pipeline::config::QualityMetric;
 
@@ -14,7 +12,10 @@ pub enum LocalStackMethod {
     #[default]
     Mean,
     Median,
-    SigmaClip { sigma: f32, iterations: usize },
+    SigmaClip {
+        sigma: f32,
+        iterations: usize,
+    },
 }
 
 /// Configuration for multi-alignment-point stacking.

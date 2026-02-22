@@ -5,6 +5,7 @@ use std::sync::Arc;
 use tempfile::TempDir;
 
 use jupiter_core::align::phase_correlation::{compute_offset, compute_offsets_streaming};
+use jupiter_core::color::debayer::{luminance, DebayerMethod};
 use jupiter_core::compute::cpu::CpuBackend;
 use jupiter_core::consts::LOW_MEMORY_THRESHOLD_BYTES;
 use jupiter_core::io::ser::SerReader;
@@ -12,9 +13,12 @@ use jupiter_core::pipeline::config::{
     FrameSelectionConfig, MemoryStrategy, PipelineConfig, StackingConfig,
 };
 use jupiter_core::pipeline::run_pipeline;
-use jupiter_core::color::debayer::{luminance, DebayerMethod};
-use jupiter_core::quality::gradient::{rank_frames_gradient, rank_frames_gradient_color_streaming, rank_frames_gradient_streaming};
-use jupiter_core::quality::laplacian::{rank_frames, rank_frames_color_streaming, rank_frames_streaming};
+use jupiter_core::quality::gradient::{
+    rank_frames_gradient, rank_frames_gradient_color_streaming, rank_frames_gradient_streaming,
+};
+use jupiter_core::quality::laplacian::{
+    rank_frames, rank_frames_color_streaming, rank_frames_streaming,
+};
 use jupiter_core::stack::mean::{mean_stack, StreamingMeanStacker};
 
 fn build_test_ser(width: u32, height: u32, num_frames: usize) -> Vec<u8> {
@@ -220,14 +224,8 @@ fn test_compute_offsets_streaming_matches_batch() {
     let frame_indices: Vec<usize> = (0..frames.len()).collect();
 
     // Streaming offsets
-    let streaming_offsets = compute_offsets_streaming(
-        &reader,
-        &frame_indices,
-        0,
-        backend.clone(),
-        |_| {},
-    )
-    .unwrap();
+    let streaming_offsets =
+        compute_offsets_streaming(&reader, &frame_indices, 0, backend.clone(), |_| {}).unwrap();
 
     // Batch offsets
     let reference = &frames[0];
@@ -244,7 +242,11 @@ fn test_compute_offsets_streaming_matches_batch() {
         .collect();
 
     assert_eq!(streaming_offsets.len(), batch_offsets.len());
-    for (i, (streaming, batch)) in streaming_offsets.iter().zip(batch_offsets.iter()).enumerate() {
+    for (i, (streaming, batch)) in streaming_offsets
+        .iter()
+        .zip(batch_offsets.iter())
+        .enumerate()
+    {
         assert!(
             (streaming.dx - batch.dx).abs() < 1e-6,
             "Frame {} dx differs: streaming={}, batch={}",

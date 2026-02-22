@@ -7,12 +7,7 @@ use jupiter_core::io::ser::SerReader;
 const SER_HEADER_SIZE: usize = 178;
 
 /// Build a minimal synthetic SER file in memory.
-fn build_synthetic_ser(
-    width: u32,
-    height: u32,
-    bit_depth: u32,
-    frames: &[Vec<u8>],
-) -> Vec<u8> {
+fn build_synthetic_ser(width: u32, height: u32, bit_depth: u32, frames: &[Vec<u8>]) -> Vec<u8> {
     let mut buf = Vec::new();
 
     // Magic (14 bytes)

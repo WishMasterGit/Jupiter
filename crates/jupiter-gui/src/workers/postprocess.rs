@@ -21,11 +21,15 @@ pub(super) fn handle_sharpen(
 ) {
     let start = Instant::now();
     send_log(tx, ctx, "Sharpening...");
-    send(tx, ctx, WorkerResult::Progress {
-        stage: PipelineStage::Sharpening,
-        items_done: None,
-        items_total: None,
-    });
+    send(
+        tx,
+        ctx,
+        WorkerResult::Progress {
+            stage: PipelineStage::Sharpening,
+            items_done: None,
+            items_total: None,
+        },
+    );
 
     let backend = create_backend(device);
 
@@ -69,10 +73,14 @@ pub(super) fn handle_sharpen(
         ctx,
         format!("{label} complete in {:.1}s", elapsed.as_secs_f32()),
     );
-    send(tx, ctx, WorkerResult::SharpenComplete {
-        result: output,
-        elapsed,
-    });
+    send(
+        tx,
+        ctx,
+        WorkerResult::SharpenComplete {
+            result: output,
+            elapsed,
+        },
+    );
 }
 
 pub(super) fn handle_apply_filters(
@@ -83,21 +91,21 @@ pub(super) fn handle_apply_filters(
 ) {
     let start = Instant::now();
     send_log(tx, ctx, format!("Applying {} filters...", filters.len()));
-    send(tx, ctx, WorkerResult::Progress {
-        stage: PipelineStage::Filtering,
-        items_done: Some(0),
-        items_total: Some(filters.len()),
-    });
+    send(
+        tx,
+        ctx,
+        WorkerResult::Progress {
+            stage: PipelineStage::Filtering,
+            items_done: Some(0),
+            items_total: Some(filters.len()),
+        },
+    );
 
     let base = cache.sharpened.as_ref().or(cache.stacked.as_ref());
     let base = match base {
         Some(b) => b.clone(),
         None => {
-            send_error(
-                tx,
-                ctx,
-                "No frame to filter. Run Stack or Sharpen first.",
-            );
+            send_error(tx, ctx, "No frame to filter. Run Stack or Sharpen first.");
             return;
         }
     };
@@ -105,16 +113,22 @@ pub(super) fn handle_apply_filters(
     let mut output = base;
     for (i, step) in filters.iter().enumerate() {
         output = match output {
-            PipelineOutput::Color(cf) => PipelineOutput::Color(process_color_parallel(&cf, |frame| {
-                apply_filter_step(frame, step)
-            })),
+            PipelineOutput::Color(cf) => {
+                PipelineOutput::Color(process_color_parallel(&cf, |frame| {
+                    apply_filter_step(frame, step)
+                }))
+            }
             PipelineOutput::Mono(f) => PipelineOutput::Mono(apply_filter_step(&f, step)),
         };
-        send(tx, ctx, WorkerResult::Progress {
-            stage: PipelineStage::Filtering,
-            items_done: Some(i + 1),
-            items_total: Some(filters.len()),
-        });
+        send(
+            tx,
+            ctx,
+            WorkerResult::Progress {
+                stage: PipelineStage::Filtering,
+                items_done: Some(i + 1),
+                items_total: Some(filters.len()),
+            },
+        );
     }
 
     let elapsed = start.elapsed();
@@ -128,8 +142,12 @@ pub(super) fn handle_apply_filters(
             elapsed.as_secs_f32()
         ),
     );
-    send(tx, ctx, WorkerResult::FilterComplete {
-        result: output,
-        elapsed,
-    });
+    send(
+        tx,
+        ctx,
+        WorkerResult::FilterComplete {
+            result: output,
+            elapsed,
+        },
+    );
 }

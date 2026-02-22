@@ -61,11 +61,7 @@ pub fn run(args: &SharpenArgs) -> Result<()> {
     let frame = load_image(&args.file)
         .with_context(|| format!("Failed to load {}", args.file.display()))?;
 
-    println!(
-        "Loaded {}x{} image",
-        frame.width(),
-        frame.height()
-    );
+    println!("Loaded {}x{} image", frame.width(), frame.height());
 
     let coefficients = if let Some(ref coeff_str) = args.coefficients {
         coeff_str

@@ -6,7 +6,9 @@ pub fn histogram_stretch(frame: &Frame, black_point: f32, white_point: f32) -> F
     let range = white_point - black_point;
     let range = if range.abs() < EPSILON { 1.0 } else { range };
 
-    let data = frame.data.mapv(|v| ((v - black_point) / range).clamp(0.0, 1.0));
+    let data = frame
+        .data
+        .mapv(|v| ((v - black_point) / range).clamp(0.0, 1.0));
     Frame::new(data, frame.original_bit_depth)
 }
 

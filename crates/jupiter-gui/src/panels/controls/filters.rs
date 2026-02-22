@@ -26,10 +26,24 @@ pub(super) fn filter_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
                         high_percentile,
                     } => {
                         ui.label("Auto Stretch");
-                        if ui.add(egui::DragValue::new(low_percentile).speed(0.001).prefix("lo: ")).changed() {
+                        if ui
+                            .add(
+                                egui::DragValue::new(low_percentile)
+                                    .speed(0.001)
+                                    .prefix("lo: "),
+                            )
+                            .changed()
+                        {
                             any_changed = true;
                         }
-                        if ui.add(egui::DragValue::new(high_percentile).speed(0.001).prefix("hi: ")).changed() {
+                        if ui
+                            .add(
+                                egui::DragValue::new(high_percentile)
+                                    .speed(0.001)
+                                    .prefix("hi: "),
+                            )
+                            .changed()
+                        {
                             any_changed = true;
                         }
                     }
@@ -38,16 +52,25 @@ pub(super) fn filter_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
                         white_point,
                     } => {
                         ui.label("Hist Stretch");
-                        if ui.add(egui::DragValue::new(black_point).speed(0.01).prefix("B: ")).changed() {
+                        if ui
+                            .add(egui::DragValue::new(black_point).speed(0.01).prefix("B: "))
+                            .changed()
+                        {
                             any_changed = true;
                         }
-                        if ui.add(egui::DragValue::new(white_point).speed(0.01).prefix("W: ")).changed() {
+                        if ui
+                            .add(egui::DragValue::new(white_point).speed(0.01).prefix("W: "))
+                            .changed()
+                        {
                             any_changed = true;
                         }
                     }
                     FilterStep::Gamma(g) => {
                         ui.label("Gamma");
-                        if ui.add(egui::DragValue::new(g).speed(0.05).range(0.1..=5.0)).changed() {
+                        if ui
+                            .add(egui::DragValue::new(g).speed(0.05).range(0.1..=5.0))
+                            .changed()
+                        {
                             any_changed = true;
                         }
                     }
@@ -56,10 +79,16 @@ pub(super) fn filter_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
                         contrast,
                     } => {
                         ui.label("B/C");
-                        if ui.add(egui::DragValue::new(brightness).speed(0.01).prefix("B: ")).changed() {
+                        if ui
+                            .add(egui::DragValue::new(brightness).speed(0.01).prefix("B: "))
+                            .changed()
+                        {
                             any_changed = true;
                         }
-                        if ui.add(egui::DragValue::new(contrast).speed(0.05).prefix("C: ")).changed() {
+                        if ui
+                            .add(egui::DragValue::new(contrast).speed(0.05).prefix("C: "))
+                            .changed()
+                        {
                             any_changed = true;
                         }
                     }
@@ -69,19 +98,31 @@ pub(super) fn filter_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
                         threshold,
                     } => {
                         ui.label("USM");
-                        if ui.add(egui::DragValue::new(radius).speed(0.1).prefix("R: ")).changed() {
+                        if ui
+                            .add(egui::DragValue::new(radius).speed(0.1).prefix("R: "))
+                            .changed()
+                        {
                             any_changed = true;
                         }
-                        if ui.add(egui::DragValue::new(amount).speed(0.05).prefix("A: ")).changed() {
+                        if ui
+                            .add(egui::DragValue::new(amount).speed(0.05).prefix("A: "))
+                            .changed()
+                        {
                             any_changed = true;
                         }
-                        if ui.add(egui::DragValue::new(threshold).speed(0.01).prefix("T: ")).changed() {
+                        if ui
+                            .add(egui::DragValue::new(threshold).speed(0.01).prefix("T: "))
+                            .changed()
+                        {
                             any_changed = true;
                         }
                     }
                     FilterStep::GaussianBlur { sigma } => {
                         ui.label("Blur");
-                        if ui.add(egui::DragValue::new(sigma).speed(0.1).prefix("S: ")).changed() {
+                        if ui
+                            .add(egui::DragValue::new(sigma).speed(0.1).prefix("S: "))
+                            .changed()
+                        {
                             any_changed = true;
                         }
                     }
@@ -113,9 +154,13 @@ pub(super) fn filter_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
         });
 
         // Apply button
-        let has_base = app.ui_state.stages.stack.is_complete() || app.ui_state.stages.sharpen.is_complete();
+        let has_base =
+            app.ui_state.stages.stack.is_complete() || app.ui_state.stages.sharpen.is_complete();
         let can_apply = has_base && !app.ui_state.is_busy() && !app.config.filters.is_empty();
-        if ui.add_enabled(can_apply, egui::Button::new("Apply Filters")).clicked() {
+        if ui
+            .add_enabled(can_apply, egui::Button::new("Apply Filters"))
+            .clicked()
+        {
             app.ui_state.running_stage = Some(PipelineStage::Filtering);
             app.send_command(WorkerCommand::ApplyFilters {
                 filters: app.config.filters.clone(),

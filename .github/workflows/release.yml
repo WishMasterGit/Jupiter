@@ -1,0 +1,166 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-linux:
+    name: Build (Linux)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libwayland-dev pkg-config libxkbcommon-dev
+
+      - name: Build CPU release
+        run: cargo build --release --workspace
+
+      - name: Package CPU binaries
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          STAGING="jupiter-${VERSION}-linux-x86_64"
+          mkdir -p "$STAGING"
+          cp target/release/jupiter target/release/jupiter-gui "$STAGING/"
+          strip "$STAGING/jupiter" "$STAGING/jupiter-gui"
+          tar czf "${STAGING}.tar.gz" "$STAGING"
+
+      - name: Build GPU release
+        run: cargo build --release --workspace --features gpu
+
+      - name: Package GPU binaries
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          STAGING="jupiter-${VERSION}-linux-x86_64-gpu"
+          mkdir -p "$STAGING"
+          cp target/release/jupiter target/release/jupiter-gui "$STAGING/"
+          strip "$STAGING/jupiter" "$STAGING/jupiter-gui"
+          tar czf "${STAGING}.tar.gz" "$STAGING"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-archives
+          path: jupiter-*.tar.gz
+
+  build-windows:
+    name: Build (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build CPU release
+        run: cargo build --release --workspace
+
+      - name: Package CPU binaries
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          STAGING="jupiter-${VERSION}-windows-x86_64"
+          mkdir -p "$STAGING"
+          cp target/release/jupiter.exe target/release/jupiter-gui.exe "$STAGING/"
+          7z a "${STAGING}.zip" "$STAGING"
+
+      - name: Build GPU release
+        run: cargo build --release --workspace --features gpu
+
+      - name: Package GPU binaries
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          STAGING="jupiter-${VERSION}-windows-x86_64-gpu"
+          mkdir -p "$STAGING"
+          cp target/release/jupiter.exe target/release/jupiter-gui.exe "$STAGING/"
+          7z a "${STAGING}.zip" "$STAGING"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-archives
+          path: jupiter-*.zip
+
+  build-macos:
+    name: Build (macOS Universal)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+
+      # CPU builds
+      - name: Build CPU (aarch64)
+        run: cargo build --release --workspace --target aarch64-apple-darwin
+      - name: Build CPU (x86_64)
+        run: cargo build --release --workspace --target x86_64-apple-darwin
+
+      - name: Package CPU universal binaries
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          STAGING="jupiter-${VERSION}-macos-universal"
+          mkdir -p "$STAGING"
+          lipo -create \
+            target/aarch64-apple-darwin/release/jupiter \
+            target/x86_64-apple-darwin/release/jupiter \
+            -output "$STAGING/jupiter"
+          lipo -create \
+            target/aarch64-apple-darwin/release/jupiter-gui \
+            target/x86_64-apple-darwin/release/jupiter-gui \
+            -output "$STAGING/jupiter-gui"
+          strip "$STAGING/jupiter" "$STAGING/jupiter-gui"
+          tar czf "${STAGING}.tar.gz" "$STAGING"
+
+      # GPU builds
+      - name: Build GPU (aarch64)
+        run: cargo build --release --workspace --target aarch64-apple-darwin --features gpu
+      - name: Build GPU (x86_64)
+        run: cargo build --release --workspace --target x86_64-apple-darwin --features gpu
+
+      - name: Package GPU universal binaries
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          STAGING="jupiter-${VERSION}-macos-universal-gpu"
+          mkdir -p "$STAGING"
+          lipo -create \
+            target/aarch64-apple-darwin/release/jupiter \
+            target/x86_64-apple-darwin/release/jupiter \
+            -output "$STAGING/jupiter"
+          lipo -create \
+            target/aarch64-apple-darwin/release/jupiter-gui \
+            target/x86_64-apple-darwin/release/jupiter-gui \
+            -output "$STAGING/jupiter-gui"
+          strip "$STAGING/jupiter" "$STAGING/jupiter-gui"
+          tar czf "${STAGING}.tar.gz" "$STAGING"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-archives
+          path: jupiter-*.tar.gz
+
+  create-release:
+    name: Create Release
+    needs: [build-linux, build-windows, build-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --generate-notes \
+            artifacts/*

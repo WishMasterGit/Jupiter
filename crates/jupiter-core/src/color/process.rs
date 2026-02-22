@@ -66,12 +66,7 @@ where
 {
     let (red, (green, blue)) = rayon::join(
         || process_fn(&color.red),
-        || {
-            rayon::join(
-                || process_fn(&color.green),
-                || process_fn(&color.blue),
-            )
-        },
+        || rayon::join(|| process_fn(&color.green), || process_fn(&color.blue)),
     );
     ColorFrame { red, green, blue }
 }
@@ -92,8 +87,13 @@ pub fn read_color_frame(
         reader.read_frame_rgb(index)
     } else {
         let raw = reader.read_frame(index)?;
-        debayer(&raw.data, color_mode, debayer_method, raw.original_bit_depth)
-            .ok_or_else(|| JupiterError::Pipeline("Debayer failed".into()))
+        debayer(
+            &raw.data,
+            color_mode,
+            debayer_method,
+            raw.original_bit_depth,
+        )
+        .ok_or_else(|| JupiterError::Pipeline("Debayer failed".into()))
     }
 }
 

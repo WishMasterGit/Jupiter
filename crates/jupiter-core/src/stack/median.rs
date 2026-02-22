@@ -69,8 +69,7 @@ fn compute_median(pixel_values: &mut [f32], n: usize) -> f32 {
     } else {
         let mid = n / 2;
         pixel_values.select_nth_unstable_by(mid, |a, b| a.total_cmp(b));
-        pixel_values[..mid]
-            .select_nth_unstable_by(mid - 1, |a, b| a.total_cmp(b));
+        pixel_values[..mid].select_nth_unstable_by(mid - 1, |a, b| a.total_cmp(b));
         (pixel_values[mid - 1] + pixel_values[mid]) / 2.0
     }
 }
