@@ -82,6 +82,15 @@ fn quality_chart(ui: &mut egui::Ui, ranked: &[(usize, f64)], keep_percentage: f3
     let mut by_index: Vec<(usize, f64)> = ranked.to_vec();
     by_index.sort_by_key(|(i, _)| *i);
 
+    // Compute y-axis minimum so bars start near the lowest score, not 0.
+    let min_score = ranked.iter().map(|(_, s)| *s).fold(f64::INFINITY, f64::min);
+    let max_score = ranked
+        .iter()
+        .map(|(_, s)| *s)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let margin = (max_score - min_score) * 0.05;
+    let y_min = (min_score - margin).max(0.0);
+
     let kept_color = egui::Color32::from_rgb(80, 180, 80);
     let rejected_color = egui::Color32::from_rgb(128, 128, 128);
 
@@ -93,7 +102,10 @@ fn quality_chart(ui: &mut egui::Ui, ranked: &[(usize, f64)], keep_percentage: f3
             } else {
                 rejected_color
             };
-            Bar::new(*frame_idx as f64, *score).fill(color).width(0.8)
+            Bar::new(*frame_idx as f64, score - y_min)
+                .fill(color)
+                .width(0.8)
+                .base_offset(y_min)
         })
         .collect();
 
@@ -105,6 +117,7 @@ fn quality_chart(ui: &mut egui::Ui, ranked: &[(usize, f64)], keep_percentage: f3
 
     Plot::new("quality_score_chart")
         .height(CHART_HEIGHT)
+        .include_y(y_min)
         .allow_drag(false)
         .allow_zoom(false)
         .allow_scroll(false)

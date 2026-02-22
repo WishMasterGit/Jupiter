@@ -17,3 +17,4 @@
 - there should be option to switch between processed and raw frames, also when user changes raw frames it should only update the original frames preview [Done]
 - for log preview it should prerender 4 lines to avoid screen jumping when new log appears, user should also be able to scroll through the log [Done]
 - multipoint alignment is not producing good image, lets make a through research including scientific articles on best way to implement it, and write and article that we will save in the docs [Done]
+- change frame selection score graph so the y-axis not starts at 0 but instead at the minimum score, so it easier to see distribution [Done]
