@@ -218,6 +218,7 @@ jobs:
             --window-size 540 380 \
             --icon-size 128 \
             --app-drop-link 380 170 \
+            --no-internet-enable \
             "jupiter-${VERSION}-macos-universal.dmg" \
             Jupiter.app
 
@@ -285,6 +286,7 @@ jobs:
             --window-size 540 380 \
             --icon-size 128 \
             --app-drop-link 380 170 \
+            --no-internet-enable \
             "jupiter-${VERSION}-macos-universal-gpu.dmg" \
             Jupiter-gpu.app
 
