@@ -100,18 +100,28 @@ jobs:
       - name: Build CPU (x86_64)
         run: cargo build --release --workspace --target x86_64-apple-darwin
 
+      - name: Save CPU binaries before GPU build overwrites them
+        run: |
+          mkdir -p cpu-bins/aarch64 cpu-bins/x86_64
+          cp target/aarch64-apple-darwin/release/jupiter \
+             target/aarch64-apple-darwin/release/jupiter-gui \
+             cpu-bins/aarch64/
+          cp target/x86_64-apple-darwin/release/jupiter \
+             target/x86_64-apple-darwin/release/jupiter-gui \
+             cpu-bins/x86_64/
+
       - name: Package CPU universal binaries
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           STAGING="jupiter-${VERSION}-macos-universal"
           mkdir -p "$STAGING"
           lipo -create \
-            target/aarch64-apple-darwin/release/jupiter \
-            target/x86_64-apple-darwin/release/jupiter \
+            cpu-bins/aarch64/jupiter \
+            cpu-bins/x86_64/jupiter \
             -output "$STAGING/jupiter"
           lipo -create \
-            target/aarch64-apple-darwin/release/jupiter-gui \
-            target/x86_64-apple-darwin/release/jupiter-gui \
+            cpu-bins/aarch64/jupiter-gui \
+            cpu-bins/x86_64/jupiter-gui \
             -output "$STAGING/jupiter-gui"
           strip "$STAGING/jupiter" "$STAGING/jupiter-gui"
           tar czf "${STAGING}.tar.gz" "$STAGING"
@@ -150,17 +160,15 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
           merge-multiple: true
 
       - name: Create GitHub Release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release create "$GITHUB_REF_NAME" \
-            --generate-notes \
-            artifacts/*
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            artifacts/*.tar.gz
+            artifacts/*.zip
