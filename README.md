@@ -2,7 +2,7 @@
 
 **Planetary image processing for lucky imaging pipelines**
 
-[![CI](https://github.com/wmts/jupiter/actions/workflows/ci.yml/badge.svg)](https://github.com/wmts/jupiter/actions)
+[![CI](https://github.com/WishMasterGit/Jupiter/actions/workflows/ci.yml/badge.svg)](https://github.com/WishMasterGit/Jupiter/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ---
