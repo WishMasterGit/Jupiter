@@ -20,7 +20,7 @@ jobs:
 
       - name: Install packaging tools
         run: |
-          cargo install cargo-deb cargo-generate-rpm
+          cargo install cargo-deb
           wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
           wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage
           chmod +x linuxdeploy*.AppImage
@@ -38,13 +38,6 @@ jobs:
           cargo deb --no-build -p jupiter-cli \
             --deb-version "$VERSION" \
             -o "jupiter_${VERSION}_amd64.deb"
-
-      - name: Create CPU .rpm
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          cargo generate-rpm -p crates/jupiter-cli \
-            --payload-compress zstd \
-            -o "jupiter-${VERSION}-x86_64.rpm"
 
       - name: Create CPU AppImage
         run: |
@@ -73,13 +66,6 @@ jobs:
             --deb-version "$VERSION" \
             -o "jupiter-gpu_${VERSION}_amd64.deb"
 
-      - name: Create GPU .rpm
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          cargo generate-rpm -p crates/jupiter-cli \
-            --payload-compress zstd \
-            -o "jupiter-gpu-${VERSION}-x86_64.rpm"
-
       - name: Create GPU AppImage
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
@@ -100,8 +86,6 @@ jobs:
           path: |
             jupiter_*.deb
             jupiter-gpu_*.deb
-            jupiter-*.rpm
-            jupiter-gpu-*.rpm
             jupiter-*.AppImage
             jupiter-gpu-*.AppImage
 
@@ -341,5 +325,4 @@ jobs:
             artifacts/*.dmg
             artifacts/*.msi
             artifacts/*.deb
-            artifacts/*.rpm
             artifacts/*.AppImage
