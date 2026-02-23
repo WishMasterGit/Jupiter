@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=Jupiter
+Comment=Planetary image processing
+Exec=jupiter-gui
+Icon=jupiter
+Type=Application
+Categories=Science;Graphics;

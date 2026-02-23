@@ -18,34 +18,92 @@ jobs:
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y libwayland-dev libx11-dev libxcb1-dev libxrandr-dev libxinerama-dev libxi-dev pkg-config libxkbcommon-dev
 
+      - name: Install packaging tools
+        run: |
+          cargo install cargo-deb cargo-generate-rpm
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage
+          chmod +x linuxdeploy*.AppImage
+
+      # ── CPU build ────────────────────────────────────────────────────────────
       - name: Build CPU release
         run: cargo build --release --workspace
 
-      - name: Package CPU binaries
+      - name: Strip CPU binaries
+        run: strip target/release/jupiter target/release/jupiter-gui
+
+      - name: Create CPU .deb
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          STAGING="jupiter-${VERSION}-linux-x86_64"
-          mkdir -p "$STAGING"
-          cp target/release/jupiter target/release/jupiter-gui "$STAGING/"
-          strip "$STAGING/jupiter" "$STAGING/jupiter-gui"
-          tar czf "${STAGING}.tar.gz" "$STAGING"
+          cargo deb --no-build -p jupiter-cli \
+            --deb-version "$VERSION" \
+            -o "jupiter_${VERSION}_amd64.deb"
 
+      - name: Create CPU .rpm
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          cargo generate-rpm -p crates/jupiter-cli \
+            --payload-compress zstd \
+            -o "jupiter-${VERSION}-x86_64.rpm"
+
+      - name: Create CPU AppImage
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p AppDir/usr/bin
+          cp target/release/jupiter AppDir/usr/bin/
+          cp target/release/jupiter-gui AppDir/usr/bin/
+          cp packaging/linux/jupiter.desktop AppDir/
+          ARCH=x86_64 ./linuxdeploy-x86_64.AppImage \
+            --appdir AppDir \
+            --desktop-file AppDir/jupiter.desktop \
+            --output appimage
+          mv Jupiter-x86_64.AppImage "jupiter-${VERSION}-x86_64.AppImage"
+
+      # ── GPU build ─────────────────────────────────────────────────────────────
       - name: Build GPU release
         run: cargo build --release --workspace --features gpu
 
-      - name: Package GPU binaries
+      - name: Strip GPU binaries
+        run: strip target/release/jupiter target/release/jupiter-gui
+
+      - name: Create GPU .deb
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          STAGING="jupiter-${VERSION}-linux-x86_64-gpu"
-          mkdir -p "$STAGING"
-          cp target/release/jupiter target/release/jupiter-gui "$STAGING/"
-          strip "$STAGING/jupiter" "$STAGING/jupiter-gui"
-          tar czf "${STAGING}.tar.gz" "$STAGING"
+          cargo deb --no-build -p jupiter-cli \
+            --deb-version "$VERSION" \
+            -o "jupiter-gpu_${VERSION}_amd64.deb"
+
+      - name: Create GPU .rpm
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          cargo generate-rpm -p crates/jupiter-cli \
+            --payload-compress zstd \
+            -o "jupiter-gpu-${VERSION}-x86_64.rpm"
+
+      - name: Create GPU AppImage
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          rm -rf AppDir
+          mkdir -p AppDir/usr/bin
+          cp target/release/jupiter AppDir/usr/bin/
+          cp target/release/jupiter-gui AppDir/usr/bin/
+          cp packaging/linux/jupiter.desktop AppDir/
+          ARCH=x86_64 ./linuxdeploy-x86_64.AppImage \
+            --appdir AppDir \
+            --desktop-file AppDir/jupiter.desktop \
+            --output appimage
+          mv Jupiter-x86_64.AppImage "jupiter-gpu-${VERSION}-x86_64.AppImage"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: linux-archives
-          path: jupiter-*.tar.gz
+          name: linux-packages
+          path: |
+            jupiter_*.deb
+            jupiter-gpu_*.deb
+            jupiter-*.rpm
+            jupiter-gpu-*.rpm
+            jupiter-*.AppImage
+            jupiter-gpu-*.AppImage
 
   build-windows:
     name: Build (Windows)
@@ -55,34 +113,41 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
+      - name: Install WiX Toolset v4
+        run: dotnet tool install --global wix
+
+      # ── CPU build ─────────────────────────────────────────────────────────────
       - name: Build CPU release
         run: cargo build --release --workspace
 
-      - name: Package CPU binaries
+      - name: Create CPU MSI
         shell: bash
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          STAGING="jupiter-${VERSION}-windows-x86_64"
-          mkdir -p "$STAGING"
-          cp target/release/jupiter.exe target/release/jupiter-gui.exe "$STAGING/"
-          7z a "${STAGING}.zip" "$STAGING"
+          cp target/release/jupiter.exe target/release/jupiter-gui.exe .
+          wix build packaging/windows/jupiter.wxs \
+            -d Version="$VERSION" \
+            -d SourceDir=. \
+            -o "jupiter-${VERSION}-windows-x86_64.msi"
 
+      # ── GPU build ─────────────────────────────────────────────────────────────
       - name: Build GPU release
         run: cargo build --release --workspace --features gpu
 
-      - name: Package GPU binaries
+      - name: Create GPU MSI
         shell: bash
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          STAGING="jupiter-${VERSION}-windows-x86_64-gpu"
-          mkdir -p "$STAGING"
-          cp target/release/jupiter.exe target/release/jupiter-gui.exe "$STAGING/"
-          7z a "${STAGING}.zip" "$STAGING"
+          cp target/release/jupiter.exe target/release/jupiter-gui.exe .
+          wix build packaging/windows/jupiter.wxs \
+            -d Version="$VERSION" \
+            -d SourceDir=. \
+            -o "jupiter-${VERSION}-windows-x86_64-gpu.msi"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: windows-archives
-          path: jupiter-*.zip
+          name: windows-packages
+          path: jupiter-*.msi
 
   build-macos:
     name: Build (macOS Universal)
@@ -94,13 +159,31 @@ jobs:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
       - uses: Swatinem/rust-cache@v2
 
-      # CPU builds
+      - name: Install create-dmg
+        run: brew install create-dmg
+
+      - name: Import signing certificate
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+        run: |
+          echo "$MACOS_CERTIFICATE" | base64 --decode > certificate.p12
+          security create-keychain -p "$MACOS_KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$MACOS_KEYCHAIN_PASSWORD" build.keychain
+          security import certificate.p12 -k build.keychain \
+            -P "$MACOS_CERTIFICATE_PWD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: \
+            -s -k "$MACOS_KEYCHAIN_PASSWORD" build.keychain
+
+      # ── CPU builds ────────────────────────────────────────────────────────────
       - name: Build CPU (aarch64)
         run: cargo build --release --workspace --target aarch64-apple-darwin
       - name: Build CPU (x86_64)
         run: cargo build --release --workspace --target x86_64-apple-darwin
 
-      - name: Save CPU binaries before GPU build overwrites them
+      - name: Save CPU binaries
         run: |
           mkdir -p cpu-bins/aarch64 cpu-bins/x86_64
           cp target/aarch64-apple-darwin/release/jupiter \
@@ -110,48 +193,133 @@ jobs:
              target/x86_64-apple-darwin/release/jupiter-gui \
              cpu-bins/x86_64/
 
-      - name: Package CPU universal binaries
+      - name: Create CPU universal binaries
+        run: |
+          mkdir -p universal-cpu
+          lipo -create cpu-bins/aarch64/jupiter cpu-bins/x86_64/jupiter \
+            -output universal-cpu/jupiter
+          lipo -create cpu-bins/aarch64/jupiter-gui cpu-bins/x86_64/jupiter-gui \
+            -output universal-cpu/jupiter-gui
+          strip universal-cpu/jupiter universal-cpu/jupiter-gui
+
+      - name: Build CPU .app bundle, sign and notarize DMG
+        env:
+          APPLE_TEAM_NAME: ${{ secrets.APPLE_TEAM_NAME }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          STAGING="jupiter-${VERSION}-macos-universal"
-          mkdir -p "$STAGING"
-          lipo -create \
-            cpu-bins/aarch64/jupiter \
-            cpu-bins/x86_64/jupiter \
-            -output "$STAGING/jupiter"
-          lipo -create \
-            cpu-bins/aarch64/jupiter-gui \
-            cpu-bins/x86_64/jupiter-gui \
-            -output "$STAGING/jupiter-gui"
-          strip "$STAGING/jupiter" "$STAGING/jupiter-gui"
-          tar czf "${STAGING}.tar.gz" "$STAGING"
 
-      # GPU builds
+          # Build .app bundle
+          mkdir -p Jupiter.app/Contents/MacOS
+          cp universal-cpu/jupiter-gui Jupiter.app/Contents/MacOS/
+          sed "s/VERSION_PLACEHOLDER/$VERSION/g" packaging/macos/Info.plist \
+            > Jupiter.app/Contents/Info.plist
+
+          # Sign app bundle with hardened runtime
+          codesign --deep --force --options runtime \
+            --entitlements packaging/macos/entitlements.plist \
+            --sign "Developer ID Application: $APPLE_TEAM_NAME" \
+            Jupiter.app
+
+          # Sign standalone CLI binary
+          codesign --force --options runtime \
+            --sign "Developer ID Application: $APPLE_TEAM_NAME" \
+            universal-cpu/jupiter
+
+          # Create DMG
+          create-dmg \
+            --volname "Jupiter $VERSION" \
+            --window-size 540 380 \
+            --icon-size 128 \
+            --app-drop-link 380 170 \
+            "jupiter-${VERSION}-macos-universal.dmg" \
+            Jupiter.app
+
+          # Sign DMG
+          codesign --sign "Developer ID Application: $APPLE_TEAM_NAME" \
+            "jupiter-${VERSION}-macos-universal.dmg"
+
+          # Notarize and staple
+          xcrun notarytool submit "jupiter-${VERSION}-macos-universal.dmg" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          xcrun stapler staple "jupiter-${VERSION}-macos-universal.dmg"
+
+      # ── GPU builds ────────────────────────────────────────────────────────────
       - name: Build GPU (aarch64)
         run: cargo build --release --workspace --target aarch64-apple-darwin --features gpu
       - name: Build GPU (x86_64)
         run: cargo build --release --workspace --target x86_64-apple-darwin --features gpu
 
-      - name: Package GPU universal binaries
+      - name: Create GPU universal binaries
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          STAGING="jupiter-${VERSION}-macos-universal-gpu"
-          mkdir -p "$STAGING"
+          mkdir -p universal-gpu
           lipo -create \
             target/aarch64-apple-darwin/release/jupiter \
             target/x86_64-apple-darwin/release/jupiter \
-            -output "$STAGING/jupiter"
+            -output universal-gpu/jupiter
           lipo -create \
             target/aarch64-apple-darwin/release/jupiter-gui \
             target/x86_64-apple-darwin/release/jupiter-gui \
-            -output "$STAGING/jupiter-gui"
-          strip "$STAGING/jupiter" "$STAGING/jupiter-gui"
-          tar czf "${STAGING}.tar.gz" "$STAGING"
+            -output universal-gpu/jupiter-gui
+          strip universal-gpu/jupiter universal-gpu/jupiter-gui
+
+      - name: Build GPU .app bundle, sign and notarize DMG
+        env:
+          APPLE_TEAM_NAME: ${{ secrets.APPLE_TEAM_NAME }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+
+          # Build .app bundle (reuse previous Jupiter.app structure, swap binary)
+          rm -rf Jupiter-gpu.app
+          mkdir -p Jupiter-gpu.app/Contents/MacOS
+          cp universal-gpu/jupiter-gui Jupiter-gpu.app/Contents/MacOS/
+          sed "s/VERSION_PLACEHOLDER/$VERSION/g" packaging/macos/Info.plist \
+            > Jupiter-gpu.app/Contents/Info.plist
+
+          # Sign app bundle
+          codesign --deep --force --options runtime \
+            --entitlements packaging/macos/entitlements.plist \
+            --sign "Developer ID Application: $APPLE_TEAM_NAME" \
+            Jupiter-gpu.app
+
+          # Sign CLI binary
+          codesign --force --options runtime \
+            --sign "Developer ID Application: $APPLE_TEAM_NAME" \
+            universal-gpu/jupiter
+
+          # Create DMG
+          create-dmg \
+            --volname "Jupiter $VERSION GPU" \
+            --window-size 540 380 \
+            --icon-size 128 \
+            --app-drop-link 380 170 \
+            "jupiter-${VERSION}-macos-universal-gpu.dmg" \
+            Jupiter-gpu.app
+
+          # Sign DMG
+          codesign --sign "Developer ID Application: $APPLE_TEAM_NAME" \
+            "jupiter-${VERSION}-macos-universal-gpu.dmg"
+
+          # Notarize and staple
+          xcrun notarytool submit "jupiter-${VERSION}-macos-universal-gpu.dmg" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          xcrun stapler staple "jupiter-${VERSION}-macos-universal-gpu.dmg"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: macos-archives
-          path: jupiter-*.tar.gz
+          name: macos-packages
+          path: jupiter-*.dmg
 
   create-release:
     name: Create Release
@@ -170,5 +338,8 @@ jobs:
         with:
           generate_release_notes: true
           files: |
-            artifacts/*.tar.gz
-            artifacts/*.zip
+            artifacts/*.dmg
+            artifacts/*.msi
+            artifacts/*.deb
+            artifacts/*.rpm
+            artifacts/*.AppImage

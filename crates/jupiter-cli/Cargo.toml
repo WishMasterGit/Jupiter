@@ -24,3 +24,23 @@ tracing-subscriber = { workspace = true }
 serde = { workspace = true }
 toml = { workspace = true }
 rayon = { workspace = true }
+
+[package.metadata.deb]
+name = "jupiter"
+maintainer = "WishMasterGit <noreply@github.com>"
+section = "science"
+assets = [
+  ["../../target/release/jupiter", "usr/bin/", "755"],
+  ["../../target/release/jupiter-gui", "usr/bin/", "755"],
+]
+
+[package.metadata.generate-rpm]
+name = "jupiter"
+[[package.metadata.generate-rpm.assets]]
+source = "../../target/release/jupiter"
+dest = "/usr/bin/jupiter"
+mode = "755"
+[[package.metadata.generate-rpm.assets]]
+source = "../../target/release/jupiter-gui"
+dest = "/usr/bin/jupiter-gui"
+mode = "755"
