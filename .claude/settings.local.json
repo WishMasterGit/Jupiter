@@ -16,7 +16,10 @@
       "WebFetch(domain:arxiv.org)",
       "WebFetch(domain:www.cloudynights.com)",
       "WebFetch(domain:siril.readthedocs.io)",
-      "WebFetch(domain:astroforumspace.com)"
+      "WebFetch(domain:astroforumspace.com)",
+      "Bash(curl:*)",
+      "Bash(act:*)",
+      "Bash(echo:*)"
     ]
   }
 }

@@ -21,11 +21,13 @@ jobs:
       - name: Install packaging tools
         run: |
           cargo install cargo-deb
-          curl -fsSL -o linuxdeploy-x86_64.AppImage \
-            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
-          curl -fsSL -o linuxdeploy-plugin-appimage-x86_64.AppImage \
-            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage
-          chmod +x linuxdeploy*.AppImage
+          if [ -z "$ACT" ]; then
+            curl -fsSL -o linuxdeploy-x86_64.AppImage \
+              https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage
+            curl -fsSL -o linuxdeploy-plugin-appimage-x86_64.AppImage \
+              https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage
+            chmod +x linuxdeploy*.AppImage
+          fi
 
       # ── CPU build ────────────────────────────────────────────────────────────
       - name: Build CPU release
@@ -42,6 +44,7 @@ jobs:
             -o "jupiter_${VERSION}_amd64.deb"
 
       - name: Create CPU AppImage
+        if: ${{ !env.ACT }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           mkdir -p AppDir/usr/bin
@@ -69,6 +72,7 @@ jobs:
             -o "jupiter-gpu_${VERSION}_amd64.deb"
 
       - name: Create GPU AppImage
+        if: ${{ !env.ACT }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           rm -rf AppDir
@@ -83,6 +87,7 @@ jobs:
           mv Jupiter-x86_64.AppImage "jupiter-gpu-${VERSION}-x86_64.AppImage"
 
       - uses: actions/upload-artifact@v4
+        if: ${{ !env.ACT }}
         with:
           name: linux-packages
           path: |
