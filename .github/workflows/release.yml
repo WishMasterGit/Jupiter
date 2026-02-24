@@ -16,13 +16,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libwayland-dev libx11-dev libxcb1-dev libxrandr-dev libxinerama-dev libxi-dev pkg-config libxkbcommon-dev
+        run: sudo apt-get update && sudo apt-get install -y libwayland-dev libx11-dev libxcb1-dev libxrandr-dev libxinerama-dev libxi-dev pkg-config libxkbcommon-dev libfuse2
 
       - name: Install packaging tools
         run: |
           cargo install cargo-deb
-          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
-          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage
+          curl -fsSL -o linuxdeploy-x86_64.AppImage \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          curl -fsSL -o linuxdeploy-plugin-appimage-x86_64.AppImage \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage
           chmod +x linuxdeploy*.AppImage
 
       # ── CPU build ────────────────────────────────────────────────────────────
@@ -46,7 +48,7 @@ jobs:
           cp target/release/jupiter AppDir/usr/bin/
           cp target/release/jupiter-gui AppDir/usr/bin/
           cp packaging/linux/jupiter.desktop AppDir/
-          ARCH=x86_64 ./linuxdeploy-x86_64.AppImage \
+          ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 ./linuxdeploy-x86_64.AppImage \
             --appdir AppDir \
             --desktop-file AppDir/jupiter.desktop \
             --output appimage
@@ -74,7 +76,7 @@ jobs:
           cp target/release/jupiter AppDir/usr/bin/
           cp target/release/jupiter-gui AppDir/usr/bin/
           cp packaging/linux/jupiter.desktop AppDir/
-          ARCH=x86_64 ./linuxdeploy-x86_64.AppImage \
+          ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 ./linuxdeploy-x86_64.AppImage \
             --appdir AppDir \
             --desktop-file AppDir/jupiter.desktop \
             --output appimage
@@ -151,6 +153,7 @@ jobs:
           MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
           MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
           MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+        if: ${{ env.MACOS_CERTIFICATE != '' }}
         run: |
           echo "$MACOS_CERTIFICATE" | base64 --decode > certificate.p12
           security create-keychain -p "$MACOS_KEYCHAIN_PASSWORD" build.keychain
@@ -201,16 +204,18 @@ jobs:
           sed "s/VERSION_PLACEHOLDER/$VERSION/g" packaging/macos/Info.plist \
             > Jupiter.app/Contents/Info.plist
 
-          # Sign app bundle with hardened runtime
-          codesign --deep --force --options runtime \
-            --entitlements packaging/macos/entitlements.plist \
-            --sign "Developer ID Application: $APPLE_TEAM_NAME" \
-            Jupiter.app
+          if [ -n "$APPLE_TEAM_NAME" ]; then
+            # Sign app bundle with hardened runtime
+            codesign --deep --force --options runtime \
+              --entitlements packaging/macos/entitlements.plist \
+              --sign "Developer ID Application: $APPLE_TEAM_NAME" \
+              Jupiter.app
 
-          # Sign standalone CLI binary
-          codesign --force --options runtime \
-            --sign "Developer ID Application: $APPLE_TEAM_NAME" \
-            universal-cpu/jupiter
+            # Sign standalone CLI binary
+            codesign --force --options runtime \
+              --sign "Developer ID Application: $APPLE_TEAM_NAME" \
+              universal-cpu/jupiter
+          fi
 
           # Create DMG
           create-dmg \
@@ -222,17 +227,19 @@ jobs:
             "jupiter-${VERSION}-macos-universal.dmg" \
             Jupiter.app
 
-          # Sign DMG
-          codesign --sign "Developer ID Application: $APPLE_TEAM_NAME" \
-            "jupiter-${VERSION}-macos-universal.dmg"
+          if [ -n "$APPLE_TEAM_NAME" ]; then
+            # Sign DMG
+            codesign --sign "Developer ID Application: $APPLE_TEAM_NAME" \
+              "jupiter-${VERSION}-macos-universal.dmg"
 
-          # Notarize and staple
-          xcrun notarytool submit "jupiter-${VERSION}-macos-universal.dmg" \
-            --apple-id "$APPLE_ID" \
-            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
-            --team-id "$APPLE_TEAM_ID" \
-            --wait
-          xcrun stapler staple "jupiter-${VERSION}-macos-universal.dmg"
+            # Notarize and staple
+            xcrun notarytool submit "jupiter-${VERSION}-macos-universal.dmg" \
+              --apple-id "$APPLE_ID" \
+              --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID" \
+              --wait
+            xcrun stapler staple "jupiter-${VERSION}-macos-universal.dmg"
+          fi
 
       # ── GPU builds ────────────────────────────────────────────────────────────
       - name: Build GPU (aarch64)
@@ -269,16 +276,18 @@ jobs:
           sed "s/VERSION_PLACEHOLDER/$VERSION/g" packaging/macos/Info.plist \
             > Jupiter-gpu.app/Contents/Info.plist
 
-          # Sign app bundle
-          codesign --deep --force --options runtime \
-            --entitlements packaging/macos/entitlements.plist \
-            --sign "Developer ID Application: $APPLE_TEAM_NAME" \
-            Jupiter-gpu.app
+          if [ -n "$APPLE_TEAM_NAME" ]; then
+            # Sign app bundle
+            codesign --deep --force --options runtime \
+              --entitlements packaging/macos/entitlements.plist \
+              --sign "Developer ID Application: $APPLE_TEAM_NAME" \
+              Jupiter-gpu.app
 
-          # Sign CLI binary
-          codesign --force --options runtime \
-            --sign "Developer ID Application: $APPLE_TEAM_NAME" \
-            universal-gpu/jupiter
+            # Sign CLI binary
+            codesign --force --options runtime \
+              --sign "Developer ID Application: $APPLE_TEAM_NAME" \
+              universal-gpu/jupiter
+          fi
 
           # Create DMG
           create-dmg \
@@ -290,17 +299,19 @@ jobs:
             "jupiter-${VERSION}-macos-universal-gpu.dmg" \
             Jupiter-gpu.app
 
-          # Sign DMG
-          codesign --sign "Developer ID Application: $APPLE_TEAM_NAME" \
-            "jupiter-${VERSION}-macos-universal-gpu.dmg"
+          if [ -n "$APPLE_TEAM_NAME" ]; then
+            # Sign DMG
+            codesign --sign "Developer ID Application: $APPLE_TEAM_NAME" \
+              "jupiter-${VERSION}-macos-universal-gpu.dmg"
 
-          # Notarize and staple
-          xcrun notarytool submit "jupiter-${VERSION}-macos-universal-gpu.dmg" \
-            --apple-id "$APPLE_ID" \
-            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
-            --team-id "$APPLE_TEAM_ID" \
-            --wait
-          xcrun stapler staple "jupiter-${VERSION}-macos-universal-gpu.dmg"
+            # Notarize and staple
+            xcrun notarytool submit "jupiter-${VERSION}-macos-universal-gpu.dmg" \
+              --apple-id "$APPLE_ID" \
+              --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID" \
+              --wait
+            xcrun stapler staple "jupiter-${VERSION}-macos-universal-gpu.dmg"
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
