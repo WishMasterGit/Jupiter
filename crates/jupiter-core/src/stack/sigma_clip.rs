@@ -39,44 +39,27 @@ pub fn sigma_clip_stack(frames: &[Frame], params: &SigmaClipParams) -> Result<Fr
     let n = frames.len();
 
     if h * w >= PARALLEL_PIXEL_THRESHOLD && n > 1 {
-        // Row-parallel: each row allocates its own pixel_values and mask
-        let rows: Vec<Vec<f32>> = (0..h)
-            .into_par_iter()
-            .map(|row| {
-                let mut pixel_values = vec![0.0f32; n];
-                let mut mask = vec![true; n];
-                let mut row_result = vec![0.0f32; w];
-                for (col, result) in row_result.iter_mut().enumerate() {
-                    sigma_clip_pixel(
-                        frames,
-                        row,
-                        col,
-                        n,
-                        params,
-                        &mut pixel_values,
-                        &mut mask,
-                        result,
-                    );
-                }
-                row_result
-            })
-            .collect();
-
-        let mut result = Array2::<f32>::zeros((h, w));
-        for (row, row_data) in rows.into_iter().enumerate() {
-            for (col, val) in row_data.into_iter().enumerate() {
-                result[[row, col]] = val;
-            }
-        }
-        Ok(Frame::new(result, frames[0].original_bit_depth))
+        sigma_clip_stack_parallel(frames, params, h, w, n)
     } else {
-        // Sequential for small images
-        let mut result = Array2::<f32>::zeros((h, w));
-        let mut pixel_values = vec![0.0f32; n];
-        let mut mask = vec![true; n];
+        sigma_clip_stack_sequential(frames, params, h, w, n)
+    }
+}
 
-        for row in 0..h {
-            for col in 0..w {
+fn sigma_clip_stack_parallel(
+    frames: &[Frame],
+    params: &SigmaClipParams,
+    h: usize,
+    w: usize,
+    n: usize,
+) -> Result<Frame> {
+    // Row-parallel: each row allocates its own pixel_values and mask
+    let rows: Vec<Vec<f32>> = (0..h)
+        .into_par_iter()
+        .map(|row| {
+            let mut pixel_values = vec![0.0f32; n];
+            let mut mask = vec![true; n];
+            let mut row_result = vec![0.0f32; w];
+            for (col, result) in row_result.iter_mut().enumerate() {
                 sigma_clip_pixel(
                     frames,
                     row,
@@ -85,12 +68,49 @@ pub fn sigma_clip_stack(frames: &[Frame], params: &SigmaClipParams) -> Result<Fr
                     params,
                     &mut pixel_values,
                     &mut mask,
-                    &mut result[[row, col]],
+                    result,
                 );
             }
+            row_result
+        })
+        .collect();
+
+    let mut result = Array2::<f32>::zeros((h, w));
+    for (row, row_data) in rows.into_iter().enumerate() {
+        for (col, val) in row_data.into_iter().enumerate() {
+            result[[row, col]] = val;
         }
-        Ok(Frame::new(result, frames[0].original_bit_depth))
     }
+    Ok(Frame::new(result, frames[0].original_bit_depth))
+}
+
+fn sigma_clip_stack_sequential(
+    frames: &[Frame],
+    params: &SigmaClipParams,
+    h: usize,
+    w: usize,
+    n: usize,
+) -> Result<Frame> {
+    // Sequential for small images
+    let mut result = Array2::<f32>::zeros((h, w));
+    let mut pixel_values = vec![0.0f32; n];
+    let mut mask = vec![true; n];
+
+    for row in 0..h {
+        for col in 0..w {
+            sigma_clip_pixel(
+                frames,
+                row,
+                col,
+                n,
+                params,
+                &mut pixel_values,
+                &mut mask,
+                &mut result[[row, col]],
+            );
+        }
+    }
+    Ok(Frame::new(result, frames[0].original_bit_depth))
 }
 
 #[allow(clippy::too_many_arguments)]

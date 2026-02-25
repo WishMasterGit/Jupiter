@@ -193,78 +193,102 @@ pub fn compute_offset(reference: &Frame, target: &Frame) -> Result<AlignmentOffs
 /// Shift a frame by the given offset using bilinear interpolation.
 pub fn shift_frame(frame: &Frame, offset: &AlignmentOffset) -> Frame {
     let (h, w) = frame.data.dim();
-
     if h * w >= PARALLEL_PIXEL_THRESHOLD {
-        // Row-parallel: each row's interpolation is independent
-        let rows: Vec<Vec<f32>> = (0..h)
-            .into_par_iter()
-            .map(|row| {
-                (0..w)
-                    .map(|col| {
-                        let src_y = row as f64 - offset.dy;
-                        let src_x = col as f64 - offset.dx;
-                        bilinear_sample(&frame.data, src_y, src_x)
-                    })
-                    .collect()
-            })
-            .collect();
-
-        let mut result = Array2::<f32>::zeros((h, w));
-        for (row, row_data) in rows.into_iter().enumerate() {
-            for (col, val) in row_data.into_iter().enumerate() {
-                result[[row, col]] = val;
-            }
-        }
-        Frame::new(result, frame.original_bit_depth)
+        shift_frame_parallel(frame, offset, h, w)
     } else {
-        let mut result = Array2::<f32>::zeros((h, w));
-        for row in 0..h {
-            for col in 0..w {
-                let src_y = row as f64 - offset.dy;
-                let src_x = col as f64 - offset.dx;
-                result[[row, col]] = bilinear_sample(&frame.data, src_y, src_x);
-            }
-        }
-        Frame::new(result, frame.original_bit_depth)
+        shift_frame_sequential(frame, offset, h, w)
     }
+}
+
+fn shift_frame_parallel(frame: &Frame, offset: &AlignmentOffset, h: usize, w: usize) -> Frame {
+    // Row-parallel: each row's interpolation is independent
+    let rows: Vec<Vec<f32>> = (0..h)
+        .into_par_iter()
+        .map(|row| {
+            (0..w)
+                .map(|col| {
+                    let src_y = row as f64 - offset.dy;
+                    let src_x = col as f64 - offset.dx;
+                    bilinear_sample(&frame.data, src_y, src_x)
+                })
+                .collect()
+        })
+        .collect();
+
+    let mut result = Array2::<f32>::zeros((h, w));
+    for (row, row_data) in rows.into_iter().enumerate() {
+        for (col, val) in row_data.into_iter().enumerate() {
+            result[[row, col]] = val;
+        }
+    }
+    Frame::new(result, frame.original_bit_depth)
+}
+
+fn shift_frame_sequential(frame: &Frame, offset: &AlignmentOffset, h: usize, w: usize) -> Frame {
+    let mut result = Array2::<f32>::zeros((h, w));
+    for row in 0..h {
+        for col in 0..w {
+            let src_y = row as f64 - offset.dy;
+            let src_x = col as f64 - offset.dx;
+            result[[row, col]] = bilinear_sample(&frame.data, src_y, src_x);
+        }
+    }
+    Frame::new(result, frame.original_bit_depth)
 }
 
 /// Shift a raw array by the given offset using bilinear interpolation.
 pub(crate) fn shift_array(data: &Array2<f32>, offset: &AlignmentOffset) -> Array2<f32> {
     let (h, w) = data.dim();
-
     if h * w >= PARALLEL_PIXEL_THRESHOLD {
-        let rows: Vec<Vec<f32>> = (0..h)
-            .into_par_iter()
-            .map(|row| {
-                (0..w)
-                    .map(|col| {
-                        let src_y = row as f64 - offset.dy;
-                        let src_x = col as f64 - offset.dx;
-                        bilinear_sample(data, src_y, src_x)
-                    })
-                    .collect()
-            })
-            .collect();
-
-        let mut result = Array2::<f32>::zeros((h, w));
-        for (row, row_data) in rows.into_iter().enumerate() {
-            for (col, val) in row_data.into_iter().enumerate() {
-                result[[row, col]] = val;
-            }
-        }
-        result
+        shift_array_parallel(data, offset, h, w)
     } else {
-        let mut result = Array2::<f32>::zeros((h, w));
-        for row in 0..h {
-            for col in 0..w {
-                let src_y = row as f64 - offset.dy;
-                let src_x = col as f64 - offset.dx;
-                result[[row, col]] = bilinear_sample(data, src_y, src_x);
-            }
-        }
-        result
+        shift_array_sequential(data, offset, h, w)
     }
+}
+
+fn shift_array_parallel(
+    data: &Array2<f32>,
+    offset: &AlignmentOffset,
+    h: usize,
+    w: usize,
+) -> Array2<f32> {
+    let rows: Vec<Vec<f32>> = (0..h)
+        .into_par_iter()
+        .map(|row| {
+            (0..w)
+                .map(|col| {
+                    let src_y = row as f64 - offset.dy;
+                    let src_x = col as f64 - offset.dx;
+                    bilinear_sample(data, src_y, src_x)
+                })
+                .collect()
+        })
+        .collect();
+
+    let mut result = Array2::<f32>::zeros((h, w));
+    for (row, row_data) in rows.into_iter().enumerate() {
+        for (col, val) in row_data.into_iter().enumerate() {
+            result[[row, col]] = val;
+        }
+    }
+    result
+}
+
+fn shift_array_sequential(
+    data: &Array2<f32>,
+    offset: &AlignmentOffset,
+    h: usize,
+    w: usize,
+) -> Array2<f32> {
+    let mut result = Array2::<f32>::zeros((h, w));
+    for row in 0..h {
+        for col in 0..w {
+            let src_y = row as f64 - offset.dy;
+            let src_x = col as f64 - offset.dx;
+            result[[row, col]] = bilinear_sample(data, src_y, src_x);
+        }
+    }
+    result
 }
 
 /// Align a sequence of frames to a reference frame.
@@ -278,31 +302,47 @@ pub fn align_frames(frames: &[Frame], reference_idx: usize) -> Result<Vec<Frame>
     let reference = &frames[reference_idx];
 
     if frames.len() >= PARALLEL_FRAME_THRESHOLD {
-        let results: Vec<Result<Frame>> = frames
-            .par_iter()
-            .enumerate()
-            .map(|(i, frame)| {
-                if i == reference_idx {
-                    Ok(frame.clone())
-                } else {
-                    let offset = compute_offset(reference, frame)?;
-                    Ok(shift_frame(frame, &offset))
-                }
-            })
-            .collect();
-        results.into_iter().collect()
+        align_frames_parallel(frames, reference, reference_idx)
     } else {
-        let mut aligned = Vec::with_capacity(frames.len());
-        for (i, frame) in frames.iter().enumerate() {
+        align_frames_sequential(frames, reference, reference_idx)
+    }
+}
+
+fn align_frames_parallel(
+    frames: &[Frame],
+    reference: &Frame,
+    reference_idx: usize,
+) -> Result<Vec<Frame>> {
+    let results: Vec<Result<Frame>> = frames
+        .par_iter()
+        .enumerate()
+        .map(|(i, frame)| {
             if i == reference_idx {
-                aligned.push(frame.clone());
+                Ok(frame.clone())
             } else {
                 let offset = compute_offset(reference, frame)?;
-                aligned.push(shift_frame(frame, &offset));
+                Ok(shift_frame(frame, &offset))
             }
+        })
+        .collect();
+    results.into_iter().collect()
+}
+
+fn align_frames_sequential(
+    frames: &[Frame],
+    reference: &Frame,
+    reference_idx: usize,
+) -> Result<Vec<Frame>> {
+    let mut aligned = Vec::with_capacity(frames.len());
+    for (i, frame) in frames.iter().enumerate() {
+        if i == reference_idx {
+            aligned.push(frame.clone());
+        } else {
+            let offset = compute_offset(reference, frame)?;
+            aligned.push(shift_frame(frame, &offset));
         }
-        Ok(aligned)
     }
+    Ok(aligned)
 }
 
 /// Align a sequence of frames to a reference frame with progress reporting.
@@ -361,44 +401,72 @@ where
     let counter = AtomicUsize::new(0);
 
     if frames.len() >= PARALLEL_FRAME_THRESHOLD {
-        let results: Vec<Result<Frame>> = frames
-            .par_iter()
-            .enumerate()
-            .map(|(i, frame)| {
-                let result = if i == reference_idx {
-                    Ok(frame.clone())
-                } else {
-                    let offset =
-                        compute_offset_gpu(&reference.data, &frame.data, backend.as_ref())?;
-                    let shifted_buf =
-                        backend.shift_bilinear(&backend.upload(&frame.data), offset.dx, offset.dy);
-                    let shifted_data = backend.download(&shifted_buf);
-                    Ok(Frame::new(shifted_data, frame.original_bit_depth))
-                };
-                let done = counter.fetch_add(1, Ordering::Relaxed) + 1;
-                on_frame_done(done);
-                result
-            })
-            .collect();
-        results.into_iter().collect()
+        align_frames_gpu_parallel(frames, reference, reference_idx, backend, &counter, &on_frame_done)
     } else {
-        let mut aligned = Vec::with_capacity(frames.len());
-        for (i, frame) in frames.iter().enumerate() {
+        align_frames_gpu_sequential(frames, reference, reference_idx, backend, &counter, &on_frame_done)
+    }
+}
+
+fn align_frames_gpu_parallel<F>(
+    frames: &[Frame],
+    reference: &Frame,
+    reference_idx: usize,
+    backend: Arc<dyn ComputeBackend>,
+    counter: &AtomicUsize,
+    on_frame_done: &F,
+) -> Result<Vec<Frame>>
+where
+    F: Fn(usize) + Send + Sync,
+{
+    let results: Vec<Result<Frame>> = frames
+        .par_iter()
+        .enumerate()
+        .map(|(i, frame)| {
             let result = if i == reference_idx {
-                frame.clone()
+                Ok(frame.clone())
             } else {
-                let offset = compute_offset_gpu(&reference.data, &frame.data, backend.as_ref())?;
+                let offset =
+                    compute_offset_gpu(&reference.data, &frame.data, backend.as_ref())?;
                 let shifted_buf =
                     backend.shift_bilinear(&backend.upload(&frame.data), offset.dx, offset.dy);
                 let shifted_data = backend.download(&shifted_buf);
-                Frame::new(shifted_data, frame.original_bit_depth)
+                Ok(Frame::new(shifted_data, frame.original_bit_depth))
             };
-            aligned.push(result);
             let done = counter.fetch_add(1, Ordering::Relaxed) + 1;
             on_frame_done(done);
-        }
-        Ok(aligned)
+            result
+        })
+        .collect();
+    results.into_iter().collect()
+}
+
+fn align_frames_gpu_sequential<F>(
+    frames: &[Frame],
+    reference: &Frame,
+    reference_idx: usize,
+    backend: Arc<dyn ComputeBackend>,
+    counter: &AtomicUsize,
+    on_frame_done: &F,
+) -> Result<Vec<Frame>>
+where
+    F: Fn(usize) + Send + Sync,
+{
+    let mut aligned = Vec::with_capacity(frames.len());
+    for (i, frame) in frames.iter().enumerate() {
+        let result = if i == reference_idx {
+            frame.clone()
+        } else {
+            let offset = compute_offset_gpu(&reference.data, &frame.data, backend.as_ref())?;
+            let shifted_buf =
+                backend.shift_bilinear(&backend.upload(&frame.data), offset.dx, offset.dy);
+            let shifted_data = backend.download(&shifted_buf);
+            Frame::new(shifted_data, frame.original_bit_depth)
+        };
+        aligned.push(result);
+        let done = counter.fetch_add(1, Ordering::Relaxed) + 1;
+        on_frame_done(done);
     }
+    Ok(aligned)
 }
 
 pub(crate) fn apply_hann(data: &Array2<f32>) -> Array2<f32> {
@@ -480,49 +548,95 @@ where
     let counter = AtomicUsize::new(0);
 
     let results: Vec<Result<AlignmentOffset>> = if frame_indices.len() >= PARALLEL_FRAME_THRESHOLD {
-        frame_indices
-            .par_iter()
-            .enumerate()
-            .map(|(i, &frame_idx)| {
-                let offset = if i == reference_idx {
-                    AlignmentOffset::default()
-                } else {
-                    let target = reader.read_frame(frame_idx)?;
-                    if backend.is_gpu() {
-                        compute_offset_gpu(&reference.data, &target.data, backend.as_ref())?
-                    } else {
-                        compute_offset_array(&reference.data, &target.data)?
-                    }
-                    // target dropped here
-                };
-                let done = counter.fetch_add(1, Ordering::Relaxed) + 1;
-                on_frame_done(done);
-                Ok(offset)
-            })
-            .collect()
+        compute_offsets_streaming_parallel(
+            reader,
+            frame_indices,
+            reference_idx,
+            &reference,
+            backend,
+            &counter,
+            &on_frame_done,
+        )
     } else {
-        frame_indices
-            .iter()
-            .enumerate()
-            .map(|(i, &frame_idx)| {
-                let offset = if i == reference_idx {
-                    AlignmentOffset::default()
-                } else {
-                    let target = reader.read_frame(frame_idx)?;
-                    if backend.is_gpu() {
-                        compute_offset_gpu(&reference.data, &target.data, backend.as_ref())?
-                    } else {
-                        compute_offset_array(&reference.data, &target.data)?
-                    }
-                };
-                let done = counter.fetch_add(1, Ordering::Relaxed) + 1;
-                on_frame_done(done);
-                Ok(offset)
-            })
-            .collect()
+        compute_offsets_streaming_sequential(
+            reader,
+            frame_indices,
+            reference_idx,
+            &reference,
+            backend,
+            &counter,
+            &on_frame_done,
+        )
     };
 
     results.into_iter().collect()
+}
+
+fn compute_offsets_streaming_parallel<F>(
+    reader: &SerReader,
+    frame_indices: &[usize],
+    reference_idx: usize,
+    reference: &Frame,
+    backend: Arc<dyn ComputeBackend>,
+    counter: &AtomicUsize,
+    on_frame_done: &F,
+) -> Vec<Result<AlignmentOffset>>
+where
+    F: Fn(usize) + Send + Sync,
+{
+    frame_indices
+        .par_iter()
+        .enumerate()
+        .map(|(i, &frame_idx)| {
+            let offset = if i == reference_idx {
+                AlignmentOffset::default()
+            } else {
+                let target = reader.read_frame(frame_idx)?;
+                if backend.is_gpu() {
+                    compute_offset_gpu(&reference.data, &target.data, backend.as_ref())?
+                } else {
+                    compute_offset_array(&reference.data, &target.data)?
+                }
+                // target dropped here
+            };
+            let done = counter.fetch_add(1, Ordering::Relaxed) + 1;
+            on_frame_done(done);
+            Ok(offset)
+        })
+        .collect()
+}
+
+fn compute_offsets_streaming_sequential<F>(
+    reader: &SerReader,
+    frame_indices: &[usize],
+    reference_idx: usize,
+    reference: &Frame,
+    backend: Arc<dyn ComputeBackend>,
+    counter: &AtomicUsize,
+    on_frame_done: &F,
+) -> Vec<Result<AlignmentOffset>>
+where
+    F: Fn(usize) + Send + Sync,
+{
+    frame_indices
+        .iter()
+        .enumerate()
+        .map(|(i, &frame_idx)| {
+            let offset = if i == reference_idx {
+                AlignmentOffset::default()
+            } else {
+                let target = reader.read_frame(frame_idx)?;
+                if backend.is_gpu() {
+                    compute_offset_gpu(&reference.data, &target.data, backend.as_ref())?
+                } else {
+                    compute_offset_array(&reference.data, &target.data)?
+                }
+            };
+            let done = counter.fetch_add(1, Ordering::Relaxed) + 1;
+            on_frame_done(done);
+            Ok(offset)
+        })
+        .collect()
 }
 
 pub fn bilinear_sample(data: &Array2<f32>, y: f64, x: f64) -> f32 {

@@ -190,42 +190,30 @@ pub fn drizzle_stack_with_progress(
     };
 
     let accumulator = if frames.len() >= PARALLEL_FRAME_THRESHOLD {
-        // Parallel: each frame gets its own accumulator, then merge.
-        let done = AtomicUsize::new(0);
-        let accumulators: Vec<DrizzleAccumulator> = frames
-            .par_iter()
-            .zip(offsets.par_iter())
-            .zip(frame_weights.par_iter())
-            .map(|((frame, offset), &weight)| {
-                let mut acc = DrizzleAccumulator::new(h, w, config.scale);
-                drizzle_frame_into(
-                    &frame.data,
-                    offset,
-                    config.scale,
-                    config.pixfrac,
-                    weight,
-                    &mut acc,
-                );
-                let completed = done.fetch_add(1, Ordering::Relaxed) + 1;
-                on_progress(completed);
-                acc
-            })
-            .collect();
-
-        let mut final_acc = DrizzleAccumulator::new(h, w, config.scale);
-        for acc in &accumulators {
-            final_acc.merge(acc);
-        }
-        final_acc
+        drizzle_stack_parallel(frames, offsets, config, &frame_weights, h, w, &on_progress)
     } else {
-        // Sequential: single accumulator.
-        let mut acc = DrizzleAccumulator::new(h, w, config.scale);
-        for (i, ((frame, offset), &weight)) in frames
-            .iter()
-            .zip(offsets.iter())
-            .zip(frame_weights.iter())
-            .enumerate()
-        {
+        drizzle_stack_sequential(frames, offsets, config, &frame_weights, h, w, &on_progress)
+    };
+
+    Ok(accumulator.finalize(bit_depth))
+}
+
+fn drizzle_stack_parallel(
+    frames: &[Frame],
+    offsets: &[AlignmentOffset],
+    config: &DrizzleConfig,
+    frame_weights: &[f32],
+    h: usize,
+    w: usize,
+    on_progress: &(impl Fn(usize) + Send + Sync),
+) -> DrizzleAccumulator {
+    let done = AtomicUsize::new(0);
+    let accumulators: Vec<DrizzleAccumulator> = frames
+        .par_iter()
+        .zip(offsets.par_iter())
+        .zip(frame_weights.par_iter())
+        .map(|((frame, offset), &weight)| {
+            let mut acc = DrizzleAccumulator::new(h, w, config.scale);
             drizzle_frame_into(
                 &frame.data,
                 offset,
@@ -234,12 +222,46 @@ pub fn drizzle_stack_with_progress(
                 weight,
                 &mut acc,
             );
-            on_progress(i + 1);
-        }
-        acc
-    };
+            let completed = done.fetch_add(1, Ordering::Relaxed) + 1;
+            on_progress(completed);
+            acc
+        })
+        .collect();
 
-    Ok(accumulator.finalize(bit_depth))
+    let mut final_acc = DrizzleAccumulator::new(h, w, config.scale);
+    for acc in &accumulators {
+        final_acc.merge(acc);
+    }
+    final_acc
+}
+
+fn drizzle_stack_sequential(
+    frames: &[Frame],
+    offsets: &[AlignmentOffset],
+    config: &DrizzleConfig,
+    frame_weights: &[f32],
+    h: usize,
+    w: usize,
+    on_progress: &(impl Fn(usize) + Send + Sync),
+) -> DrizzleAccumulator {
+    let mut acc = DrizzleAccumulator::new(h, w, config.scale);
+    for (i, ((frame, offset), &weight)) in frames
+        .iter()
+        .zip(offsets.iter())
+        .zip(frame_weights.iter())
+        .enumerate()
+    {
+        drizzle_frame_into(
+            &frame.data,
+            offset,
+            config.scale,
+            config.pixfrac,
+            weight,
+            &mut acc,
+        );
+        on_progress(i + 1);
+    }
+    acc
 }
 
 /// Project one input frame onto the output grid.

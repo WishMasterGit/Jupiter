@@ -39,94 +39,120 @@ fn make_gaussian_kernel(sigma: f32) -> Vec<f32> {
 
 fn convolve_rows(data: &Array2<f32>, kernel: &[f32]) -> Array2<f32> {
     let (h, w) = data.dim();
-    let radius = kernel.len() / 2;
-
     if h * w >= PARALLEL_PIXEL_THRESHOLD {
-        let rows: Vec<Vec<f32>> = (0..h)
-            .into_par_iter()
-            .map(|row| {
-                (0..w)
-                    .map(|col| {
-                        let mut sum = 0.0f32;
-                        for (ki, &kv) in kernel.iter().enumerate() {
-                            let src_col = (col as isize + ki as isize - radius as isize)
-                                .clamp(0, w as isize - 1)
-                                as usize;
-                            sum += data[[row, src_col]] * kv;
-                        }
-                        sum
-                    })
-                    .collect()
-            })
-            .collect();
-
-        let mut result = Array2::<f32>::zeros((h, w));
-        for (row, row_data) in rows.into_iter().enumerate() {
-            for (col, val) in row_data.into_iter().enumerate() {
-                result[[row, col]] = val;
-            }
-        }
-        result
+        convolve_rows_parallel(data, kernel, h, w)
     } else {
-        let mut result = Array2::<f32>::zeros((h, w));
-        for row in 0..h {
-            for col in 0..w {
-                let mut sum = 0.0f32;
-                for (ki, &kv) in kernel.iter().enumerate() {
-                    let src_col = (col as isize + ki as isize - radius as isize)
-                        .clamp(0, w as isize - 1) as usize;
-                    sum += data[[row, src_col]] * kv;
-                }
-                result[[row, col]] = sum;
-            }
-        }
-        result
+        convolve_rows_sequential(data, kernel, h, w)
     }
+}
+
+fn convolve_rows_parallel(data: &Array2<f32>, kernel: &[f32], h: usize, w: usize) -> Array2<f32> {
+    let radius = kernel.len() / 2;
+    let rows: Vec<Vec<f32>> = (0..h)
+        .into_par_iter()
+        .map(|row| {
+            (0..w)
+                .map(|col| {
+                    let mut sum = 0.0f32;
+                    for (ki, &kv) in kernel.iter().enumerate() {
+                        let src_col = (col as isize + ki as isize - radius as isize)
+                            .clamp(0, w as isize - 1)
+                            as usize;
+                        sum += data[[row, src_col]] * kv;
+                    }
+                    sum
+                })
+                .collect()
+        })
+        .collect();
+
+    let mut result = Array2::<f32>::zeros((h, w));
+    for (row, row_data) in rows.into_iter().enumerate() {
+        for (col, val) in row_data.into_iter().enumerate() {
+            result[[row, col]] = val;
+        }
+    }
+    result
+}
+
+fn convolve_rows_sequential(
+    data: &Array2<f32>,
+    kernel: &[f32],
+    h: usize,
+    w: usize,
+) -> Array2<f32> {
+    let radius = kernel.len() / 2;
+    let mut result = Array2::<f32>::zeros((h, w));
+    for row in 0..h {
+        for col in 0..w {
+            let mut sum = 0.0f32;
+            for (ki, &kv) in kernel.iter().enumerate() {
+                let src_col = (col as isize + ki as isize - radius as isize)
+                    .clamp(0, w as isize - 1) as usize;
+                sum += data[[row, src_col]] * kv;
+            }
+            result[[row, col]] = sum;
+        }
+    }
+    result
 }
 
 fn convolve_cols(data: &Array2<f32>, kernel: &[f32]) -> Array2<f32> {
     let (h, w) = data.dim();
-    let radius = kernel.len() / 2;
-
     if h * w >= PARALLEL_PIXEL_THRESHOLD {
-        let rows: Vec<Vec<f32>> = (0..h)
-            .into_par_iter()
-            .map(|row| {
-                (0..w)
-                    .map(|col| {
-                        let mut sum = 0.0f32;
-                        for (ki, &kv) in kernel.iter().enumerate() {
-                            let src_row = (row as isize + ki as isize - radius as isize)
-                                .clamp(0, h as isize - 1)
-                                as usize;
-                            sum += data[[src_row, col]] * kv;
-                        }
-                        sum
-                    })
-                    .collect()
-            })
-            .collect();
-
-        let mut result = Array2::<f32>::zeros((h, w));
-        for (row, row_data) in rows.into_iter().enumerate() {
-            for (col, val) in row_data.into_iter().enumerate() {
-                result[[row, col]] = val;
-            }
-        }
-        result
+        convolve_cols_parallel(data, kernel, h, w)
     } else {
-        let mut result = Array2::<f32>::zeros((h, w));
-        for row in 0..h {
-            for col in 0..w {
-                let mut sum = 0.0f32;
-                for (ki, &kv) in kernel.iter().enumerate() {
-                    let src_row = (row as isize + ki as isize - radius as isize)
-                        .clamp(0, h as isize - 1) as usize;
-                    sum += data[[src_row, col]] * kv;
-                }
-                result[[row, col]] = sum;
-            }
-        }
-        result
+        convolve_cols_sequential(data, kernel, h, w)
     }
+}
+
+fn convolve_cols_parallel(data: &Array2<f32>, kernel: &[f32], h: usize, w: usize) -> Array2<f32> {
+    let radius = kernel.len() / 2;
+    let rows: Vec<Vec<f32>> = (0..h)
+        .into_par_iter()
+        .map(|row| {
+            (0..w)
+                .map(|col| {
+                    let mut sum = 0.0f32;
+                    for (ki, &kv) in kernel.iter().enumerate() {
+                        let src_row = (row as isize + ki as isize - radius as isize)
+                            .clamp(0, h as isize - 1)
+                            as usize;
+                        sum += data[[src_row, col]] * kv;
+                    }
+                    sum
+                })
+                .collect()
+        })
+        .collect();
+
+    let mut result = Array2::<f32>::zeros((h, w));
+    for (row, row_data) in rows.into_iter().enumerate() {
+        for (col, val) in row_data.into_iter().enumerate() {
+            result[[row, col]] = val;
+        }
+    }
+    result
+}
+
+fn convolve_cols_sequential(
+    data: &Array2<f32>,
+    kernel: &[f32],
+    h: usize,
+    w: usize,
+) -> Array2<f32> {
+    let radius = kernel.len() / 2;
+    let mut result = Array2::<f32>::zeros((h, w));
+    for row in 0..h {
+        for col in 0..w {
+            let mut sum = 0.0f32;
+            for (ki, &kv) in kernel.iter().enumerate() {
+                let src_row = (row as isize + ki as isize - radius as isize)
+                    .clamp(0, h as isize - 1) as usize;
+                sum += data[[src_row, col]] * kv;
+            }
+            result[[row, col]] = sum;
+        }
+    }
+    result
 }

@@ -18,44 +18,52 @@ pub fn median_stack(frames: &[Frame]) -> Result<Frame> {
     let n = frames.len();
 
     if h * w >= PARALLEL_PIXEL_THRESHOLD && n > 1 {
-        // Row-parallel: each row allocates its own pixel_values
-        let rows: Vec<Vec<f32>> = (0..h)
-            .into_par_iter()
-            .map(|row| {
-                let mut pixel_values = vec![0.0f32; n];
-                let mut row_result = vec![0.0f32; w];
-                for (col, result) in row_result.iter_mut().enumerate() {
-                    for (i, frame) in frames.iter().enumerate() {
-                        pixel_values[i] = frame.data[[row, col]];
-                    }
-                    *result = compute_median(&mut pixel_values, n);
-                }
-                row_result
-            })
-            .collect();
-
-        let mut result = Array2::<f32>::zeros((h, w));
-        for (row, row_data) in rows.into_iter().enumerate() {
-            for (col, val) in row_data.into_iter().enumerate() {
-                result[[row, col]] = val;
-            }
-        }
-        Ok(Frame::new(result, frames[0].original_bit_depth))
+        median_stack_parallel(frames, h, w, n)
     } else {
-        // Sequential for small images
-        let mut result = Array2::<f32>::zeros((h, w));
-        let mut pixel_values = vec![0.0f32; n];
+        median_stack_sequential(frames, h, w, n)
+    }
+}
 
-        for row in 0..h {
-            for col in 0..w {
+fn median_stack_parallel(frames: &[Frame], h: usize, w: usize, n: usize) -> Result<Frame> {
+    // Row-parallel: each row allocates its own pixel_values
+    let rows: Vec<Vec<f32>> = (0..h)
+        .into_par_iter()
+        .map(|row| {
+            let mut pixel_values = vec![0.0f32; n];
+            let mut row_result = vec![0.0f32; w];
+            for (col, result) in row_result.iter_mut().enumerate() {
                 for (i, frame) in frames.iter().enumerate() {
                     pixel_values[i] = frame.data[[row, col]];
                 }
-                result[[row, col]] = compute_median(&mut pixel_values, n);
+                *result = compute_median(&mut pixel_values, n);
             }
+            row_result
+        })
+        .collect();
+
+    let mut result = Array2::<f32>::zeros((h, w));
+    for (row, row_data) in rows.into_iter().enumerate() {
+        for (col, val) in row_data.into_iter().enumerate() {
+            result[[row, col]] = val;
         }
-        Ok(Frame::new(result, frames[0].original_bit_depth))
     }
+    Ok(Frame::new(result, frames[0].original_bit_depth))
+}
+
+fn median_stack_sequential(frames: &[Frame], h: usize, w: usize, n: usize) -> Result<Frame> {
+    // Sequential for small images
+    let mut result = Array2::<f32>::zeros((h, w));
+    let mut pixel_values = vec![0.0f32; n];
+
+    for row in 0..h {
+        for col in 0..w {
+            for (i, frame) in frames.iter().enumerate() {
+                pixel_values[i] = frame.data[[row, col]];
+            }
+            result[[row, col]] = compute_median(&mut pixel_values, n);
+        }
+    }
+    Ok(Frame::new(result, frames[0].original_bit_depth))
 }
 
 fn compute_median(pixel_values: &mut [f32], n: usize) -> f32 {

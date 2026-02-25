@@ -95,38 +95,10 @@ impl ComputeBackend for CpuBackend {
     fn shift_bilinear(&self, input: &GpuBuffer, dx: f64, dy: f64) -> GpuBuffer {
         let data = cpu_array(input);
         let (h, w) = data.dim();
-
         if h * w >= PARALLEL_PIXEL_THRESHOLD {
-            let rows: Vec<Vec<f32>> = (0..h)
-                .into_par_iter()
-                .map(|row| {
-                    (0..w)
-                        .map(|col| {
-                            let src_y = row as f64 - dy;
-                            let src_x = col as f64 - dx;
-                            bilinear_sample(data, src_y, src_x)
-                        })
-                        .collect()
-                })
-                .collect();
-
-            let mut result = Array2::<f32>::zeros((h, w));
-            for (row, row_data) in rows.into_iter().enumerate() {
-                for (col, val) in row_data.into_iter().enumerate() {
-                    result[[row, col]] = val;
-                }
-            }
-            GpuBuffer::from_array(result)
+            shift_bilinear_parallel(data, dx, dy, h, w)
         } else {
-            let mut result = Array2::<f32>::zeros((h, w));
-            for row in 0..h {
-                for col in 0..w {
-                    let src_y = row as f64 - dy;
-                    let src_x = col as f64 - dx;
-                    result[[row, col]] = bilinear_sample(data, src_y, src_x);
-                }
-            }
-            GpuBuffer::from_array(result)
+            shift_bilinear_sequential(data, dx, dy, h, w)
         }
     }
 
@@ -227,51 +199,71 @@ pub fn fft2d_forward(data: &Array2<f32>) -> Array2<Complex<f64>> {
     }
 
     if h * w >= PARALLEL_PIXEL_THRESHOLD {
-        let processed_rows: Vec<Vec<Complex<f64>>> = (0..h)
-            .into_par_iter()
-            .map(|row| {
-                let mut row_data: Vec<Complex<f64>> = (0..w).map(|c| result[[row, c]]).collect();
-                fft_row.process(&mut row_data);
-                row_data
-            })
-            .collect();
-        for (row, row_data) in processed_rows.into_iter().enumerate() {
-            for (col, val) in row_data.into_iter().enumerate() {
-                result[[row, col]] = val;
-            }
-        }
-
-        let processed_cols: Vec<Vec<Complex<f64>>> = (0..w)
-            .into_par_iter()
-            .map(|col| {
-                let mut col_data: Vec<Complex<f64>> = (0..h).map(|r| result[[r, col]]).collect();
-                fft_col.process(&mut col_data);
-                col_data
-            })
-            .collect();
-        for (col, col_data) in processed_cols.into_iter().enumerate() {
-            for (row, val) in col_data.into_iter().enumerate() {
-                result[[row, col]] = val;
-            }
-        }
+        fft2d_forward_parallel(&mut result, &fft_row, &fft_col, h, w);
     } else {
-        for row in 0..h {
-            let mut row_data: Vec<Complex<f64>> = (0..w).map(|c| result[[row, c]]).collect();
-            fft_row.process(&mut row_data);
-            for col in 0..w {
-                result[[row, col]] = row_data[col];
-            }
-        }
-        for col in 0..w {
-            let mut col_data: Vec<Complex<f64>> = (0..h).map(|r| result[[r, col]]).collect();
-            fft_col.process(&mut col_data);
-            for row in 0..h {
-                result[[row, col]] = col_data[row];
-            }
-        }
+        fft2d_forward_sequential(&mut result, &fft_row, &fft_col, h, w);
     }
 
     result
+}
+
+fn fft2d_forward_parallel(
+    result: &mut Array2<Complex<f64>>,
+    fft_row: &std::sync::Arc<dyn rustfft::Fft<f64>>,
+    fft_col: &std::sync::Arc<dyn rustfft::Fft<f64>>,
+    h: usize,
+    w: usize,
+) {
+    let processed_rows: Vec<Vec<Complex<f64>>> = (0..h)
+        .into_par_iter()
+        .map(|row| {
+            let mut row_data: Vec<Complex<f64>> = (0..w).map(|c| result[[row, c]]).collect();
+            fft_row.process(&mut row_data);
+            row_data
+        })
+        .collect();
+    for (row, row_data) in processed_rows.into_iter().enumerate() {
+        for (col, val) in row_data.into_iter().enumerate() {
+            result[[row, col]] = val;
+        }
+    }
+
+    let processed_cols: Vec<Vec<Complex<f64>>> = (0..w)
+        .into_par_iter()
+        .map(|col| {
+            let mut col_data: Vec<Complex<f64>> = (0..h).map(|r| result[[r, col]]).collect();
+            fft_col.process(&mut col_data);
+            col_data
+        })
+        .collect();
+    for (col, col_data) in processed_cols.into_iter().enumerate() {
+        for (row, val) in col_data.into_iter().enumerate() {
+            result[[row, col]] = val;
+        }
+    }
+}
+
+fn fft2d_forward_sequential(
+    result: &mut Array2<Complex<f64>>,
+    fft_row: &std::sync::Arc<dyn rustfft::Fft<f64>>,
+    fft_col: &std::sync::Arc<dyn rustfft::Fft<f64>>,
+    h: usize,
+    w: usize,
+) {
+    for row in 0..h {
+        let mut row_data: Vec<Complex<f64>> = (0..w).map(|c| result[[row, c]]).collect();
+        fft_row.process(&mut row_data);
+        for col in 0..w {
+            result[[row, col]] = row_data[col];
+        }
+    }
+    for col in 0..w {
+        let mut col_data: Vec<Complex<f64>> = (0..h).map(|r| result[[r, col]]).collect();
+        fft_col.process(&mut col_data);
+        for row in 0..h {
+            result[[row, col]] = col_data[row];
+        }
+    }
 }
 
 /// 2D inverse FFT, returning real part normalized by `1/(h*w)`.
@@ -284,48 +276,9 @@ pub fn ifft2d_inverse(data: &Array2<Complex<f64>>) -> Array2<f64> {
     let mut work = data.clone();
 
     if h * w >= PARALLEL_PIXEL_THRESHOLD {
-        let processed_cols: Vec<Vec<Complex<f64>>> = (0..w)
-            .into_par_iter()
-            .map(|col| {
-                let mut col_data: Vec<Complex<f64>> = (0..h).map(|r| work[[r, col]]).collect();
-                ifft_col.process(&mut col_data);
-                col_data
-            })
-            .collect();
-        for (col, col_data) in processed_cols.into_iter().enumerate() {
-            for (row, val) in col_data.into_iter().enumerate() {
-                work[[row, col]] = val;
-            }
-        }
-
-        let processed_rows: Vec<Vec<Complex<f64>>> = (0..h)
-            .into_par_iter()
-            .map(|row| {
-                let mut row_data: Vec<Complex<f64>> = (0..w).map(|c| work[[row, c]]).collect();
-                ifft_row.process(&mut row_data);
-                row_data
-            })
-            .collect();
-        for (row, row_data) in processed_rows.into_iter().enumerate() {
-            for (col, val) in row_data.into_iter().enumerate() {
-                work[[row, col]] = val;
-            }
-        }
+        ifft2d_inverse_parallel(&mut work, &ifft_row, &ifft_col, h, w);
     } else {
-        for col in 0..w {
-            let mut col_data: Vec<Complex<f64>> = (0..h).map(|r| work[[r, col]]).collect();
-            ifft_col.process(&mut col_data);
-            for row in 0..h {
-                work[[row, col]] = col_data[row];
-            }
-        }
-        for row in 0..h {
-            let mut row_data: Vec<Complex<f64>> = (0..w).map(|c| work[[row, c]]).collect();
-            ifft_row.process(&mut row_data);
-            for col in 0..w {
-                work[[row, col]] = row_data[col];
-            }
-        }
+        ifft2d_inverse_sequential(&mut work, &ifft_row, &ifft_col, h, w);
     }
 
     let scale = 1.0 / (h * w) as f64;
@@ -337,6 +290,65 @@ pub fn ifft2d_inverse(data: &Array2<Complex<f64>>) -> Array2<f64> {
     }
 
     result
+}
+
+fn ifft2d_inverse_parallel(
+    work: &mut Array2<Complex<f64>>,
+    ifft_row: &std::sync::Arc<dyn rustfft::Fft<f64>>,
+    ifft_col: &std::sync::Arc<dyn rustfft::Fft<f64>>,
+    h: usize,
+    w: usize,
+) {
+    let processed_cols: Vec<Vec<Complex<f64>>> = (0..w)
+        .into_par_iter()
+        .map(|col| {
+            let mut col_data: Vec<Complex<f64>> = (0..h).map(|r| work[[r, col]]).collect();
+            ifft_col.process(&mut col_data);
+            col_data
+        })
+        .collect();
+    for (col, col_data) in processed_cols.into_iter().enumerate() {
+        for (row, val) in col_data.into_iter().enumerate() {
+            work[[row, col]] = val;
+        }
+    }
+
+    let processed_rows: Vec<Vec<Complex<f64>>> = (0..h)
+        .into_par_iter()
+        .map(|row| {
+            let mut row_data: Vec<Complex<f64>> = (0..w).map(|c| work[[row, c]]).collect();
+            ifft_row.process(&mut row_data);
+            row_data
+        })
+        .collect();
+    for (row, row_data) in processed_rows.into_iter().enumerate() {
+        for (col, val) in row_data.into_iter().enumerate() {
+            work[[row, col]] = val;
+        }
+    }
+}
+
+fn ifft2d_inverse_sequential(
+    work: &mut Array2<Complex<f64>>,
+    ifft_row: &std::sync::Arc<dyn rustfft::Fft<f64>>,
+    ifft_col: &std::sync::Arc<dyn rustfft::Fft<f64>>,
+    h: usize,
+    w: usize,
+) {
+    for col in 0..w {
+        let mut col_data: Vec<Complex<f64>> = (0..h).map(|r| work[[r, col]]).collect();
+        ifft_col.process(&mut col_data);
+        for row in 0..h {
+            work[[row, col]] = col_data[row];
+        }
+    }
+    for row in 0..h {
+        let mut row_data: Vec<Complex<f64>> = (0..w).map(|c| work[[row, c]]).collect();
+        ifft_row.process(&mut row_data);
+        for col in 0..w {
+            work[[row, col]] = row_data[col];
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -426,104 +438,187 @@ pub fn bilinear_sample(data: &Array2<f32>, y: f64, x: f64) -> f32 {
     v00 * (1.0 - fx) * (1.0 - fy) + v10 * fx * (1.0 - fy) + v01 * (1.0 - fx) * fy + v11 * fx * fy
 }
 
+fn shift_bilinear_parallel(
+    data: &Array2<f32>,
+    dx: f64,
+    dy: f64,
+    h: usize,
+    w: usize,
+) -> GpuBuffer {
+    let rows: Vec<Vec<f32>> = (0..h)
+        .into_par_iter()
+        .map(|row| {
+            (0..w)
+                .map(|col| {
+                    let src_y = row as f64 - dy;
+                    let src_x = col as f64 - dx;
+                    bilinear_sample(data, src_y, src_x)
+                })
+                .collect()
+        })
+        .collect();
+
+    let mut result = Array2::<f32>::zeros((h, w));
+    for (row, row_data) in rows.into_iter().enumerate() {
+        for (col, val) in row_data.into_iter().enumerate() {
+            result[[row, col]] = val;
+        }
+    }
+    GpuBuffer::from_array(result)
+}
+
+fn shift_bilinear_sequential(
+    data: &Array2<f32>,
+    dx: f64,
+    dy: f64,
+    h: usize,
+    w: usize,
+) -> GpuBuffer {
+    let mut result = Array2::<f32>::zeros((h, w));
+    for row in 0..h {
+        for col in 0..w {
+            let src_y = row as f64 - dy;
+            let src_x = col as f64 - dx;
+            result[[row, col]] = bilinear_sample(data, src_y, src_x);
+        }
+    }
+    GpuBuffer::from_array(result)
+}
+
 // ---------------------------------------------------------------------------
 // Separable convolution (clamped boundary, for gaussian blur)
 // ---------------------------------------------------------------------------
 
 fn convolve_rows_clamped(data: &Array2<f32>, kernel: &[f32]) -> Array2<f32> {
     let (h, w) = data.dim();
-    let radius = kernel.len() / 2;
-
     if h * w >= PARALLEL_PIXEL_THRESHOLD {
-        let rows: Vec<Vec<f32>> = (0..h)
-            .into_par_iter()
-            .map(|row| {
-                (0..w)
-                    .map(|col| {
-                        let mut sum = 0.0f32;
-                        for (k, &kv) in kernel.iter().enumerate() {
-                            let c = (col as isize + k as isize - radius as isize)
-                                .max(0)
-                                .min(w as isize - 1) as usize;
-                            sum += data[[row, c]] * kv;
-                        }
-                        sum
-                    })
-                    .collect()
-            })
-            .collect();
-
-        let mut result = Array2::<f32>::zeros((h, w));
-        for (row, row_data) in rows.into_iter().enumerate() {
-            for (col, val) in row_data.into_iter().enumerate() {
-                result[[row, col]] = val;
-            }
-        }
-        result
+        convolve_rows_clamped_parallel(data, kernel, h, w)
     } else {
-        let mut result = Array2::<f32>::zeros((h, w));
-        for row in 0..h {
-            for col in 0..w {
-                let mut sum = 0.0f32;
-                for (k, &kv) in kernel.iter().enumerate() {
-                    let c = (col as isize + k as isize - radius as isize)
-                        .max(0)
-                        .min(w as isize - 1) as usize;
-                    sum += data[[row, c]] * kv;
-                }
-                result[[row, col]] = sum;
-            }
-        }
-        result
+        convolve_rows_clamped_sequential(data, kernel, h, w)
     }
+}
+
+fn convolve_rows_clamped_parallel(
+    data: &Array2<f32>,
+    kernel: &[f32],
+    h: usize,
+    w: usize,
+) -> Array2<f32> {
+    let radius = kernel.len() / 2;
+    let rows: Vec<Vec<f32>> = (0..h)
+        .into_par_iter()
+        .map(|row| {
+            (0..w)
+                .map(|col| {
+                    let mut sum = 0.0f32;
+                    for (k, &kv) in kernel.iter().enumerate() {
+                        let c = (col as isize + k as isize - radius as isize)
+                            .max(0)
+                            .min(w as isize - 1) as usize;
+                        sum += data[[row, c]] * kv;
+                    }
+                    sum
+                })
+                .collect()
+        })
+        .collect();
+
+    let mut result = Array2::<f32>::zeros((h, w));
+    for (row, row_data) in rows.into_iter().enumerate() {
+        for (col, val) in row_data.into_iter().enumerate() {
+            result[[row, col]] = val;
+        }
+    }
+    result
+}
+
+fn convolve_rows_clamped_sequential(
+    data: &Array2<f32>,
+    kernel: &[f32],
+    h: usize,
+    w: usize,
+) -> Array2<f32> {
+    let radius = kernel.len() / 2;
+    let mut result = Array2::<f32>::zeros((h, w));
+    for row in 0..h {
+        for col in 0..w {
+            let mut sum = 0.0f32;
+            for (k, &kv) in kernel.iter().enumerate() {
+                let c = (col as isize + k as isize - radius as isize)
+                    .max(0)
+                    .min(w as isize - 1) as usize;
+                sum += data[[row, c]] * kv;
+            }
+            result[[row, col]] = sum;
+        }
+    }
+    result
 }
 
 fn convolve_cols_clamped(data: &Array2<f32>, kernel: &[f32]) -> Array2<f32> {
     let (h, w) = data.dim();
-    let radius = kernel.len() / 2;
-
     if h * w >= PARALLEL_PIXEL_THRESHOLD {
-        let rows: Vec<Vec<f32>> = (0..h)
-            .into_par_iter()
-            .map(|row| {
-                (0..w)
-                    .map(|col| {
-                        let mut sum = 0.0f32;
-                        for (k, &kv) in kernel.iter().enumerate() {
-                            let r = (row as isize + k as isize - radius as isize)
-                                .max(0)
-                                .min(h as isize - 1) as usize;
-                            sum += data[[r, col]] * kv;
-                        }
-                        sum
-                    })
-                    .collect()
-            })
-            .collect();
-
-        let mut result = Array2::<f32>::zeros((h, w));
-        for (row, row_data) in rows.into_iter().enumerate() {
-            for (col, val) in row_data.into_iter().enumerate() {
-                result[[row, col]] = val;
-            }
-        }
-        result
+        convolve_cols_clamped_parallel(data, kernel, h, w)
     } else {
-        let mut result = Array2::<f32>::zeros((h, w));
-        for row in 0..h {
-            for col in 0..w {
-                let mut sum = 0.0f32;
-                for (k, &kv) in kernel.iter().enumerate() {
-                    let r = (row as isize + k as isize - radius as isize)
-                        .max(0)
-                        .min(h as isize - 1) as usize;
-                    sum += data[[r, col]] * kv;
-                }
-                result[[row, col]] = sum;
-            }
-        }
-        result
+        convolve_cols_clamped_sequential(data, kernel, h, w)
     }
+}
+
+fn convolve_cols_clamped_parallel(
+    data: &Array2<f32>,
+    kernel: &[f32],
+    h: usize,
+    w: usize,
+) -> Array2<f32> {
+    let radius = kernel.len() / 2;
+    let rows: Vec<Vec<f32>> = (0..h)
+        .into_par_iter()
+        .map(|row| {
+            (0..w)
+                .map(|col| {
+                    let mut sum = 0.0f32;
+                    for (k, &kv) in kernel.iter().enumerate() {
+                        let r = (row as isize + k as isize - radius as isize)
+                            .max(0)
+                            .min(h as isize - 1) as usize;
+                        sum += data[[r, col]] * kv;
+                    }
+                    sum
+                })
+                .collect()
+        })
+        .collect();
+
+    let mut result = Array2::<f32>::zeros((h, w));
+    for (row, row_data) in rows.into_iter().enumerate() {
+        for (col, val) in row_data.into_iter().enumerate() {
+            result[[row, col]] = val;
+        }
+    }
+    result
+}
+
+fn convolve_cols_clamped_sequential(
+    data: &Array2<f32>,
+    kernel: &[f32],
+    h: usize,
+    w: usize,
+) -> Array2<f32> {
+    let radius = kernel.len() / 2;
+    let mut result = Array2::<f32>::zeros((h, w));
+    for row in 0..h {
+        for col in 0..w {
+            let mut sum = 0.0f32;
+            for (k, &kv) in kernel.iter().enumerate() {
+                let r = (row as isize + k as isize - radius as isize)
+                    .max(0)
+                    .min(h as isize - 1) as usize;
+                sum += data[[r, col]] * kv;
+            }
+            result[[row, col]] = sum;
+        }
+    }
+    result
 }
 
 // ---------------------------------------------------------------------------
@@ -552,92 +647,132 @@ fn mirror_index(idx: isize, size: usize) -> usize {
 
 fn convolve_rows_atrous(data: &Array2<f32>, kernel: &[f32; 5], step: usize) -> Array2<f32> {
     let (h, w) = data.dim();
-    let radius = 2isize;
-
     if h * w >= PARALLEL_PIXEL_THRESHOLD {
-        let rows: Vec<Vec<f32>> = (0..h)
-            .into_par_iter()
-            .map(|row| {
-                (0..w)
-                    .map(|col| {
-                        let mut sum = 0.0f32;
-                        for (k, &kval) in kernel.iter().enumerate() {
-                            let offset = (k as isize - radius) * step as isize;
-                            let c = mirror_index(col as isize + offset, w);
-                            sum += data[[row, c]] * kval;
-                        }
-                        sum
-                    })
-                    .collect()
-            })
-            .collect();
-
-        let mut result = Array2::<f32>::zeros((h, w));
-        for (row, row_data) in rows.into_iter().enumerate() {
-            for (col, val) in row_data.into_iter().enumerate() {
-                result[[row, col]] = val;
-            }
-        }
-        result
+        convolve_rows_atrous_parallel(data, kernel, step, h, w)
     } else {
-        let mut result = Array2::<f32>::zeros((h, w));
-        for row in 0..h {
-            for col in 0..w {
-                let mut sum = 0.0f32;
-                for (k, &kval) in kernel.iter().enumerate() {
-                    let offset = (k as isize - radius) * step as isize;
-                    let c = mirror_index(col as isize + offset, w);
-                    sum += data[[row, c]] * kval;
-                }
-                result[[row, col]] = sum;
-            }
-        }
-        result
+        convolve_rows_atrous_sequential(data, kernel, step, h, w)
     }
+}
+
+fn convolve_rows_atrous_parallel(
+    data: &Array2<f32>,
+    kernel: &[f32; 5],
+    step: usize,
+    h: usize,
+    w: usize,
+) -> Array2<f32> {
+    let radius = 2isize;
+    let rows: Vec<Vec<f32>> = (0..h)
+        .into_par_iter()
+        .map(|row| {
+            (0..w)
+                .map(|col| {
+                    let mut sum = 0.0f32;
+                    for (k, &kval) in kernel.iter().enumerate() {
+                        let offset = (k as isize - radius) * step as isize;
+                        let c = mirror_index(col as isize + offset, w);
+                        sum += data[[row, c]] * kval;
+                    }
+                    sum
+                })
+                .collect()
+        })
+        .collect();
+
+    let mut result = Array2::<f32>::zeros((h, w));
+    for (row, row_data) in rows.into_iter().enumerate() {
+        for (col, val) in row_data.into_iter().enumerate() {
+            result[[row, col]] = val;
+        }
+    }
+    result
+}
+
+fn convolve_rows_atrous_sequential(
+    data: &Array2<f32>,
+    kernel: &[f32; 5],
+    step: usize,
+    h: usize,
+    w: usize,
+) -> Array2<f32> {
+    let radius = 2isize;
+    let mut result = Array2::<f32>::zeros((h, w));
+    for row in 0..h {
+        for col in 0..w {
+            let mut sum = 0.0f32;
+            for (k, &kval) in kernel.iter().enumerate() {
+                let offset = (k as isize - radius) * step as isize;
+                let c = mirror_index(col as isize + offset, w);
+                sum += data[[row, c]] * kval;
+            }
+            result[[row, col]] = sum;
+        }
+    }
+    result
 }
 
 fn convolve_cols_atrous(data: &Array2<f32>, kernel: &[f32; 5], step: usize) -> Array2<f32> {
     let (h, w) = data.dim();
-    let radius = 2isize;
-
     if h * w >= PARALLEL_PIXEL_THRESHOLD {
-        let rows: Vec<Vec<f32>> = (0..h)
-            .into_par_iter()
-            .map(|row| {
-                (0..w)
-                    .map(|col| {
-                        let mut sum = 0.0f32;
-                        for (k, &kval) in kernel.iter().enumerate() {
-                            let offset = (k as isize - radius) * step as isize;
-                            let r = mirror_index(row as isize + offset, h);
-                            sum += data[[r, col]] * kval;
-                        }
-                        sum
-                    })
-                    .collect()
-            })
-            .collect();
-
-        let mut result = Array2::<f32>::zeros((h, w));
-        for (row, row_data) in rows.into_iter().enumerate() {
-            for (col, val) in row_data.into_iter().enumerate() {
-                result[[row, col]] = val;
-            }
-        }
-        result
+        convolve_cols_atrous_parallel(data, kernel, step, h, w)
     } else {
-        let mut result = Array2::<f32>::zeros((h, w));
-        for row in 0..h {
-            for col in 0..w {
-                let mut sum = 0.0f32;
-                for (k, &kval) in kernel.iter().enumerate() {
-                    let offset = (k as isize - radius) * step as isize;
-                    let r = mirror_index(row as isize + offset, h);
-                    sum += data[[r, col]] * kval;
-                }
-                result[[row, col]] = sum;
-            }
-        }
-        result
+        convolve_cols_atrous_sequential(data, kernel, step, h, w)
     }
+}
+
+fn convolve_cols_atrous_parallel(
+    data: &Array2<f32>,
+    kernel: &[f32; 5],
+    step: usize,
+    h: usize,
+    w: usize,
+) -> Array2<f32> {
+    let radius = 2isize;
+    let rows: Vec<Vec<f32>> = (0..h)
+        .into_par_iter()
+        .map(|row| {
+            (0..w)
+                .map(|col| {
+                    let mut sum = 0.0f32;
+                    for (k, &kval) in kernel.iter().enumerate() {
+                        let offset = (k as isize - radius) * step as isize;
+                        let r = mirror_index(row as isize + offset, h);
+                        sum += data[[r, col]] * kval;
+                    }
+                    sum
+                })
+                .collect()
+        })
+        .collect();
+
+    let mut result = Array2::<f32>::zeros((h, w));
+    for (row, row_data) in rows.into_iter().enumerate() {
+        for (col, val) in row_data.into_iter().enumerate() {
+            result[[row, col]] = val;
+        }
+    }
+    result
+}
+
+fn convolve_cols_atrous_sequential(
+    data: &Array2<f32>,
+    kernel: &[f32; 5],
+    step: usize,
+    h: usize,
+    w: usize,
+) -> Array2<f32> {
+    let radius = 2isize;
+    let mut result = Array2::<f32>::zeros((h, w));
+    for row in 0..h {
+        for col in 0..w {
+            let mut sum = 0.0f32;
+            for (k, &kval) in kernel.iter().enumerate() {
+                let offset = (k as isize - radius) * step as isize;
+                let r = mirror_index(row as isize + offset, h);
+                sum += data[[r, col]] * kval;
+            }
+            result[[row, col]] = sum;
+        }
+    }
+    result
 }
