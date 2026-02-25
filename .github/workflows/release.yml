@@ -149,6 +149,7 @@ jobs:
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
       - uses: Swatinem/rust-cache@v2
+        if: ${{ !env.ACT }}
 
       - name: Install create-dmg
         run: brew install create-dmg
@@ -161,13 +162,21 @@ jobs:
         if: ${{ env.MACOS_CERTIFICATE != '' }}
         run: |
           echo "$MACOS_CERTIFICATE" | base64 --decode > certificate.p12
+          security delete-keychain build.keychain 2>/dev/null || true
           security create-keychain -p "$MACOS_KEYCHAIN_PASSWORD" build.keychain
-          security default-keychain -s build.keychain
+          security set-keychain-settings -lut 21600 build.keychain
           security unlock-keychain -p "$MACOS_KEYCHAIN_PASSWORD" build.keychain
+          # Import the Developer ID G2 intermediate CA so codesign can build
+          # the full trust chain (leaf → G2 CA → Apple Root CA)
+          curl -fsSL https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer \
+            -o DeveloperIDG2CA.cer
+          security import DeveloperIDG2CA.cer -k build.keychain
           security import certificate.p12 -k build.keychain \
-            -P "$MACOS_CERTIFICATE_PWD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple: \
+            -P "$MACOS_CERTIFICATE_PWD" -A
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
             -s -k "$MACOS_KEYCHAIN_PASSWORD" build.keychain
+          security list-keychains -s build.keychain login.keychain
+          echo "MACOS_KEYCHAIN_PASSWORD=$MACOS_KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
 
       # ── CPU builds ────────────────────────────────────────────────────────────
       - name: Build CPU (aarch64)
@@ -203,21 +212,27 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
 
-          # Build .app bundle
+          # Build .app bundle fresh (avoid stale signatures from previous runs)
+          rm -rf Jupiter.app
           mkdir -p Jupiter.app/Contents/MacOS
           cp universal-cpu/jupiter-gui Jupiter.app/Contents/MacOS/
           sed "s/VERSION_PLACEHOLDER/$VERSION/g" packaging/macos/Info.plist \
             > Jupiter.app/Contents/Info.plist
 
           if [ -n "$APPLE_TEAM_NAME" ]; then
+            # Re-unlock keychain (may have been idle since import step)
+            security unlock-keychain -p "$MACOS_KEYCHAIN_PASSWORD" build.keychain
+
             # Sign app bundle with hardened runtime
             codesign --deep --force --options runtime \
               --entitlements packaging/macos/entitlements.plist \
+              --keychain build.keychain \
               --sign "Developer ID Application: $APPLE_TEAM_NAME" \
               Jupiter.app
 
             # Sign standalone CLI binary
             codesign --force --options runtime \
+              --keychain build.keychain \
               --sign "Developer ID Application: $APPLE_TEAM_NAME" \
               universal-cpu/jupiter
           fi
@@ -228,22 +243,26 @@ jobs:
             --window-size 540 380 \
             --icon-size 128 \
             --app-drop-link 380 170 \
-            --no-internet-enable \
             "jupiter-${VERSION}-macos-universal.dmg" \
             Jupiter.app
 
           if [ -n "$APPLE_TEAM_NAME" ]; then
             # Sign DMG
-            codesign --sign "Developer ID Application: $APPLE_TEAM_NAME" \
+            codesign \
+              --keychain build.keychain \
+              --sign "Developer ID Application: $APPLE_TEAM_NAME" \
               "jupiter-${VERSION}-macos-universal.dmg"
 
-            # Notarize and staple
-            xcrun notarytool submit "jupiter-${VERSION}-macos-universal.dmg" \
-              --apple-id "$APPLE_ID" \
-              --password "$APPLE_APP_SPECIFIC_PASSWORD" \
-              --team-id "$APPLE_TEAM_ID" \
-              --wait
-            xcrun stapler staple "jupiter-${VERSION}-macos-universal.dmg"
+            # Notarize and staple (skip when running locally under act)
+            if [ -z "$ACT" ]; then
+              xcrun notarytool submit "jupiter-${VERSION}-macos-universal.dmg" \
+                --apple-id "$APPLE_ID" \
+                --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+                --team-id "$APPLE_TEAM_ID" \
+                --wait \
+                --timeout 30m
+              xcrun stapler staple "jupiter-${VERSION}-macos-universal.dmg"
+            fi
           fi
 
       # ── GPU builds ────────────────────────────────────────────────────────────
@@ -274,7 +293,6 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
 
-          # Build .app bundle (reuse previous Jupiter.app structure, swap binary)
           rm -rf Jupiter-gpu.app
           mkdir -p Jupiter-gpu.app/Contents/MacOS
           cp universal-gpu/jupiter-gui Jupiter-gpu.app/Contents/MacOS/
@@ -282,14 +300,19 @@ jobs:
             > Jupiter-gpu.app/Contents/Info.plist
 
           if [ -n "$APPLE_TEAM_NAME" ]; then
+            # Re-unlock keychain before signing
+            security unlock-keychain -p "$MACOS_KEYCHAIN_PASSWORD" build.keychain
+
             # Sign app bundle
             codesign --deep --force --options runtime \
               --entitlements packaging/macos/entitlements.plist \
+              --keychain build.keychain \
               --sign "Developer ID Application: $APPLE_TEAM_NAME" \
               Jupiter-gpu.app
 
             # Sign CLI binary
             codesign --force --options runtime \
+              --keychain build.keychain \
               --sign "Developer ID Application: $APPLE_TEAM_NAME" \
               universal-gpu/jupiter
           fi
@@ -300,25 +323,30 @@ jobs:
             --window-size 540 380 \
             --icon-size 128 \
             --app-drop-link 380 170 \
-            --no-internet-enable \
             "jupiter-${VERSION}-macos-universal-gpu.dmg" \
             Jupiter-gpu.app
 
           if [ -n "$APPLE_TEAM_NAME" ]; then
             # Sign DMG
-            codesign --sign "Developer ID Application: $APPLE_TEAM_NAME" \
+            codesign \
+              --keychain build.keychain \
+              --sign "Developer ID Application: $APPLE_TEAM_NAME" \
               "jupiter-${VERSION}-macos-universal-gpu.dmg"
 
-            # Notarize and staple
-            xcrun notarytool submit "jupiter-${VERSION}-macos-universal-gpu.dmg" \
-              --apple-id "$APPLE_ID" \
-              --password "$APPLE_APP_SPECIFIC_PASSWORD" \
-              --team-id "$APPLE_TEAM_ID" \
-              --wait
-            xcrun stapler staple "jupiter-${VERSION}-macos-universal-gpu.dmg"
+            # Notarize and staple (skip when running locally under act)
+            if [ -z "$ACT" ]; then
+              xcrun notarytool submit "jupiter-${VERSION}-macos-universal-gpu.dmg" \
+                --apple-id "$APPLE_ID" \
+                --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+                --team-id "$APPLE_TEAM_ID" \
+                --wait \
+                --timeout 30m
+              xcrun stapler staple "jupiter-${VERSION}-macos-universal-gpu.dmg"
+            fi
           fi
 
       - uses: actions/upload-artifact@v4
+        if: ${{ !env.ACT }}
         with:
           name: macos-packages
           path: jupiter-*.dmg

@@ -19,7 +19,13 @@
       "WebFetch(domain:astroforumspace.com)",
       "Bash(curl:*)",
       "Bash(act:*)",
-      "Bash(echo:*)"
+      "Bash(echo:*)",
+      "Bash(sudo act:*)",
+      "Bash(security find-identity:*)",
+      "Bash(security list-keychains:*)",
+      "Bash(security find-certificate:*)",
+      "Bash(openssl x509:*)",
+      "Bash(tee:*)"
     ]
   }
 }
