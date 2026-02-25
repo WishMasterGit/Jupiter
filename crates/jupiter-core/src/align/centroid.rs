@@ -43,43 +43,20 @@ fn compute_centroid(data: &Array2<f32>, threshold: f32) -> (f64, f64) {
     let cutoff = threshold * max_val;
 
     if h * w >= PARALLEL_PIXEL_THRESHOLD {
-        // Row-parallel: compute partial sums per row, then reduce.
-        let row_sums: Vec<(f64, f64, f64)> = (0..h)
-            .into_par_iter()
-            .map(|row| {
-                let mut sum_r = 0.0f64;
-                let mut sum_c = 0.0f64;
-                let mut sum_w = 0.0f64;
-                for col in 0..w {
-                    let val = data[[row, col]];
-                    if val > cutoff {
-                        let weight = val as f64;
-                        sum_r += row as f64 * weight;
-                        sum_c += col as f64 * weight;
-                        sum_w += weight;
-                    }
-                }
-                (sum_r, sum_c, sum_w)
-            })
-            .collect();
-
-        let (total_r, total_c, total_w) = row_sums
-            .into_iter()
-            .fold((0.0, 0.0, 0.0), |(ar, ac, aw), (r, c, w)| {
-                (ar + r, ac + c, aw + w)
-            });
-
-        if total_w > 0.0 {
-            (total_r / total_w, total_c / total_w)
-        } else {
-            (h as f64 / 2.0, w as f64 / 2.0)
-        }
+        compute_centroid_parallel(data, cutoff, h, w)
     } else {
-        let mut sum_r = 0.0f64;
-        let mut sum_c = 0.0f64;
-        let mut sum_w = 0.0f64;
+        compute_centroid_sequential(data, cutoff, h, w)
+    }
+}
 
-        for row in 0..h {
+/// Row-parallel centroid summation using Rayon.
+fn compute_centroid_parallel(data: &Array2<f32>, cutoff: f32, h: usize, w: usize) -> (f64, f64) {
+    let row_sums: Vec<(f64, f64, f64)> = (0..h)
+        .into_par_iter()
+        .map(|row| {
+            let mut sum_r = 0.0f64;
+            let mut sum_c = 0.0f64;
+            let mut sum_w = 0.0f64;
             for col in 0..w {
                 let val = data[[row, col]];
                 if val > cutoff {
@@ -89,12 +66,49 @@ fn compute_centroid(data: &Array2<f32>, threshold: f32) -> (f64, f64) {
                     sum_w += weight;
                 }
             }
-        }
+            (sum_r, sum_c, sum_w)
+        })
+        .collect();
 
-        if sum_w > 0.0 {
-            (sum_r / sum_w, sum_c / sum_w)
-        } else {
-            (h as f64 / 2.0, w as f64 / 2.0)
+    let (total_r, total_c, total_w) = row_sums
+        .into_iter()
+        .fold((0.0, 0.0, 0.0), |(ar, ac, aw), (r, c, w)| {
+            (ar + r, ac + c, aw + w)
+        });
+
+    if total_w > 0.0 {
+        (total_r / total_w, total_c / total_w)
+    } else {
+        (h as f64 / 2.0, w as f64 / 2.0)
+    }
+}
+
+/// Sequential centroid summation using nested loops.
+fn compute_centroid_sequential(
+    data: &Array2<f32>,
+    cutoff: f32,
+    h: usize,
+    w: usize,
+) -> (f64, f64) {
+    let mut sum_r = 0.0f64;
+    let mut sum_c = 0.0f64;
+    let mut sum_w = 0.0f64;
+
+    for row in 0..h {
+        for col in 0..w {
+            let val = data[[row, col]];
+            if val > cutoff {
+                let weight = val as f64;
+                sum_r += row as f64 * weight;
+                sum_c += col as f64 * weight;
+                sum_w += weight;
+            }
         }
+    }
+
+    if sum_w > 0.0 {
+        (sum_r / sum_w, sum_c / sum_w)
+    } else {
+        (h as f64 / 2.0, w as f64 / 2.0)
     }
 }

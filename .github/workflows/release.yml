@@ -261,16 +261,14 @@ jobs:
               --sign "Developer ID Application: $APPLE_TEAM_NAME" \
               "jupiter-${VERSION}-macos-universal.dmg"
 
-            # Notarize and staple (skip when running locally under act)
-            if [ -z "$ACT" ]; then
-              xcrun notarytool submit "jupiter-${VERSION}-macos-universal.dmg" \
-                --apple-id "$APPLE_ID" \
-                --password "$APPLE_APP_SPECIFIC_PASSWORD" \
-                --team-id "$APPLE_TEAM_ID" \
-                --wait \
-                --timeout 30m
-              xcrun stapler staple "jupiter-${VERSION}-macos-universal.dmg"
-            fi
+            # Notarize DMG, then staple both the DMG and the .app bundle
+            xcrun notarytool submit "jupiter-${VERSION}-macos-universal.dmg" \
+              --apple-id "$APPLE_ID" \
+              --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID" \
+              --wait
+            xcrun stapler staple "jupiter-${VERSION}-macos-universal.dmg"
+            xcrun stapler staple Jupiter.app
           fi
 
       # ── GPU builds ────────────────────────────────────────────────────────────
@@ -341,16 +339,14 @@ jobs:
               --sign "Developer ID Application: $APPLE_TEAM_NAME" \
               "jupiter-${VERSION}-macos-universal-gpu.dmg"
 
-            # Notarize and staple (skip when running locally under act)
-            if [ -z "$ACT" ]; then
-              xcrun notarytool submit "jupiter-${VERSION}-macos-universal-gpu.dmg" \
-                --apple-id "$APPLE_ID" \
-                --password "$APPLE_APP_SPECIFIC_PASSWORD" \
-                --team-id "$APPLE_TEAM_ID" \
-                --wait \
-                --timeout 30m
-              xcrun stapler staple "jupiter-${VERSION}-macos-universal-gpu.dmg"
-            fi
+            # Notarize DMG, then staple both the DMG and the .app bundle
+            xcrun notarytool submit "jupiter-${VERSION}-macos-universal-gpu.dmg" \
+              --apple-id "$APPLE_ID" \
+              --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID" \
+              --wait
+            xcrun stapler staple "jupiter-${VERSION}-macos-universal-gpu.dmg"
+            xcrun stapler staple Jupiter-gpu.app
           fi
 
       - uses: actions/upload-artifact@v4

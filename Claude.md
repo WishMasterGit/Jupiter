@@ -22,11 +22,14 @@ this is planet image/video processing tool to achieve crisp results from the ear
 
 - mod files should only be used to define module structure and re-exporting
 
+- When there is if/else branching due to parallel/non-parallel cases present, code for parallel and non-parallel should be in the corresponding methods, aka compute_parallel.., compute_sequential..
+
 ## Claude workstream
 
 - make sure to build with features gpu and normally while testing
 - place tests in separate files in "tests" folder
 - save all researches in the docs folder
+- run cargo llvm-cov after changes in core library and make sure that core library methods have full test coverage
 
 ## Project management
 
