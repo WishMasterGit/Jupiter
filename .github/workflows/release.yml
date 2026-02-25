@@ -29,6 +29,12 @@ jobs:
             chmod +x linuxdeploy*.AppImage
           fi
 
+      - name: Create application icon
+        run: |
+          convert -size 256x256 \
+            gradient:'#1a3a6c-#f5a623' \
+            packaging/linux/jupiter.png
+
       # ── CPU build ────────────────────────────────────────────────────────────
       - name: Build CPU release
         run: cargo build --release --workspace
@@ -53,6 +59,7 @@ jobs:
           cp packaging/linux/jupiter.desktop AppDir/
           ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 ./linuxdeploy-x86_64.AppImage \
             --appdir AppDir \
+            --icon-file packaging/linux/jupiter.png \
             --desktop-file AppDir/jupiter.desktop \
             --output appimage
           mv Jupiter-x86_64.AppImage "jupiter-${VERSION}-x86_64.AppImage"
@@ -82,6 +89,7 @@ jobs:
           cp packaging/linux/jupiter.desktop AppDir/
           ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 ./linuxdeploy-x86_64.AppImage \
             --appdir AppDir \
+            --icon-file packaging/linux/jupiter.png \
             --desktop-file AppDir/jupiter.desktop \
             --output appimage
           mv Jupiter-x86_64.AppImage "jupiter-gpu-${VERSION}-x86_64.AppImage"
