@@ -16,7 +16,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libwayland-dev libx11-dev libxcb1-dev libxrandr-dev libxinerama-dev libxi-dev pkg-config libxkbcommon-dev libfuse2
+        run: sudo apt-get update && sudo apt-get install -y libwayland-dev libx11-dev libxcb1-dev libxrandr-dev libxinerama-dev libxi-dev pkg-config libxkbcommon-dev libfuse2 imagemagick
 
       - name: Install packaging tools
         run: |
@@ -53,14 +53,16 @@ jobs:
         if: ${{ !env.ACT }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          mkdir -p AppDir/usr/bin
+          mkdir -p AppDir/usr/bin \
+                   AppDir/usr/share/applications \
+                   AppDir/usr/share/icons/hicolor/256x256/apps
           cp target/release/jupiter AppDir/usr/bin/
           cp target/release/jupiter-gui AppDir/usr/bin/
-          cp packaging/linux/jupiter.desktop AppDir/
+          cp packaging/linux/jupiter.desktop AppDir/usr/share/applications/
+          cp packaging/linux/jupiter.png AppDir/usr/share/icons/hicolor/256x256/apps/
           ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 ./linuxdeploy-x86_64.AppImage \
             --appdir AppDir \
-            --icon-file packaging/linux/jupiter.png \
-            --desktop-file AppDir/jupiter.desktop \
+            --desktop-file AppDir/usr/share/applications/jupiter.desktop \
             --output appimage
           mv Jupiter-x86_64.AppImage "jupiter-${VERSION}-x86_64.AppImage"
 
@@ -83,14 +85,16 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           rm -rf AppDir
-          mkdir -p AppDir/usr/bin
+          mkdir -p AppDir/usr/bin \
+                   AppDir/usr/share/applications \
+                   AppDir/usr/share/icons/hicolor/256x256/apps
           cp target/release/jupiter AppDir/usr/bin/
           cp target/release/jupiter-gui AppDir/usr/bin/
-          cp packaging/linux/jupiter.desktop AppDir/
+          cp packaging/linux/jupiter.desktop AppDir/usr/share/applications/
+          cp packaging/linux/jupiter.png AppDir/usr/share/icons/hicolor/256x256/apps/
           ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 ./linuxdeploy-x86_64.AppImage \
             --appdir AppDir \
-            --icon-file packaging/linux/jupiter.png \
-            --desktop-file AppDir/jupiter.desktop \
+            --desktop-file AppDir/usr/share/applications/jupiter.desktop \
             --output appimage
           mv Jupiter-x86_64.AppImage "jupiter-gpu-${VERSION}-x86_64.AppImage"
 

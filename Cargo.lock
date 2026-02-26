@@ -1524,7 +1524,7 @@ dependencies = [
 
 [[package]]
 name = "jupiter-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1540,7 +1540,7 @@ dependencies = [
 
 [[package]]
 name = "jupiter-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bytemuck",
  "byteorder",
@@ -1562,7 +1562,7 @@ dependencies = [
 
 [[package]]
 name = "jupiter-gui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "eframe",
