@@ -169,7 +169,12 @@ fn test_process_color_parallel_same_as_sequential() {
     for (a, b) in seq_result.red.data.iter().zip(par_result.red.data.iter()) {
         assert!((*a - *b).abs() < 1e-5);
     }
-    for (a, b) in seq_result.green.data.iter().zip(par_result.green.data.iter()) {
+    for (a, b) in seq_result
+        .green
+        .data
+        .iter()
+        .zip(par_result.green.data.iter())
+    {
         assert!((*a - *b).abs() < 1e-5);
     }
     for (a, b) in seq_result.blue.data.iter().zip(par_result.blue.data.iter()) {

@@ -110,11 +110,8 @@ where
                     backend.as_ref(),
                 )?;
                 if backend.is_gpu() {
-                    let shifted_buf = backend.shift_bilinear(
-                        &backend.upload(&frame.data),
-                        offset.dx,
-                        offset.dy,
-                    );
+                    let shifted_buf =
+                        backend.shift_bilinear(&backend.upload(&frame.data), offset.dx, offset.dy);
                     let shifted_data = backend.download(&shifted_buf);
                     Ok(Frame::new(shifted_data, frame.original_bit_depth))
                 } else {
@@ -146,12 +143,8 @@ where
         let result = if i == reference_idx {
             frame.clone()
         } else {
-            let offset = compute_offset_configured(
-                &reference.data,
-                &frame.data,
-                config,
-                backend.as_ref(),
-            )?;
+            let offset =
+                compute_offset_configured(&reference.data, &frame.data, config, backend.as_ref())?;
             if backend.is_gpu() {
                 let shifted_buf =
                     backend.shift_bilinear(&backend.upload(&frame.data), offset.dx, offset.dy);
@@ -187,42 +180,37 @@ where
 
     let reference = reader.read_frame(frame_indices[reference_idx])?;
     let counter = AtomicUsize::new(0);
+    let ctx = StreamingOffsetCtx {
+        reader,
+        reference_idx,
+        reference: &reference,
+        config,
+        backend,
+        counter: &counter,
+    };
 
     let results: Vec<Result<AlignmentOffset>> = if frame_indices.len() >= PARALLEL_FRAME_THRESHOLD {
-        compute_offsets_streaming_configured_parallel(
-            reader,
-            frame_indices,
-            reference_idx,
-            &reference,
-            config,
-            backend,
-            &counter,
-            &on_frame_done,
-        )
+        compute_offsets_streaming_configured_parallel(&ctx, frame_indices, &on_frame_done)
     } else {
-        compute_offsets_streaming_configured_sequential(
-            reader,
-            frame_indices,
-            reference_idx,
-            &reference,
-            config,
-            backend,
-            &counter,
-            &on_frame_done,
-        )
+        compute_offsets_streaming_configured_sequential(&ctx, frame_indices, &on_frame_done)
     };
 
     results.into_iter().collect()
 }
 
-fn compute_offsets_streaming_configured_parallel<F>(
-    reader: &SerReader,
-    frame_indices: &[usize],
+/// Shared context for streaming offset computation helpers.
+struct StreamingOffsetCtx<'a> {
+    reader: &'a SerReader,
     reference_idx: usize,
-    reference: &Frame,
-    config: &AlignmentConfig,
+    reference: &'a Frame,
+    config: &'a AlignmentConfig,
     backend: Arc<dyn ComputeBackend>,
-    counter: &AtomicUsize,
+    counter: &'a AtomicUsize,
+}
+
+fn compute_offsets_streaming_configured_parallel<F>(
+    ctx: &StreamingOffsetCtx<'_>,
+    frame_indices: &[usize],
     on_frame_done: &F,
 ) -> Vec<Result<AlignmentOffset>>
 where
@@ -232,18 +220,18 @@ where
         .par_iter()
         .enumerate()
         .map(|(i, &frame_idx)| {
-            let offset = if i == reference_idx {
+            let offset = if i == ctx.reference_idx {
                 AlignmentOffset::default()
             } else {
-                let target = reader.read_frame(frame_idx)?;
+                let target = ctx.reader.read_frame(frame_idx)?;
                 compute_offset_configured(
-                    &reference.data,
+                    &ctx.reference.data,
                     &target.data,
-                    config,
-                    backend.as_ref(),
+                    ctx.config,
+                    ctx.backend.as_ref(),
                 )?
             };
-            let done = counter.fetch_add(1, Ordering::Relaxed) + 1;
+            let done = ctx.counter.fetch_add(1, Ordering::Relaxed) + 1;
             on_frame_done(done);
             Ok(offset)
         })
@@ -251,13 +239,8 @@ where
 }
 
 fn compute_offsets_streaming_configured_sequential<F>(
-    reader: &SerReader,
+    ctx: &StreamingOffsetCtx<'_>,
     frame_indices: &[usize],
-    reference_idx: usize,
-    reference: &Frame,
-    config: &AlignmentConfig,
-    backend: Arc<dyn ComputeBackend>,
-    counter: &AtomicUsize,
     on_frame_done: &F,
 ) -> Vec<Result<AlignmentOffset>>
 where
@@ -267,18 +250,18 @@ where
         .iter()
         .enumerate()
         .map(|(i, &frame_idx)| {
-            let offset = if i == reference_idx {
+            let offset = if i == ctx.reference_idx {
                 AlignmentOffset::default()
             } else {
-                let target = reader.read_frame(frame_idx)?;
+                let target = ctx.reader.read_frame(frame_idx)?;
                 compute_offset_configured(
-                    &reference.data,
+                    &ctx.reference.data,
                     &target.data,
-                    config,
-                    backend.as_ref(),
+                    ctx.config,
+                    ctx.backend.as_ref(),
                 )?
             };
-            let done = counter.fetch_add(1, Ordering::Relaxed) + 1;
+            let done = ctx.counter.fetch_add(1, Ordering::Relaxed) + 1;
             on_frame_done(done);
             Ok(offset)
         })

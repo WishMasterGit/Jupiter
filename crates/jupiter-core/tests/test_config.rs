@@ -256,8 +256,14 @@ fn test_frame_selection_config_default() {
 fn test_pipeline_stage_display() {
     assert_eq!(format!("{}", PipelineStage::Reading), "Reading frames");
     assert_eq!(format!("{}", PipelineStage::Debayering), "Debayering");
-    assert_eq!(format!("{}", PipelineStage::QualityAssessment), "Assessing quality");
-    assert_eq!(format!("{}", PipelineStage::FrameSelection), "Selecting best frames");
+    assert_eq!(
+        format!("{}", PipelineStage::QualityAssessment),
+        "Assessing quality"
+    );
+    assert_eq!(
+        format!("{}", PipelineStage::FrameSelection),
+        "Selecting best frames"
+    );
     assert_eq!(format!("{}", PipelineStage::Alignment), "Aligning frames");
     assert_eq!(format!("{}", PipelineStage::Stacking), "Stacking");
     assert_eq!(format!("{}", PipelineStage::Sharpening), "Sharpening");
@@ -272,9 +278,9 @@ fn test_pipeline_stage_display() {
 
 #[test]
 fn test_pipeline_output_to_mono_from_mono() {
-    use ndarray::Array2;
     use jupiter_core::frame::Frame;
     use jupiter_core::pipeline::PipelineOutput;
+    use ndarray::Array2;
 
     let data = Array2::from_elem((8, 8), 0.4f32);
     let frame = Frame::new(data, 8);
@@ -287,9 +293,9 @@ fn test_pipeline_output_to_mono_from_mono() {
 
 #[test]
 fn test_pipeline_output_to_mono_from_color() {
-    use ndarray::Array2;
     use jupiter_core::frame::{ColorFrame, Frame};
     use jupiter_core::pipeline::PipelineOutput;
+    use ndarray::Array2;
 
     let h = 8;
     let w = 8;
@@ -303,6 +309,9 @@ fn test_pipeline_output_to_mono_from_color() {
     let mono = output.to_mono();
     // luminance of (0.6, 0.6, 0.6) should be 0.6
     for v in mono.data.iter() {
-        assert!((*v - 0.6).abs() < 0.05, "luminance of gray should be ~0.6, got {v}");
+        assert!(
+            (*v - 0.6).abs() < 0.05,
+            "luminance of gray should be ~0.6, got {v}"
+        );
     }
 }

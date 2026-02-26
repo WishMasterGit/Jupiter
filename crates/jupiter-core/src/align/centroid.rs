@@ -84,12 +84,7 @@ fn compute_centroid_parallel(data: &Array2<f32>, cutoff: f32, h: usize, w: usize
 }
 
 /// Sequential centroid summation using nested loops.
-fn compute_centroid_sequential(
-    data: &Array2<f32>,
-    cutoff: f32,
-    h: usize,
-    w: usize,
-) -> (f64, f64) {
+fn compute_centroid_sequential(data: &Array2<f32>, cutoff: f32, h: usize, w: usize) -> (f64, f64) {
     let mut sum_r = 0.0f64;
     let mut sum_c = 0.0f64;
     let mut sum_w = 0.0f64;

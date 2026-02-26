@@ -92,7 +92,11 @@ fn test_auto_stretch_typical() {
     let ramp = make_ramp_frame(16, 16);
     // Using default percentiles: result should span approximately [0,1]
     let stretched = auto_stretch(&ramp, 0.001, 0.999);
-    let max = stretched.data.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    let max = stretched
+        .data
+        .iter()
+        .cloned()
+        .fold(f32::NEG_INFINITY, f32::max);
     let min = stretched.data.iter().cloned().fold(f32::INFINITY, f32::min);
     assert!(max > 0.9, "max should be near 1.0, got {max}");
     assert!(min < 0.1, "min should be near 0.0, got {min}");

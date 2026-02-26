@@ -30,6 +30,7 @@ this is planet image/video processing tool to achieve crisp results from the ear
 - place tests in separate files in "tests" folder
 - save all researches in the docs folder
 - run cargo llvm-cov after changes in core library and make sure that core library methods have full test coverage
+- always run cargo clippy and cargo fmt once you done with coding
 
 ## Project management
 

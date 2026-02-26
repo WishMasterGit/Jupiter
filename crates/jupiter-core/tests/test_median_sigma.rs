@@ -154,7 +154,10 @@ fn test_sigma_clip_rejects_outlier() {
     let result = sigma_clip_stack(&frames, &params).unwrap();
     // After clipping the outlier, mean should be close to 0.5
     for v in result.data.iter() {
-        assert!((*v - 0.5).abs() < 0.1, "expected ~0.5 after clipping, got {v}");
+        assert!(
+            (*v - 0.5).abs() < 0.1,
+            "expected ~0.5 after clipping, got {v}"
+        );
     }
 }
 
@@ -194,6 +197,9 @@ fn test_sigma_clip_large_frames_outlier_rejected() {
     };
     let result = sigma_clip_stack(&frames, &params).unwrap();
     for v in result.data.iter() {
-        assert!((*v - 0.4).abs() < 0.1, "expected ~0.4 after clipping outlier, got {v}");
+        assert!(
+            (*v - 0.4).abs() < 0.1,
+            "expected ~0.4 after clipping outlier, got {v}"
+        );
     }
 }

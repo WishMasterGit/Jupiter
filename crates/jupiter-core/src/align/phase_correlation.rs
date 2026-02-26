@@ -401,9 +401,23 @@ where
     let counter = AtomicUsize::new(0);
 
     if frames.len() >= PARALLEL_FRAME_THRESHOLD {
-        align_frames_gpu_parallel(frames, reference, reference_idx, backend, &counter, &on_frame_done)
+        align_frames_gpu_parallel(
+            frames,
+            reference,
+            reference_idx,
+            backend,
+            &counter,
+            &on_frame_done,
+        )
     } else {
-        align_frames_gpu_sequential(frames, reference, reference_idx, backend, &counter, &on_frame_done)
+        align_frames_gpu_sequential(
+            frames,
+            reference,
+            reference_idx,
+            backend,
+            &counter,
+            &on_frame_done,
+        )
     }
 }
 
@@ -425,8 +439,7 @@ where
             let result = if i == reference_idx {
                 Ok(frame.clone())
             } else {
-                let offset =
-                    compute_offset_gpu(&reference.data, &frame.data, backend.as_ref())?;
+                let offset = compute_offset_gpu(&reference.data, &frame.data, backend.as_ref())?;
                 let shifted_buf =
                     backend.shift_bilinear(&backend.upload(&frame.data), offset.dx, offset.dy);
                 let shifted_data = backend.download(&shifted_buf);

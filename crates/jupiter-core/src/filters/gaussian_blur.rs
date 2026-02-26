@@ -75,12 +75,7 @@ fn convolve_rows_parallel(data: &Array2<f32>, kernel: &[f32], h: usize, w: usize
     result
 }
 
-fn convolve_rows_sequential(
-    data: &Array2<f32>,
-    kernel: &[f32],
-    h: usize,
-    w: usize,
-) -> Array2<f32> {
+fn convolve_rows_sequential(data: &Array2<f32>, kernel: &[f32], h: usize, w: usize) -> Array2<f32> {
     let radius = kernel.len() / 2;
     let mut result = Array2::<f32>::zeros((h, w));
     for row in 0..h {
@@ -135,12 +130,7 @@ fn convolve_cols_parallel(data: &Array2<f32>, kernel: &[f32], h: usize, w: usize
     result
 }
 
-fn convolve_cols_sequential(
-    data: &Array2<f32>,
-    kernel: &[f32],
-    h: usize,
-    w: usize,
-) -> Array2<f32> {
+fn convolve_cols_sequential(data: &Array2<f32>, kernel: &[f32], h: usize, w: usize) -> Array2<f32> {
     let radius = kernel.len() / 2;
     let mut result = Array2::<f32>::zeros((h, w));
     for row in 0..h {

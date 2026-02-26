@@ -1,8 +1,8 @@
 use ndarray::Array2;
 
+use jupiter_core::compute::cpu::CpuBackend;
 use jupiter_core::compute::cpu::{bilinear_sample, fft2d_forward, ifft2d_inverse};
 use jupiter_core::compute::{ComputeBackend, GpuBuffer};
-use jupiter_core::compute::cpu::CpuBackend;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -87,7 +87,10 @@ fn test_bilinear_sample_exact_pixel() {
     data[[3, 4]] = 1.0;
     // Sampling exactly at an integer coordinate returns the exact value
     let val = bilinear_sample(&data, 3.0, 4.0);
-    assert!((val - 1.0).abs() < 1e-5, "exact pixel: expected 1.0, got {val}");
+    assert!(
+        (val - 1.0).abs() < 1e-5,
+        "exact pixel: expected 1.0, got {val}"
+    );
 }
 
 #[test]
@@ -99,7 +102,10 @@ fn test_bilinear_sample_half_pixel() {
     data[[3, 3]] = 0.0;
     // At (2.5, 2.5) bilinear = 0.25
     let val = bilinear_sample(&data, 2.5, 2.5);
-    assert!((val - 0.25).abs() < 1e-5, "half-pixel: expected 0.25, got {val}");
+    assert!(
+        (val - 0.25).abs() < 1e-5,
+        "half-pixel: expected 0.25, got {val}"
+    );
 }
 
 #[test]
@@ -177,7 +183,10 @@ fn test_cpu_backend_hann_window_reduces_edges() {
     assert!(out[[0, 0]].abs() < 1e-5, "Hann window corner should be ~0");
     // Center pixel should be close to 1.0
     let center = out[[16, 16]];
-    assert!(center > 0.8, "Hann window center should be near 1.0, got {center}");
+    assert!(
+        center > 0.8,
+        "Hann window center should be near 1.0, got {center}"
+    );
 }
 
 #[test]
@@ -265,7 +274,10 @@ fn test_cpu_backend_cross_power_spectrum() {
     let out = backend.download(&cps);
     // Values should be in [-1, 1] (normalized)
     for v in out.iter() {
-        assert!(*v >= -1.0 - 1e-5 && *v <= 1.0 + 1e-5, "cross-power out of range: {v}");
+        assert!(
+            *v >= -1.0 - 1e-5 && *v <= 1.0 + 1e-5,
+            "cross-power out of range: {v}"
+        );
     }
 }
 
@@ -276,7 +288,10 @@ fn test_cpu_backend_find_peak_uniform() {
     let buf = backend.upload(&data);
     let (row, col, val) = backend.find_peak(&buf);
     // All values equal; peak can be anywhere, but value should be 0.5
-    assert!((val - 0.5).abs() < 1e-5, "peak value should be 0.5, got {val}");
+    assert!(
+        (val - 0.5).abs() < 1e-5,
+        "peak value should be 0.5, got {val}"
+    );
     assert!(row < 16 && col < 16);
 }
 

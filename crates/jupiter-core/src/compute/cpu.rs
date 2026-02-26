@@ -438,13 +438,7 @@ pub fn bilinear_sample(data: &Array2<f32>, y: f64, x: f64) -> f32 {
     v00 * (1.0 - fx) * (1.0 - fy) + v10 * fx * (1.0 - fy) + v01 * (1.0 - fx) * fy + v11 * fx * fy
 }
 
-fn shift_bilinear_parallel(
-    data: &Array2<f32>,
-    dx: f64,
-    dy: f64,
-    h: usize,
-    w: usize,
-) -> GpuBuffer {
+fn shift_bilinear_parallel(data: &Array2<f32>, dx: f64, dy: f64, h: usize, w: usize) -> GpuBuffer {
     let rows: Vec<Vec<f32>> = (0..h)
         .into_par_iter()
         .map(|row| {
