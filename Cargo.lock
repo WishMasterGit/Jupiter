@@ -1569,6 +1569,7 @@ dependencies = [
  "egui",
  "egui-wgpu",
  "egui_plot",
+ "image",
  "jupiter-core",
  "rayon",
  "rfd",
