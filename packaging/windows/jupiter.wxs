@@ -5,7 +5,10 @@
     Manufacturer="WishMasterGit"
     Version="$(var.Version)"
     UpgradeCode="A1B2C3D4-E5F6-7890-ABCD-EF1234567890"
-    Scope="perMachine">
+    Scope="perMachine"
+    IconPath="packaging/windows/jupiter.ico"
+    >
+    
 
     <MajorUpgrade DowngradeErrorMessage="A newer version of Jupiter is already installed." />
 
@@ -15,6 +18,7 @@
       <ComponentGroupRef Id="ProductComponents" />
       <ComponentGroupRef Id="ShortcutComponents" />
       <ComponentGroupRef Id="PathComponents" />
+      <ComponentGroupRef Id="IconComponents"/>
     </Feature>
   </Package>
 
@@ -44,7 +48,9 @@
           Name="Jupiter GUI"
           Description="Planetary image processing"
           Target="[INSTALLFOLDER]jupiter-gui.exe"
-          WorkingDirectory="INSTALLFOLDER" />
+          WorkingDirectory="INSTALLFOLDER" 
+          Icon="jupiter.ico"
+          IconIndex="0"/>
         <RemoveFolder Id="CleanUpShortCut" Directory="ApplicationProgramsFolder" On="uninstall" />
         <RegistryValue
           Root="HKCU"
@@ -73,6 +79,12 @@
           Type="integer"
           Value="1"
           KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+    <ComponentGroup Id="IconComponents" Directory="INSTALLFOLDER">
+      <Component Id="ApplicationIcon" Guid="F6A7B8C9-D0E1-2345-F012-456789012345">
+        <File Id="JupiterIcon" Source="$(var.SourceDir)\jupiter.ico" KeyPath="yes"/>
+
       </Component>
     </ComponentGroup>
   </Fragment>

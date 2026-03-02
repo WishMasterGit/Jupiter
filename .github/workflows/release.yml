@@ -29,11 +29,11 @@ jobs:
             chmod +x linuxdeploy*.AppImage
           fi
 
-      - name: Create application icon
-        run: |
-          convert -size 256x256 \
-            gradient:'#1a3a6c-#f5a623' \
-            packaging/linux/jupiter.png
+      # - name: Create application icon
+      #   run: |
+      #     convert -size 256x256 \
+      #       gradient:'#1a3a6c-#f5a623' \
+      #       packaging/linux/jupiter.png
 
       # ── CPU build ────────────────────────────────────────────────────────────
       - name: Build CPU release
