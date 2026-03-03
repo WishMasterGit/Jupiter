@@ -127,7 +127,7 @@ jobs:
         shell: bash
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          cp target/release/jupiter.exe target/release/jupiter-gui.exe .
+          cp target/release/jupiter.exe target/release/jupiter-gui.exe packaging/windows/jupiter.ico .
           wix build packaging/windows/jupiter.wxs \
             -d Version="$VERSION" \
             -d SourceDir=. \
@@ -141,7 +141,7 @@ jobs:
         shell: bash
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          cp target/release/jupiter.exe target/release/jupiter-gui.exe .
+          cp target/release/jupiter.exe target/release/jupiter-gui.exe packaging/windows/jupiter.ico .
           wix build packaging/windows/jupiter.wxs \
             -d Version="$VERSION" \
             -d SourceDir=. \
