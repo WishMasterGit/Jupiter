@@ -230,7 +230,8 @@ jobs:
           cp universal-cpu/jupiter-gui Jupiter.app/Contents/MacOS/
           sed "s/VERSION_PLACEHOLDER/$VERSION/g" packaging/macos/Info.plist \
             > Jupiter.app/Contents/Info.plist
-
+          mkdir -p Jupiter.app/Contents/Resources
+          cp packaging/macos/jupiter.icns Jupiter.app/Contents/Resources/
           if [ -n "$APPLE_TEAM_NAME" ]; then
             # Re-unlock keychain (may have been idle since import step)
             security unlock-keychain -p "$MACOS_KEYCHAIN_PASSWORD" build.keychain
@@ -308,7 +309,8 @@ jobs:
           cp universal-gpu/jupiter-gui Jupiter-gpu.app/Contents/MacOS/
           sed "s/VERSION_PLACEHOLDER/$VERSION/g" packaging/macos/Info.plist \
             > Jupiter-gpu.app/Contents/Info.plist
-
+          mkdir -p Jupiter-gpu.app/Contents/Resources
+          cp packaging/macos/jupiter.icns Jupiter-gpu.app/Contents/Resources/
           if [ -n "$APPLE_TEAM_NAME" ]; then
             # Re-unlock keychain before signing
             security unlock-keychain -p "$MACOS_KEYCHAIN_PASSWORD" build.keychain

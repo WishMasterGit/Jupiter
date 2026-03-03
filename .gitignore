@@ -2,4 +2,5 @@
 *.ser
 *.avi
 *.tiff
+.DS_Store
 test-data/
