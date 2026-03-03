@@ -38,6 +38,44 @@ Jupiter turns raw planetary video captures (SER files) into sharp, detail-rich i
 
 ## Installation
 
+### Pre-built binaries
+
+Download the latest release from the [GitHub Releases page](https://github.com/WishMasterGit/Jupiter/releases/latest).
+
+| Platform | CPU | GPU |
+|----------|-----|-----|
+| macOS (Universal) | `jupiter-0.2.1-macos-universal.dmg` | `jupiter-0.2.1-macos-universal-gpu.dmg` |
+| Windows x86_64 | `jupiter-0.2.1-windows-x86_64.msi` | `jupiter-0.2.1-windows-x86_64-gpu.msi` |
+| Linux x86_64 (.deb) | `jupiter_0.2.1_amd64.deb` | `jupiter-gpu_0.2.1_amd64.deb` |
+| Linux x86_64 (AppImage) | `jupiter-0.2.1-x86_64.AppImage` | `jupiter-gpu-0.2.1-x86_64.AppImage` |
+
+**macOS:** Open the `.dmg` and drag Jupiter to your Applications folder.
+
+**Windows:** Run the `.msi` installer and follow the prompts.
+
+**Linux (.deb):**
+```bash
+sudo dpkg -i jupiter_0.2.1_amd64.deb
+```
+
+**Linux (AppImage):**
+```bash
+chmod +x jupiter-0.2.1-x86_64.AppImage
+./jupiter-0.2.1-x86_64.AppImage
+```
+
+**GPU variants** include GPU-accelerated alignment and deconvolution using Metal (macOS), Vulkan (Linux), or DX12 (Windows). If unsure, start with the CPU build — it works everywhere.
+
+### Build from source
+
+```bash
+cargo build --release --workspace
+```
+
+To enable GPU acceleration, see the [GPU Acceleration](#gpu-acceleration) section.
+
+---
+
 ## Quick Start
 
 ```bash

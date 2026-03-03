@@ -27,7 +27,8 @@
       "Bash(openssl x509:*)",
       "Bash(tee:*)",
       "Bash(cargo llvm-cov:*)",
-      "Bash(cargo fmt:*)"
+      "Bash(cargo fmt:*)",
+      "Bash(gh release:*)"
     ]
   }
 }
