@@ -5,7 +5,6 @@ mod panels;
 mod progress;
 mod states;
 mod workers;
-use image;
 
 fn main() -> eframe::Result<()> {
     tracing_subscriber::fmt()
@@ -30,8 +29,8 @@ fn main() -> eframe::Result<()> {
         let (icon_rgba, icon_width, icon_height) = {
             let icon_bytes = include_bytes!("../Jupiter256.png");
             let image = image::load_from_memory(icon_bytes)
-                        .expect("Failed to load icon")
-                        .into_rgba8();
+                .expect("Failed to load icon")
+                .into_rgba8();
             let (width, height) = image.dimensions();
             (image.into_raw(), width, height)
         };
@@ -39,9 +38,8 @@ fn main() -> eframe::Result<()> {
         egui::IconData {
             rgba: icon_rgba,
             width: icon_width,
-            height: icon_height
+            height: icon_height,
         }
-
     }
 
     eframe::run_native(
