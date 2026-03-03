@@ -20,8 +20,6 @@ Jupiter turns raw planetary video captures (SER files) into sharp, detail-rich i
 6. **Filter** with histogram stretch, gamma, etc.
 7. **Save** to TIFF or PNG
 
-Both a headless CLI (`jupiter`) and an interactive GUI (`jupiter-gui`) are provided.
-
 ---
 
 ## Features
@@ -40,43 +38,16 @@ Both a headless CLI (`jupiter`) and an interactive GUI (`jupiter-gui`) are provi
 
 ## Installation
 
-### Prerequisites
-
-- **Rust** (stable toolchain) — install from [rustup.rs](https://rustup.rs)
-- **macOS / Windows**: no extra system libraries needed
-- **Linux**: install X11/Wayland headers:
-
-```bash
-sudo apt install \
-  libwayland-dev libx11-dev libxcb1-dev \
-  libxrandr-dev libxinerama-dev libxi-dev \
-  pkg-config libxkbcommon-dev
-```
-
-### Build (CPU only)
-
-```bash
-cargo build --release --workspace
-```
-
-### Build with GPU support
-
-```bash
-cargo build --release --workspace --features gpu
-```
-
-Binaries land in `target/release/`:
-- `target/release/jupiter` — headless CLI
-- `target/release/jupiter-gui` — desktop GUI
-
----
-
 ## Quick Start
 
 ```bash
 # Run the full pipeline on a SER file
 jupiter run input.ser -o result.tiff
+```
 
+or launch gui depending on what you have
+
+```bash
 # Launch the interactive GUI
 jupiter-gui
 ```
@@ -352,14 +323,14 @@ denoise      = []
 
 ## Stacking Methods
 
-| Method | When to use |
-|---|---|
-| **Mean** | Many high-quality frames, minimal noise |
-| **Median** | Robust against hot pixels and cosmic rays |
-| **Sigma Clip** | Like median but preserves more detail; good default for planetary |
-| **Multi-Point** | Best general-purpose choice; handles atmospheric distortion across the disk |
-| **Drizzle** | Super-resolve fine detail; needs many frames (50+) at sub-Nyquist sampling |
-| **Surface Warp** | Smooth per-pixel warping for severe atmospheric distortion |
+| Method           | When to use                                                                 |
+| ---------------- | --------------------------------------------------------------------------- |
+| **Mean**         | Many high-quality frames, minimal noise                                     |
+| **Median**       | Robust against hot pixels and cosmic rays                                   |
+| **Sigma Clip**   | Like median but preserves more detail; good default for planetary           |
+| **Multi-Point**  | Best general-purpose choice; handles atmospheric distortion across the disk |
+| **Drizzle**      | Super-resolve fine detail; needs many frames (50+) at sub-Nyquist sampling  |
+| **Surface Warp** | Smooth per-pixel warping for severe atmospheric distortion                  |
 
 **Multi-Point** is the default for `jupiter run` because it corrects local atmospheric distortions that global alignment cannot handle.
 
@@ -369,13 +340,13 @@ denoise      = []
 
 ## Alignment Methods
 
-| Method | Accuracy | Speed | Best for |
-|---|---|---|---|
-| **Phase Correlation** | ~0.5 px | Fast | Default — works well for most cases |
-| **Enhanced Phase** | ~0.01 px | Medium | Maximum sub-pixel precision |
-| **Centroid** | ~1–2 px | Very fast | Bright planetary disk, simple scenes |
-| **Gradient Correlation** | ~0.5 px | Medium | Noisy or low-contrast frames |
-| **Pyramid** | ~0.5 px | Slow | Large displacements, wide-field |
+| Method                   | Accuracy | Speed     | Best for                             |
+| ------------------------ | -------- | --------- | ------------------------------------ |
+| **Phase Correlation**    | ~0.5 px  | Fast      | Default — works well for most cases  |
+| **Enhanced Phase**       | ~0.01 px | Medium    | Maximum sub-pixel precision          |
+| **Centroid**             | ~1–2 px  | Very fast | Bright planetary disk, simple scenes |
+| **Gradient Correlation** | ~0.5 px  | Medium    | Noisy or low-contrast frames         |
+| **Pyramid**              | ~0.5 px  | Slow      | Large displacements, wide-field      |
 
 Multi-point local alignment always uses Phase Correlation internally, regardless of the global alignment setting.
 
@@ -386,8 +357,8 @@ Multi-point local alignment always uses Phase Correlation internally, regardless
 Sharpening runs in two stages:
 
 1. **Deconvolution** (optional, first): reverses blur caused by the atmosphere or optics.
-   - *Richardson-Lucy* — iterative, non-linear, good for Poisson noise. Use 10–30 iterations.
-   - *Wiener* — linear, faster. `--noise-ratio` controls the regularization strength.
+   - _Richardson-Lucy_ — iterative, non-linear, good for Poisson noise. Use 10–30 iterations.
+   - _Wiener_ — linear, faster. `--noise-ratio` controls the regularization strength.
 
 2. **Wavelet sharpening** (always, unless `--no-sharpen`): amplifies fine-detail wavelet layers.
    - Default: 6 layers with coefficients `[1.5, 1.3, 1.2, 1.1, 1.0, 1.0]`
@@ -420,12 +391,12 @@ Then select the GPU at runtime:
 jupiter run input.ser --device gpu -o result.tiff
 ```
 
-| Stage | GPU accelerated |
-|---|---|
-| Alignment (phase correlation) | Yes |
-| Richardson-Lucy deconvolution | Yes |
-| Wavelet sharpening | No (CPU, small kernels) |
-| Stacking | No |
+| Stage                         | GPU accelerated         |
+| ----------------------------- | ----------------------- |
+| Alignment (phase correlation) | Yes                     |
+| Richardson-Lucy deconvolution | Yes                     |
+| Wavelet sharpening            | No (CPU, small kernels) |
+| Stacking                      | No                      |
 
 `--device auto` (the default) picks the GPU when available, falling back to CPU.
 
@@ -433,11 +404,11 @@ jupiter run input.ser --device gpu -o result.tiff
 
 ## Memory Modes
 
-| Mode | Behaviour | Use when |
-|---|---|---|
-| `auto` | Streams when decoded data > 1 GiB, otherwise eager | Safe default |
-| `eager` | Load all frames at once | Fastest; fine for small SER files |
-| `low-memory` | Stream frames on demand, O(1) peak memory | Large SER files on memory-limited systems |
+| Mode         | Behaviour                                          | Use when                                  |
+| ------------ | -------------------------------------------------- | ----------------------------------------- |
+| `auto`       | Streams when decoded data > 1 GiB, otherwise eager | Safe default                              |
+| `eager`      | Load all frames at once                            | Fastest; fine for small SER files         |
+| `low-memory` | Stream frames on demand, O(1) peak memory          | Large SER files on memory-limited systems |
 
 The CLI default for `jupiter run` is `low-memory`, which re-reads frames from disk as needed.
 
@@ -445,69 +416,19 @@ Mean and Drizzle stacking are fully streaming (~192 MB peak for a 94-frame 4096�
 
 ---
 
-## GUI Guide
-
-Launch with:
-
-```bash
-jupiter-gui
-```
-
-### Menu Bar
-
-- **File → Open SER** (`Cmd/Ctrl+O`): load a SER file
-- **File → Save Config** (`Cmd/Ctrl+S`): export current settings as TOML
-- **File → Open Config**: import a TOML config
-- **File → Quit** (`Cmd/Ctrl+Q`)
-
-### Left Panel — Controls
-
-The controls panel is divided into pipeline stages. Each stage has a **Run** button that re-runs only that stage and everything downstream.
-
-**Score**
-- Quality metric (Laplacian / Gradient)
-- Frame selection percentage
-- Alignment method and method-specific parameters
-
-**Stack**
-- Stacking method selector
-- Method-specific parameters (AP size, search radius, Drizzle scale/pixfrac, etc.)
-
-**Sharpen**
-- Wavelet: number of layers, per-layer coefficients, denoise thresholds
-- Deconvolution: method (RL / Wiener), PSF model and parameters
-
-**Filters**
-- Add / remove / reorder filter steps
-- Supported filters: Auto Stretch, Histogram Stretch, Gamma, Brightness/Contrast, Unsharp Mask, Gaussian Blur
-
-**Run All** button at the bottom executes the complete pipeline.
-
-### Viewport
-
-- **Scroll wheel**: zoom in/out
-- **Middle drag** or **Ctrl+drag**: pan
-- **Double-click**: fit image to viewport
-
-Stage buttons use color indicators: green = result is current, orange = parameters have changed and re-running is recommended.
-
----
-
 ## File Formats
 
 ### Input
 
-| Format | Notes |
-|---|---|
-| **SER** | Primary input format. Supports mono, Bayer (RGGB/BGGR/GRBG/GBRG), and RGB color modes. |
-| **TIFF** | Accepted by `sharpen` and `filter` subcommands |
-| **PNG** | Accepted by `sharpen` and `filter` subcommands |
+| Format   | Notes                                                                                  |
+| -------- | -------------------------------------------------------------------------------------- |
+| **SER**  | Primary input format. Supports mono, Bayer (RGGB/BGGR/GRBG/GBRG), and RGB color modes. |
+| **TIFF** | Accepted by `sharpen` and `filter` subcommands                                         |
+| **PNG**  | Accepted by `sharpen` and `filter` subcommands                                         |
 
 ### Output
 
-| Format | Notes |
-|---|---|
+| Format   | Notes                                   |
+| -------- | --------------------------------------- |
 | **TIFF** | Default output, 32-bit float (lossless) |
-| **PNG** | 16-bit, selected by file extension |
-
-Output format is inferred from the output file extension.
+| **PNG**  | 16-bit, selected by file extension      |
