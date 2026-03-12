@@ -29,57 +29,57 @@ impl Styles {
 }
 
 pub fn print_pipeline_summary(config: &PipelineConfig, device_name: &str) {
-    let s = Styles::new();
+    let styles = Styles::new();
 
     println!();
-    println!("  {}", s.title.apply_to("Jupiter Pipeline"));
-    println!("  {}", s.title.apply_to("\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}"));
+    println!("  {}", styles.title.apply_to("Jupiter Pipeline"));
+    println!("  {}", styles.title.apply_to("\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}"));
     println!();
 
     // Input / Output / Device
     println!(
         "  {:<14}{}",
-        s.label.apply_to("Input"),
-        s.path.apply_to(config.input.display())
+        styles.label.apply_to("Input"),
+        styles.path.apply_to(config.input.display())
     );
     println!(
         "  {:<14}{}",
-        s.label.apply_to("Output"),
-        s.path.apply_to(config.output.display())
+        styles.label.apply_to("Output"),
+        styles.path.apply_to(config.output.display())
     );
     println!(
         "  {:<14}{}",
-        s.label.apply_to("Device"),
-        s.method.apply_to(device_name)
+        styles.label.apply_to("Device"),
+        styles.method.apply_to(device_name)
     );
 
     // Debayer
     if config.force_mono {
         println!(
             "  {:<14}{}",
-            s.label.apply_to("Debayer"),
-            s.disabled.apply_to("forced mono")
+            styles.label.apply_to("Debayer"),
+            styles.disabled.apply_to("forced mono")
         );
     } else if let Some(ref db) = config.debayer {
         println!(
             "  {:<14}{}",
-            s.label.apply_to("Debayer"),
-            s.method.apply_to(&db.method)
+            styles.label.apply_to("Debayer"),
+            styles.method.apply_to(&db.method)
         );
     }
     println!();
 
     // Frame Selection
-    println!("  {}", s.header.apply_to("Frame Selection"));
+    println!("  {}", styles.header.apply_to("Frame Selection"));
     println!(
         "    {:<12}{}",
-        s.label.apply_to("Metric"),
-        s.value.apply_to(&config.frame_selection.metric)
+        styles.label.apply_to("Metric"),
+        styles.value.apply_to(&config.frame_selection.metric)
     );
     println!(
         "    {:<12}{}",
-        s.label.apply_to("Keep"),
-        s.value.apply_to(format!(
+        styles.label.apply_to("Keep"),
+        styles.value.apply_to(format!(
             "{:.0}%",
             config.frame_selection.select_percentage * 100.0
         ))
@@ -87,32 +87,32 @@ pub fn print_pipeline_summary(config: &PipelineConfig, device_name: &str) {
     println!();
 
     // Alignment
-    println!("  {}", s.header.apply_to("Alignment"));
+    println!("  {}", styles.header.apply_to("Alignment"));
     println!(
         "    {:<12}{}",
-        s.label.apply_to("Method"),
-        s.method.apply_to(&config.alignment.method)
+        styles.label.apply_to("Method"),
+        styles.method.apply_to(&config.alignment.method)
     );
     println!();
 
     // Stacking
-    println!("  {}", s.header.apply_to("Stacking"));
+    println!("  {}", styles.header.apply_to("Stacking"));
     println!(
         "    {:<12}{}",
-        s.label.apply_to("Method"),
-        s.method.apply_to(&config.stacking.method)
+        styles.label.apply_to("Method"),
+        styles.method.apply_to(&config.stacking.method)
     );
-    print_stack_sub_params(&s, &config.stacking.method);
+    print_stack_sub_params(&styles, &config.stacking.method);
     println!();
 
     // Sharpening
     if let Some(ref sharp) = config.sharpening {
-        print_sharpening_section(&s, &sharp.wavelet, sharp.deconvolution.as_ref());
+        print_sharpening_section(&styles, &sharp.wavelet, sharp.deconvolution.as_ref());
     } else {
         println!(
             "  {:<14}{}",
-            s.header.apply_to("Sharpening"),
-            s.disabled.apply_to("disabled")
+            styles.header.apply_to("Sharpening"),
+            styles.disabled.apply_to("disabled")
         );
         println!();
     }
@@ -121,16 +121,16 @@ pub fn print_pipeline_summary(config: &PipelineConfig, device_name: &str) {
     if config.filters.is_empty() {
         println!(
             "  {:<14}{}",
-            s.header.apply_to("Filters"),
-            s.disabled.apply_to("none")
+            styles.header.apply_to("Filters"),
+            styles.disabled.apply_to("none")
         );
     } else {
-        println!("  {}", s.header.apply_to("Filters"));
+        println!("  {}", styles.header.apply_to("Filters"));
         for (i, filter) in config.filters.iter().enumerate() {
             println!(
                 "    {}. {}",
-                s.label.apply_to(i + 1),
-                s.value.apply_to(filter)
+                styles.label.apply_to(i + 1),
+                styles.value.apply_to(filter)
             );
         }
     }
