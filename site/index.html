@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jupiter - Planetary Image Processing</title>
+  <meta name="description" content="Achieve crisp planetary images from earth-based telescopes. GPU-accelerated alignment, stacking, and sharpening.">
+  <link rel="icon" type="image/png" href="assets/images/favicon.png">
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <!-- Tailwind Play CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            mono: ['ui-monospace', 'SFMono-Regular', 'monospace'],
+          },
+          colors: {
+            jupiter: {
+              amber: '#f59e0b',
+              orange: '#ea580c',
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    /* Starfield */
+    #starfield {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      overflow: hidden;
+      pointer-events: none;
+    }
+
+    .star {
+      position: absolute;
+      border-radius: 50%;
+      background: #fff;
+    }
+
+    .star--distant {
+      animation: twinkle var(--dur, 10s) ease-in-out infinite alternate;
+      opacity: 0.3;
+    }
+    .star--mid {
+      animation: twinkle var(--dur, 8s) ease-in-out infinite alternate;
+      opacity: 0.5;
+    }
+    .star--near {
+      animation: twinkle var(--dur, 6s) ease-in-out infinite alternate;
+      opacity: 0.7;
+      box-shadow: 0 0 6px 2px rgba(245, 158, 11, 0.3);
+    }
+
+    @keyframes twinkle {
+      0% { opacity: var(--o1, 0.3); }
+      100% { opacity: var(--o2, 0.8); }
+    }
+
+    /* Shooting stars canvas */
+    #shooting-canvas {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+    }
+
+    /* Nebula glow */
+    .nebula {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      background:
+        radial-gradient(ellipse 60% 40% at 20% 30%, rgba(245, 158, 11, 0.05), transparent),
+        radial-gradient(ellipse 50% 50% at 80% 70%, rgba(147, 51, 234, 0.04), transparent);
+      animation: breathe 20s ease-in-out infinite alternate;
+    }
+
+    @keyframes breathe {
+      0% { opacity: 0.5; }
+      100% { opacity: 1; }
+    }
+
+    /* Before/After Comparison Slider */
+    .comparison-container {
+      position: relative;
+      overflow: hidden;
+      cursor: ew-resize;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    .comparison-container img {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      pointer-events: none;
+    }
+
+    .comparison-before {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+    }
+
+    .comparison-handle {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 3px;
+      background: #f59e0b;
+      cursor: ew-resize;
+      z-index: 10;
+      box-shadow: 0 0 12px rgba(245, 158, 11, 0.5);
+    }
+
+    .comparison-handle::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: #09090b;
+      border: 2px solid #f59e0b;
+      box-shadow: 0 0 12px rgba(245, 158, 11, 0.4);
+    }
+
+    .comparison-handle::before {
+      content: '\2039\00a0\203a';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: #f59e0b;
+      font-size: 18px;
+      font-weight: bold;
+      z-index: 11;
+      letter-spacing: 6px;
+    }
+
+    /* Fade-in animations */
+    .fade-in {
+      opacity: 0;
+      transform: translateY(24px);
+      transition: opacity 0.6s ease-out, transform 0.6s ease-out;
+    }
+    .fade-in.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* Smooth gradient text */
+    .gradient-text {
+      background: linear-gradient(135deg, #f59e0b, #ea580c);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    /* Hero glow */
+    .hero-glow {
+      background: radial-gradient(ellipse 50% 50% at 50% 50%, rgba(245, 158, 11, 0.15), transparent 70%);
+    }
+
+    /* Card hover */
+    .feature-card {
+      transition: transform 0.2s ease, border-color 0.2s ease;
+    }
+    .feature-card:hover {
+      transform: translateY(-4px);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    /* Platform highlight */
+    .platform-card.detected {
+      border-color: rgba(245, 158, 11, 0.5);
+      box-shadow: 0 0 30px rgba(245, 158, 11, 0.1);
+    }
+  </style>
+</head>
+<body class="bg-[#09090b] text-zinc-50 font-sans antialiased">
+
+  <!-- Starfield Background -->
+  <div id="starfield"></div>
+  <canvas id="shooting-canvas"></canvas>
+  <div class="nebula"></div>
+
+  <!-- Navigation -->
+  <nav id="navbar" class="fixed top-0 inset-x-0 z-50 transition-all duration-300">
+    <div class="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
+      <a href="#" class="flex items-center gap-2.5">
+        <img src="assets/images/favicon.png" alt="Jupiter" class="w-8 h-8">
+        <span class="text-lg font-bold">Jupiter</span>
+      </a>
+
+      <!-- Desktop links -->
+      <div class="hidden md:flex items-center gap-8">
+        <a href="#features" class="text-sm text-zinc-400 hover:text-zinc-50 transition-colors">Features</a>
+        <a href="#demo" class="text-sm text-zinc-400 hover:text-zinc-50 transition-colors">Demo</a>
+        <a href="#download" class="text-sm text-zinc-400 hover:text-zinc-50 transition-colors">Download</a>
+        <a href="https://github.com/WishMasterGit/Jupiter" target="_blank" rel="noopener"
+           class="text-sm text-zinc-400 hover:text-zinc-50 transition-colors flex items-center gap-1.5">
+          <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+          GitHub
+        </a>
+      </div>
+
+      <!-- Mobile hamburger -->
+      <button id="mobile-menu-btn" class="md:hidden text-zinc-400 hover:text-zinc-50 transition-colors" aria-label="Menu">
+        <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" d="M4 6h16M4 12h16M4 18h16"/>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Mobile menu -->
+    <div id="mobile-menu" class="hidden md:hidden bg-zinc-950/95 backdrop-blur-xl border-b border-white/10">
+      <div class="px-6 py-4 flex flex-col gap-3">
+        <a href="#features" class="text-sm text-zinc-400 hover:text-zinc-50 transition-colors py-1">Features</a>
+        <a href="#demo" class="text-sm text-zinc-400 hover:text-zinc-50 transition-colors py-1">Demo</a>
+        <a href="#download" class="text-sm text-zinc-400 hover:text-zinc-50 transition-colors py-1">Download</a>
+        <a href="https://github.com/WishMasterGit/Jupiter" target="_blank" rel="noopener"
+           class="text-sm text-zinc-400 hover:text-zinc-50 transition-colors py-1 flex items-center gap-1.5">
+          <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+          GitHub
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Hero Section -->
+  <section class="relative min-h-screen flex flex-col items-center justify-center px-6 pt-16">
+    <div class="max-w-4xl mx-auto text-center">
+      <h1 class="text-5xl sm:text-6xl lg:text-7xl font-extrabold tracking-tight leading-tight mb-6 fade-in">
+        <span class="gradient-text">Planetary Image</span><br>
+        <span class="text-zinc-50">Processing</span>
+      </h1>
+      <p class="text-lg sm:text-xl text-zinc-400 max-w-2xl mx-auto mb-10 leading-relaxed fade-in">
+        Achieve crisp planetary images from earth-based telescopes. GPU-accelerated alignment, stacking, and sharpening in a modern cross-platform tool.
+      </p>
+      <div class="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16 fade-in">
+        <a href="#download"
+           class="inline-flex items-center gap-2 px-7 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 text-white font-semibold text-sm hover:brightness-110 transition-all shadow-lg shadow-amber-500/20">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V3"/></svg>
+          Download v0.2.1
+        </a>
+        <a href="https://github.com/WishMasterGit/Jupiter" target="_blank" rel="noopener"
+           class="inline-flex items-center gap-2 px-7 py-3 rounded-xl border border-white/20 text-zinc-300 font-semibold text-sm hover:border-white/40 hover:text-white transition-all">
+          <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+          View on GitHub
+        </a>
+      </div>
+    </div>
+
+    <!-- Before/After comparison -->
+    <div class="relative max-w-[600px] w-full mx-auto fade-in">
+      <div class="hero-glow absolute -inset-20 rounded-full"></div>
+      <div class="relative">
+        <h2 class="text-xl font-semibold text-center mb-2">See the Difference</h2>
+        <p class="text-sm text-zinc-400 text-center mb-6">Drag the slider to compare a single raw frame with the fully processed result.</p>
+        <div id="comparison" class="comparison-container aspect-square rounded-2xl border border-white/10 overflow-hidden">
+          <img src="assets/images/jupiter-after.jpg" alt="After processing" class="w-full h-full object-cover">
+          <div class="comparison-before" style="width: 50%;">
+            <img src="assets/images/jupiter-before.png" alt="Before processing" class="w-full h-full object-cover" style="width: 600px; max-width: none;">
+          </div>
+          <div class="comparison-handle" style="left: calc(50% - 1.5px);"></div>
+          <span class="absolute top-4 left-4 text-xs font-semibold bg-black/60 backdrop-blur-sm px-3 py-1 rounded-full text-zinc-300 z-20">Before</span>
+          <span class="absolute top-4 right-4 text-xs font-semibold bg-black/60 backdrop-blur-sm px-3 py-1 rounded-full text-zinc-300 z-20">After</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Scroll indicator -->
+    <div class="absolute bottom-8 animate-bounce text-zinc-600">
+      <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M19 14l-7 7m0 0l-7-7"/></svg>
+    </div>
+  </section>
+
+  <!-- Video Demo -->
+  <section id="demo" class="py-32 px-6">
+    <div class="max-w-6xl mx-auto">
+      <div class="text-center mb-16 fade-in">
+        <h2 class="text-3xl sm:text-4xl font-bold mb-4">See It in Action</h2>
+        <p class="text-zinc-400 max-w-xl mx-auto">Watch Jupiter being processed from raw capture to final result.</p>
+      </div>
+
+      <div class="max-w-3xl mx-auto">
+        <div class="fade-in">
+          <div class="bg-white/[0.03] border border-white/10 rounded-2xl overflow-hidden">
+            <video controls preload="metadata" poster="assets/images/jupiter-after.jpg"
+                   class="w-full aspect-video">
+              <source src="assets/videos/jupiter-app-demo.mp4" type="video/mp4">
+            </video>
+            <div class="p-4">
+              <h3 class="font-semibold text-sm">App Demo</h3>
+              <p class="text-xs text-zinc-500 mt-1">Complete walkthrough of the Jupiter processing pipeline</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Features Section -->
+  <section id="features" class="py-32 px-6">
+    <div class="max-w-6xl mx-auto">
+      <div class="text-center mb-16 fade-in">
+        <h2 class="text-3xl sm:text-4xl font-bold mb-4">Everything You Need</h2>
+        <p class="text-zinc-400 max-w-xl mx-auto">A complete pipeline from raw capture to publication-ready planetary images.</p>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+        <!-- Feature 1: Alignment -->
+        <div class="feature-card bg-white/[0.03] border border-white/10 rounded-2xl p-6 fade-in">
+          <div class="w-10 h-10 rounded-lg bg-amber-500/10 flex items-center justify-center mb-4">
+            <svg class="w-5 h-5 text-amber-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z"/></svg>
+          </div>
+          <h3 class="font-semibold mb-2">Frame Alignment</h3>
+          <p class="text-sm text-zinc-400 leading-relaxed">Phase correlation alignment with sub-pixel accuracy. Handles atmospheric distortion across hundreds of frames.</p>
+        </div>
+
+        <!-- Feature 2: Stacking -->
+        <div class="feature-card bg-white/[0.03] border border-white/10 rounded-2xl p-6 fade-in">
+          <div class="w-10 h-10 rounded-lg bg-amber-500/10 flex items-center justify-center mb-4">
+            <svg class="w-5 h-5 text-amber-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+          </div>
+          <h3 class="font-semibold mb-2">Smart Stacking</h3>
+          <p class="text-sm text-zinc-400 leading-relaxed">Quality-ranked frame selection with sigma clipping. Stack the best percentile of frames for maximum detail.</p>
+        </div>
+
+        <!-- Feature 3: Wavelet Sharpening -->
+        <div class="feature-card bg-white/[0.03] border border-white/10 rounded-2xl p-6 fade-in">
+          <div class="w-10 h-10 rounded-lg bg-amber-500/10 flex items-center justify-center mb-4">
+            <svg class="w-5 h-5 text-amber-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+          </div>
+          <h3 class="font-semibold mb-2">Wavelet Sharpening</h3>
+          <p class="text-sm text-zinc-400 leading-relaxed">Multi-scale wavelet decomposition with per-layer controls. Bring out fine planetary detail without noise amplification.</p>
+        </div>
+
+        <!-- Feature 4: Deconvolution -->
+        <div class="feature-card bg-white/[0.03] border border-white/10 rounded-2xl p-6 fade-in">
+          <div class="w-10 h-10 rounded-lg bg-amber-500/10 flex items-center justify-center mb-4">
+            <svg class="w-5 h-5 text-amber-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+          </div>
+          <h3 class="font-semibold mb-2">Deconvolution</h3>
+          <p class="text-sm text-zinc-400 leading-relaxed">Richardson-Lucy deconvolution to reverse atmospheric and optical blur. Recovers lost resolution from seeing conditions.</p>
+        </div>
+
+        <!-- Feature 5: GPU Acceleration -->
+        <div class="feature-card bg-white/[0.03] border border-white/10 rounded-2xl p-6 fade-in">
+          <div class="w-10 h-10 rounded-lg bg-amber-500/10 flex items-center justify-center mb-4">
+            <svg class="w-5 h-5 text-amber-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"/></svg>
+          </div>
+          <h3 class="font-semibold mb-2">GPU Accelerated</h3>
+          <p class="text-sm text-zinc-400 leading-relaxed">Vulkan compute shaders for parallel processing. Process thousands of frames in a fraction of the time.</p>
+        </div>
+
+        <!-- Feature 6: Low Memory -->
+        <div class="feature-card bg-white/[0.03] border border-white/10 rounded-2xl p-6 fade-in">
+          <div class="w-10 h-10 rounded-lg bg-amber-500/10 flex items-center justify-center mb-4">
+            <svg class="w-5 h-5 text-amber-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/></svg>
+          </div>
+          <h3 class="font-semibold mb-2">Low Memory Mode</h3>
+          <p class="text-sm text-zinc-400 leading-relaxed">Streaming architecture processes videos frame-by-frame. Handle massive captures on modest hardware.</p>
+        </div>
+
+        <!-- Feature 7: Debayering -->
+        <div class="feature-card bg-white/[0.03] border border-white/10 rounded-2xl p-6 fade-in">
+          <div class="w-10 h-10 rounded-lg bg-amber-500/10 flex items-center justify-center mb-4">
+            <svg class="w-5 h-5 text-amber-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"/></svg>
+          </div>
+          <h3 class="font-semibold mb-2">Debayering</h3>
+          <p class="text-sm text-zinc-400 leading-relaxed">Automatic Bayer pattern detection and high-quality demosaicing for one-shot color cameras.</p>
+        </div>
+
+        <!-- Feature 8: Auto Crop -->
+        <div class="feature-card bg-white/[0.03] border border-white/10 rounded-2xl p-6 fade-in">
+          <div class="w-10 h-10 rounded-lg bg-amber-500/10 flex items-center justify-center mb-4">
+            <svg class="w-5 h-5 text-amber-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+          </div>
+          <h3 class="font-semibold mb-2">Auto Crop</h3>
+          <p class="text-sm text-zinc-400 leading-relaxed">Automatically detects and crops the planetary disk from the frame. Removes black borders from alignment drift.</p>
+        </div>
+
+        <!-- Feature 9: CLI + GUI -->
+        <div class="feature-card bg-white/[0.03] border border-white/10 rounded-2xl p-6 fade-in">
+          <div class="w-10 h-10 rounded-lg bg-amber-500/10 flex items-center justify-center mb-4">
+            <svg class="w-5 h-5 text-amber-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+          </div>
+          <h3 class="font-semibold mb-2">CLI + GUI</h3>
+          <p class="text-sm text-zinc-400 leading-relaxed">Full graphical interface for interactive work and a CLI for scripting and batch processing pipelines.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Download Section -->
+  <section id="download" class="py-32 px-6">
+    <div class="max-w-6xl mx-auto">
+      <div class="text-center mb-16 fade-in">
+        <h2 class="text-3xl sm:text-4xl font-bold mb-4">Download Jupiter</h2>
+        <p class="text-zinc-400 max-w-xl mx-auto">Free and open source. Choose your platform and build.</p>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        <!-- macOS -->
+        <div class="platform-card bg-white/[0.03] border border-white/10 rounded-2xl p-6 text-center fade-in" data-platform="mac">
+          <div class="w-12 h-12 mx-auto mb-4 text-zinc-400">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+          </div>
+          <h3 class="font-semibold mb-1">macOS</h3>
+          <p class="text-xs text-zinc-500 mb-5 font-mono">Universal (Intel + Apple Silicon)</p>
+          <div class="flex flex-col gap-2">
+            <a href="https://github.com/WishMasterGit/Jupiter/releases/download/v0.2.1/jupiter-0.2.1-macos-universal.dmg"
+               class="block w-full py-2.5 rounded-lg bg-white/[0.06] border border-white/10 text-sm font-medium text-zinc-300 hover:bg-white/[0.1] hover:text-white transition-all">
+              CPU Build
+            </a>
+            <a href="https://github.com/WishMasterGit/Jupiter/releases/download/v0.2.1/jupiter-0.2.1-macos-universal-gpu.dmg"
+               class="block w-full py-2.5 rounded-lg bg-gradient-to-r from-amber-500 to-orange-600 text-sm font-semibold text-white hover:brightness-110 transition-all">
+              GPU Build
+            </a>
+          </div>
+        </div>
+
+        <!-- Windows -->
+        <div class="platform-card bg-white/[0.03] border border-white/10 rounded-2xl p-6 text-center fade-in" data-platform="windows">
+          <div class="w-12 h-12 mx-auto mb-4 text-zinc-400">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 12V6.75l6-1.32v6.48L3 12zm6.13.01l8.87.01V5.1l-8.87 1.97v4.94zM3 13.25V18l6 1.36v-6.1L3 13.25zm6.13-.02v6.1l8.87 1.97V13.22l-8.87.01z"/></svg>
+          </div>
+          <h3 class="font-semibold mb-1">Windows</h3>
+          <p class="text-xs text-zinc-500 mb-5 font-mono">x86_64 (.msi installer)</p>
+          <div class="flex flex-col gap-2">
+            <a href="https://github.com/WishMasterGit/Jupiter/releases/download/v0.2.1/jupiter-0.2.1-windows-x86_64.msi"
+               class="block w-full py-2.5 rounded-lg bg-white/[0.06] border border-white/10 text-sm font-medium text-zinc-300 hover:bg-white/[0.1] hover:text-white transition-all">
+              CPU Build
+            </a>
+            <a href="https://github.com/WishMasterGit/Jupiter/releases/download/v0.2.1/jupiter-0.2.1-windows-x86_64-gpu.msi"
+               class="block w-full py-2.5 rounded-lg bg-gradient-to-r from-amber-500 to-orange-600 text-sm font-semibold text-white hover:brightness-110 transition-all">
+              GPU Build
+            </a>
+          </div>
+        </div>
+
+        <!-- Linux -->
+        <div class="platform-card bg-white/[0.03] border border-white/10 rounded-2xl p-6 text-center fade-in" data-platform="linux">
+          <div class="w-12 h-12 mx-auto mb-4 text-zinc-400">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 00-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.68-.09.189-.136.394-.132.602 0 .199.027.4.055.536.058.399.116.728.04.97-.249.68-.28 1.145-.106 1.484.174.334.535.47.94.601.81.2 1.91.135 2.774.6.926.466 1.866.67 2.616.47.526-.116.97-.464 1.208-.946.587-.003 1.23-.269 2.26-.334.699-.058 1.574.267 2.577.2.025.134.063.198.114.333l.003.003c.391.778 1.113 1.345 1.884 1.345.826 0 1.457-.479 1.709-1.2h.005c.242-.725.04-1.533-.414-2.2-.454-.665-1.104-1.2-1.483-1.468-.036-.066-.073-.2-.109-.268-.046-.134-.084-.2-.084-.334 0-.2.04-.4.12-.6.273-.52.666-1.468.666-3.2 0-1.665-.666-3.465-1.332-4.532-.2-.332-.534-.797-.534-.797s-.266-.198-.399-.332c-.2-.199-.265-.399-.399-.599-.134-.2-.2-.865-.266-1.332a4.67 4.67 0 00-.399-1.465c-.066-.134-.266-.398-.332-.465-.333-.333-.666-.266-.666-.666 0-.332.533-.198.533-.532 0-.334-.133-.8-.133-.934 0-.132.067-.332.2-.598.133-.268.266-.4.266-.4-.333-.199-.666-.066-1.066.134-.333.133-.532.066-.798-.134-.267-.2-.334-.333-.534-.6-.2-.266-.334-.599-.4-.866-.066-.065-.2-.265-.333-.465-.065-.133-.065-.333-.132-.532s-.2-.399-.332-.599l-.003-.003C13.387.196 12.903 0 12.504 0"/></svg>
+          </div>
+          <h3 class="font-semibold mb-1">Linux</h3>
+          <p class="text-xs text-zinc-500 mb-5 font-mono">x86_64 (.deb / .AppImage)</p>
+          <div class="flex flex-col gap-2">
+            <div class="flex gap-2">
+              <a href="https://github.com/WishMasterGit/Jupiter/releases/download/v0.2.1/jupiter_0.2.1_amd64.deb"
+                 class="block flex-1 py-2.5 rounded-lg bg-white/[0.06] border border-white/10 text-xs font-medium text-zinc-300 hover:bg-white/[0.1] hover:text-white transition-all">
+                .deb
+              </a>
+              <a href="https://github.com/WishMasterGit/Jupiter/releases/download/v0.2.1/jupiter-0.2.1-x86_64.AppImage"
+                 class="block flex-1 py-2.5 rounded-lg bg-white/[0.06] border border-white/10 text-xs font-medium text-zinc-300 hover:bg-white/[0.1] hover:text-white transition-all">
+                AppImage
+              </a>
+            </div>
+            <div class="flex gap-2">
+              <a href="https://github.com/WishMasterGit/Jupiter/releases/download/v0.2.1/jupiter-gpu_0.2.1_amd64.deb"
+                 class="block flex-1 py-2.5 rounded-lg bg-gradient-to-r from-amber-500 to-orange-600 text-xs font-semibold text-white hover:brightness-110 transition-all">
+                GPU .deb
+              </a>
+              <a href="https://github.com/WishMasterGit/Jupiter/releases/download/v0.2.1/jupiter-gpu-0.2.1-x86_64.AppImage"
+                 class="block flex-1 py-2.5 rounded-lg bg-gradient-to-r from-amber-500 to-orange-600 text-xs font-semibold text-white hover:brightness-110 transition-all">
+                GPU AppImage
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <p class="text-center text-sm text-zinc-500 fade-in">
+        <a href="https://github.com/WishMasterGit/Jupiter/releases/tag/v0.2.1" target="_blank" rel="noopener"
+           class="hover:text-zinc-300 transition-colors underline underline-offset-4 decoration-zinc-700">
+          View all releases on GitHub
+        </a>
+      </p>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="bg-zinc-900/50 border-t border-white/10 py-16 px-6">
+    <div class="max-w-6xl mx-auto">
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-8 mb-12">
+        <!-- Brand -->
+        <div class="col-span-2 md:col-span-1">
+          <div class="flex items-center gap-2.5 mb-4">
+            <img src="assets/images/favicon.png" alt="Jupiter" class="w-7 h-7">
+            <span class="font-bold">Jupiter</span>
+          </div>
+          <p class="text-sm text-zinc-500 leading-relaxed">Planetary image processing for amateur astronomers.</p>
+        </div>
+
+        <!-- Product -->
+        <div>
+          <h4 class="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-4">Product</h4>
+          <ul class="space-y-2">
+            <li><a href="#features" class="text-sm text-zinc-500 hover:text-zinc-300 transition-colors">Features</a></li>
+            <li><a href="#download" class="text-sm text-zinc-500 hover:text-zinc-300 transition-colors">Download</a></li>
+          </ul>
+        </div>
+
+        <!-- Resources -->
+        <div>
+          <h4 class="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-4">Resources</h4>
+          <ul class="space-y-2">
+            <li><a href="https://github.com/WishMasterGit/Jupiter" target="_blank" rel="noopener" class="text-sm text-zinc-500 hover:text-zinc-300 transition-colors">Source Code</a></li>
+            <li><a href="https://github.com/WishMasterGit/Jupiter/issues" target="_blank" rel="noopener" class="text-sm text-zinc-500 hover:text-zinc-300 transition-colors">Issues</a></li>
+            <li><a href="https://github.com/WishMasterGit/Jupiter/releases" target="_blank" rel="noopener" class="text-sm text-zinc-500 hover:text-zinc-300 transition-colors">Releases</a></li>
+          </ul>
+        </div>
+
+        <!-- Connect -->
+        <div>
+          <h4 class="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-4">Connect</h4>
+          <ul class="space-y-2">
+            <li>
+              <a href="https://github.com/WishMasterGit/Jupiter" target="_blank" rel="noopener"
+                 class="text-sm text-zinc-500 hover:text-zinc-300 transition-colors flex items-center gap-1.5">
+                <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+                GitHub
+              </a>
+            </li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="border-t border-white/10 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <p class="text-xs text-zinc-600">&copy; 2025 Jupiter. All rights reserved.</p>
+        <p class="text-xs text-zinc-600">Released under the <a href="https://github.com/WishMasterGit/Jupiter/blob/main/LICENSE" target="_blank" rel="noopener" class="hover:text-zinc-400 transition-colors">MIT License</a></p>
+      </div>
+    </div>
+  </footer>
+
+  <script src="js/main.js"></script>
+</body>
+</html>

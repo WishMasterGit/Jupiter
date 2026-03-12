@@ -28,7 +28,14 @@
       "Bash(tee:*)",
       "Bash(cargo llvm-cov:*)",
       "Bash(cargo fmt:*)",
-      "Bash(gh release:*)"
+      "Bash(gh release:*)",
+      "Bash(git:*)",
+      "WebFetch(domain:graphite.com)",
+      "WebFetch(domain:htmlhub.org)",
+      "WebFetch(domain:www.framer.com)",
+      "WebFetch(domain:codepen.io)",
+      "WebFetch(domain:kitemetric.com)",
+      "WebFetch(domain:dev.to)"
     ]
   }
 }
