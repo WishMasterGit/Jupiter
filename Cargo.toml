@@ -6,6 +6,9 @@ members = ["crates/jupiter-core", "crates/jupiter-cli", "crates/jupiter-gui"]
 version = "0.2.4"
 edition = "2021"
 license = "MIT"
+description = "Planet image and video processing tool for crisp results from earth-based telescopes"
+homepage = "https://wishmastergit.github.io/Jupiter/"
+repository = "https://github.com/WishMasterGit/Jupiter"
 
 [workspace.dependencies]
 # Core computation
