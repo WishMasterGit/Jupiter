@@ -17,7 +17,7 @@ default = []
 gpu = ["jupiter-core/gpu"]
 
 [dependencies]
-jupiter-core = { path = "../jupiter-core", version = "0.3.0" }
+jupiter-core = { path = "../jupiter-core", version = "0.3.1" }
 clap = { workspace = true }
 console = { workspace = true }
 indicatif = { workspace = true }
