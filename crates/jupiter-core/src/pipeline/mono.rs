@@ -3,9 +3,8 @@ use std::sync::Arc;
 use tracing::info;
 
 use crate::align::{
-    align_frames_configured_with_progress, compute_centering_offsets, compute_common_overlap,
-    compute_offsets_streaming_configured, detect_centroids, detect_centroids_streaming,
-    pre_center_frames, shift_frame,
+    compute_centering_offsets, compute_common_overlap, compute_offsets_streaming_configured,
+    detect_centroids, detect_centroids_streaming, pre_center_frames, shift_frame,
 };
 use crate::compute::ComputeBackend;
 use crate::detection::config::DetectionConfig;
@@ -18,15 +17,15 @@ use crate::io::ser::SerReader;
 use crate::sharpen::deconvolution::{deconvolve, deconvolve_gpu};
 use crate::sharpen::wavelet;
 use crate::stack::disk_backed::{median_stack_disk, sigma_clip_stack_disk, MmapFrameSlice};
-use crate::stack::drizzle::{drizzle_stack_streaming, DrizzleConfig};
+use crate::stack::drizzle::{drizzle_output_dims, drizzle_single_frame};
 use crate::stack::mean::StreamingMeanStacker;
 use crate::stack::sigma_clip::SigmaClipParams;
 
 use super::config::PipelineConfig;
 use super::config::StackMethod;
 use super::helpers::{
-    apply_filter_step, drizzle_flow, rank_by_metric, rank_by_metric_streaming, select_frames,
-    stack_frames_with_progress,
+    apply_filter_step, compute_offsets_with_progress, drizzle_frames, rank_by_metric,
+    rank_by_metric_streaming, select_frames, stack_frames_with_progress,
 };
 use super::types::{PipelineOutput, PipelineStage, ProgressReporter};
 
@@ -43,13 +42,7 @@ pub(super) fn run_mono_pipeline(
         info!("Using low-memory streaming mode");
     }
 
-    let stacked = if let StackMethod::Drizzle(ref drizzle_config) = config.stacking.method {
-        if streaming {
-            run_mono_drizzle_streaming(reader, config, backend, reporter, drizzle_config, total)?
-        } else {
-            run_mono_drizzle(reader, config, backend, reporter, drizzle_config, total)?
-        }
-    } else if streaming {
+    let stacked = if streaming {
         run_mono_standard_streaming(reader, config, backend, reporter, total)?
     } else {
         run_mono_standard(reader, config, backend, reporter, total)?
@@ -116,32 +109,48 @@ fn run_mono_standard(
         selected_frames
     };
 
-    // Alignment
-    let frame_count = selected_frames.len();
-    reporter.begin_stage(PipelineStage::Alignment, Some(frame_count));
-    let aligned = if frame_count > 1 {
-        let r = reporter.clone();
-        align_frames_configured_with_progress(
-            &selected_frames,
-            0,
-            &config.alignment,
-            backend.clone(),
-            move |done| {
-                r.advance(done);
-            },
-        )?
+    // Compute alignment offsets
+    let offsets =
+        compute_offsets_with_progress(&selected_frames, 0, &config.alignment, backend, reporter)?;
+
+    // If drizzle enabled, project each frame onto high-res grid; otherwise shift
+    let frames_to_stack = if let Some(ref drizzle_config) = config.stacking.drizzle {
+        info!(
+            scale = drizzle_config.scale,
+            pixfrac = drizzle_config.pixfrac,
+            "Drizzle-projecting frames"
+        );
+        drizzle_frames(&selected_frames, &offsets, drizzle_config)?
     } else {
+        // Traditional integer-shift alignment
+        let frame_count = selected_frames.len();
+        reporter.begin_stage(PipelineStage::Alignment, Some(frame_count));
+        // Offsets already computed; just re-use the shift-based approach
+        // but we need to re-report alignment since compute_offsets_with_progress
+        // already finished that stage. The alignment stage was consumed by offset
+        // computation — shift is part of stacking prep.
         selected_frames
+            .iter()
+            .zip(offsets.iter())
+            .enumerate()
+            .map(|(i, (frame, offset))| {
+                if i == 0 {
+                    frame.clone()
+                } else {
+                    shift_frame(frame, offset)
+                }
+            })
+            .collect()
     };
-    reporter.finish_stage();
 
     // Stacking
-    let frame_count = aligned.len();
+    let frame_count = frames_to_stack.len();
     reporter.begin_stage(PipelineStage::Stacking, Some(frame_count));
     let r = reporter.clone();
-    let result = stack_frames_with_progress(&aligned, &config.stacking.method, move |done| {
-        r.advance(done);
-    })?;
+    let result =
+        stack_frames_with_progress(&frames_to_stack, &config.stacking.method, move |done| {
+            r.advance(done);
+        })?;
     info!(method = ?config.stacking.method, "Stacking complete");
     reporter.finish_stage();
 
@@ -203,38 +212,54 @@ fn run_mono_standard_streaming(
         None
     };
 
+    // Compute alignment offsets (streaming)
+    reporter.begin_stage(PipelineStage::Alignment, Some(frame_count));
+    let r = reporter.clone();
+    let offsets = compute_offsets_streaming_configured(
+        reader,
+        &selected_indices,
+        0,
+        &config.alignment,
+        backend.clone(),
+        move |done| {
+            r.advance(done);
+        },
+    )?;
+    reporter.finish_stage();
+
+    let drizzle_config = config.stacking.drizzle.as_ref();
+
+    // Determine output dimensions (may be scaled up for drizzle)
+    let (stack_h, stack_w) = {
+        let (base_h, base_w) = if let Some((_, Some(ref crop))) = pre_center_data {
+            (crop.height as usize, crop.width as usize)
+        } else {
+            (h, w)
+        };
+        if let Some(dc) = drizzle_config {
+            drizzle_output_dims(base_h, base_w, dc.scale)
+        } else {
+            (base_h, base_w)
+        }
+    };
+
     match &config.stacking.method {
         StackMethod::Mean => {
-            // Fully streaming: compute offsets, then load-shift-accumulate one at a time
-            reporter.begin_stage(PipelineStage::Alignment, Some(frame_count));
-            let r = reporter.clone();
-            let offsets = compute_offsets_streaming_configured(
-                reader,
-                &selected_indices,
-                0,
-                &config.alignment,
-                backend.clone(),
-                move |done| {
-                    r.advance(done);
-                },
-            )?;
-            reporter.finish_stage();
-
+            // Fully streaming: load, transform (shift or drizzle), accumulate one at a time
             reporter.begin_stage(PipelineStage::Stacking, Some(frame_count));
-            let (stack_h, stack_w) = if let Some((_, Some(ref crop))) = pre_center_data {
-                (crop.height as usize, crop.width as usize)
-            } else {
-                (h, w)
-            };
             let bit_depth = reader.header.pixel_depth as u8;
             let mut stacker = StreamingMeanStacker::new(stack_h, stack_w, bit_depth);
             for (i, (&frame_idx, offset)) in selected_indices.iter().zip(offsets.iter()).enumerate()
             {
                 let frame = reader.read_frame(frame_idx)?;
-                let shifted = apply_combined_shift(&frame, i, offset, &pre_center_data);
-                stacker.add(&shifted);
+                let transformed = if let Some(dc) = drizzle_config {
+                    let combined = combine_offset(&pre_center_data, i, offset);
+                    drizzle_single_frame(&frame, &combined, dc)?
+                } else {
+                    apply_combined_shift(&frame, i, offset, &pre_center_data)
+                };
+                stacker.add(&transformed);
                 reporter.advance(i + 1);
-                // frame + shifted dropped here
             }
             let result = stacker.finalize()?;
             info!(method = "Mean", "Streaming stacking complete");
@@ -242,32 +267,21 @@ fn run_mono_standard_streaming(
             Ok(result)
         }
         _ => {
-            // Median/SigmaClip: disk-backed streaming — write shifted frames to
+            // Median/SigmaClip: disk-backed streaming — write transformed frames to
             // temp files, then mmap them for per-pixel stacking.
-            reporter.begin_stage(PipelineStage::Alignment, Some(frame_count));
-            let r = reporter.clone();
-            let offsets = compute_offsets_streaming_configured(
-                reader,
-                &selected_indices,
-                0,
-                &config.alignment,
-                backend.clone(),
-                move |done| {
-                    r.advance(done);
-                },
-            )?;
-            reporter.finish_stage();
-
-            // Write shifted frames to disk one at a time
             let store = create_disk_store(config)?;
             reporter.begin_stage(PipelineStage::Reading, Some(frame_count));
             let mut disk_frames = Vec::with_capacity(frame_count);
             for (i, (&frame_idx, offset)) in selected_indices.iter().zip(offsets.iter()).enumerate()
             {
                 let frame = reader.read_frame(frame_idx)?;
-                let shifted = apply_combined_shift(&frame, i, offset, &pre_center_data);
-                disk_frames.push(store.store_frame(&shifted)?);
-                // shifted + frame dropped here — only disk handle kept
+                let transformed = if let Some(dc) = drizzle_config {
+                    let combined = combine_offset(&pre_center_data, i, offset);
+                    drizzle_single_frame(&frame, &combined, dc)?
+                } else {
+                    apply_combined_shift(&frame, i, offset, &pre_center_data)
+                };
+                disk_frames.push(store.store_frame(&transformed)?);
                 reporter.advance(i + 1);
             }
             reporter.finish_stage();
@@ -289,87 +303,9 @@ fn run_mono_standard_streaming(
             };
             info!(method = ?config.stacking.method, "Disk-backed streaming stacking complete");
             reporter.finish_stage();
-            // disk_frames + store dropped here → temp files cleaned up
             Ok(result)
         }
     }
-}
-
-/// Streaming mono drizzle: score -> select -> stream offsets -> stream drizzle.
-fn run_mono_drizzle_streaming(
-    reader: &SerReader,
-    config: &PipelineConfig,
-    backend: &Arc<dyn ComputeBackend>,
-    reporter: &Arc<dyn ProgressReporter>,
-    drizzle_config: &DrizzleConfig,
-    total: usize,
-) -> Result<Frame> {
-    // Quality (streaming)
-    reporter.begin_stage(PipelineStage::QualityAssessment, Some(total));
-    let ranked = rank_by_metric_streaming(reader, &config.frame_selection.metric)?;
-    reporter.finish_stage();
-
-    // Selection
-    reporter.begin_stage(PipelineStage::FrameSelection, None);
-    let (selected_indices, quality_scores) =
-        select_frames(&ranked, total, config.frame_selection.select_percentage);
-    info!(
-        selected = selected_indices.len(),
-        total, "Selected best frames for drizzle (streaming)"
-    );
-    reporter.finish_stage();
-
-    // Alignment offsets (streaming)
-    let frame_count = selected_indices.len();
-    reporter.begin_stage(PipelineStage::Alignment, Some(frame_count));
-    let r = reporter.clone();
-    let offsets = compute_offsets_streaming_configured(
-        reader,
-        &selected_indices,
-        0,
-        &config.alignment,
-        backend.clone(),
-        move |done| {
-            r.advance(done);
-        },
-    )?;
-    info!("Alignment offsets computed for drizzle (streaming)");
-    reporter.finish_stage();
-
-    // Drizzle (streaming: one frame at a time into accumulator)
-    reporter.begin_stage(PipelineStage::Stacking, None);
-    let scores = if drizzle_config.quality_weighted {
-        Some(quality_scores.as_slice())
-    } else {
-        None
-    };
-    let result =
-        drizzle_stack_streaming(reader, &selected_indices, &offsets, drizzle_config, scores)?;
-    info!(
-        method = "Drizzle",
-        scale = drizzle_config.scale,
-        pixfrac = drizzle_config.pixfrac,
-        "Streaming drizzle stacking complete"
-    );
-    reporter.finish_stage();
-    Ok(result)
-}
-
-fn run_mono_drizzle(
-    reader: &SerReader,
-    config: &PipelineConfig,
-    backend: &Arc<dyn ComputeBackend>,
-    reporter: &Arc<dyn ProgressReporter>,
-    drizzle_config: &DrizzleConfig,
-    total: usize,
-) -> Result<Frame> {
-    // Read
-    reporter.begin_stage(PipelineStage::Reading, Some(total));
-    let frames: Vec<Frame> = reader.frames().collect::<Result<_>>()?;
-    reporter.finish_stage();
-
-    // Quality + selection + offsets + drizzle
-    drizzle_flow(&frames, config, backend, reporter, drizzle_config, total)
 }
 
 /// Post-stacking processing for mono path: sharpen -> filter -> write -> return.
@@ -426,6 +362,31 @@ fn create_disk_store(config: &PipelineConfig) -> Result<DiskFrameStore> {
         DiskFrameStore::with_parent(dir)
     } else {
         DiskFrameStore::new()
+    }
+}
+
+/// Combine pre-centering offset with alignment offset into a single offset.
+///
+/// When pre-centering is active, the centering offset is added to the alignment
+/// offset. When it's not active, returns just the alignment offset (or identity
+/// for the reference frame).
+fn combine_offset(
+    pre_center_data: &Option<(Vec<AlignmentOffset>, Option<CropRect>)>,
+    frame_index: usize,
+    alignment_offset: &AlignmentOffset,
+) -> AlignmentOffset {
+    match pre_center_data {
+        Some((center_offsets, _)) => AlignmentOffset {
+            dx: center_offsets[frame_index].dx + alignment_offset.dx,
+            dy: center_offsets[frame_index].dy + alignment_offset.dy,
+        },
+        None => {
+            if frame_index == 0 {
+                AlignmentOffset::default()
+            } else {
+                alignment_offset.clone()
+            }
+        }
     }
 }
 

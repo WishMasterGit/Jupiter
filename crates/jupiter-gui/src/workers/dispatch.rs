@@ -112,8 +112,8 @@ fn worker_loop(
                     &ctx,
                 );
             }
-            WorkerCommand::Stack { method } => {
-                stacking::handle_stack(&method, &mut cache, &tx, &ctx);
+            WorkerCommand::Stack { method, drizzle } => {
+                stacking::handle_stack(&method, drizzle.as_ref(), &mut cache, &tx, &ctx);
             }
             WorkerCommand::Sharpen { config, device } => {
                 postprocess::handle_sharpen(&config, &device, &mut cache, &tx, &ctx);

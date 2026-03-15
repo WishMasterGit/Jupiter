@@ -55,7 +55,23 @@ pub(super) fn stack_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
             StackMethodChoice::MultiPoint | StackMethodChoice::SurfaceWarp => {
                 ap_controls(ui, app);
             }
-            StackMethodChoice::Drizzle => {
+            _ => {}
+        }
+
+        // Drizzle option (available for Mean/Median/SigmaClip)
+        let drizzle_compatible = matches!(
+            app.config.stack_method_choice,
+            StackMethodChoice::Mean | StackMethodChoice::Median | StackMethodChoice::SigmaClip
+        );
+        if drizzle_compatible {
+            ui.add_space(4.0);
+            if ui
+                .checkbox(&mut app.config.drizzle_enabled, "Enable Drizzle")
+                .changed()
+            {
+                app.ui_state.stages.mark_dirty_from(PipelineStage::Stacking);
+            }
+            if app.config.drizzle_enabled {
                 if ui
                     .add(egui::Slider::new(&mut app.config.drizzle_scale, 1.0..=4.0).text("Scale"))
                     .changed()
@@ -71,14 +87,11 @@ pub(super) fn stack_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
                 {
                     app.ui_state.stages.mark_dirty_from(PipelineStage::Stacking);
                 }
-                if ui
-                    .checkbox(&mut app.config.drizzle_quality_weighted, "Quality weighted")
-                    .changed()
-                {
-                    app.ui_state.stages.mark_dirty_from(PipelineStage::Stacking);
-                }
             }
-            _ => {}
+        } else if app.config.drizzle_enabled {
+            // Disable drizzle if method is incompatible
+            app.config.drizzle_enabled = false;
+            app.ui_state.stages.mark_dirty_from(PipelineStage::Stacking);
         }
 
         // Stack button
@@ -93,6 +106,7 @@ pub(super) fn stack_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
             app.ui_state.running_stage = Some(PipelineStage::Stacking);
             app.send_command(WorkerCommand::Stack {
                 method: app.config.stack_method(),
+                drizzle: app.config.drizzle_config(),
             });
         }
     });

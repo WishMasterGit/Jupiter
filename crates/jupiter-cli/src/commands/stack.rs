@@ -6,7 +6,7 @@ use jupiter_core::io::image_io::save_image;
 use jupiter_core::io::ser::SerReader;
 use jupiter_core::pipeline::config::QualityMetric;
 use jupiter_core::quality::laplacian::rank_frames;
-use jupiter_core::stack::drizzle::{drizzle_stack, DrizzleConfig};
+use jupiter_core::stack::drizzle::{drizzle_single_frame, DrizzleConfig};
 use jupiter_core::stack::mean::mean_stack;
 use jupiter_core::stack::median::median_stack;
 use jupiter_core::stack::multi_point::{multi_point_stack, MultiPointConfig};
@@ -20,7 +20,6 @@ pub enum StackMethodArg {
     Median,
     SigmaClip,
     MultiPoint,
-    Drizzle,
     SurfaceWarp,
 }
 
@@ -53,6 +52,10 @@ pub struct StackArgs {
     #[arg(long, default_value = "0.05")]
     pub min_brightness: f32,
 
+    /// Enable drizzle super-resolution projection before stacking
+    #[arg(long)]
+    pub drizzle: bool,
+
     /// Output scale factor for drizzle (e.g., 2.0 = 2x resolution)
     #[arg(long, default_value = "2.0")]
     pub drizzle_scale: f32,
@@ -72,7 +75,6 @@ pub fn run(args: &StackArgs) -> Result<()> {
 
     match args.method {
         StackMethodArg::MultiPoint => run_multi_point(&reader, args, percentage),
-        StackMethodArg::Drizzle => run_drizzle(&reader, args, percentage),
         StackMethodArg::SurfaceWarp => run_surface_warp(&reader, args, percentage),
         _ => run_standard(&reader, args, percentage),
     }
@@ -130,78 +132,7 @@ fn run_standard(reader: &SerReader, args: &StackArgs, percentage: f32) -> Result
         .map(|(i, _)| frames[*i].clone())
         .collect();
 
-    let pb = ProgressBar::new(keep as u64);
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("Aligning [{bar:40}] {pos}/{len}")?
-            .progress_chars("=> "),
-    );
-
-    let aligned = align_frames_with_progress(&selected, 0, |done| {
-        pb.set_position(done as u64);
-    })?;
-    pb.finish();
-
-    let method_name = match args.method {
-        StackMethodArg::Mean => "mean",
-        StackMethodArg::Median => "median",
-        StackMethodArg::SigmaClip => "sigma-clip",
-        _ => unreachable!(),
-    };
-    println!("Stacking ({})...", method_name);
-
-    let result = match args.method {
-        StackMethodArg::Mean => mean_stack(&aligned)?,
-        StackMethodArg::Median => median_stack(&aligned)?,
-        StackMethodArg::SigmaClip => {
-            let params = SigmaClipParams {
-                sigma: args.sigma,
-                ..Default::default()
-            };
-            sigma_clip_stack(&aligned, &params)?
-        }
-        _ => unreachable!(),
-    };
-
-    save_image(&result, &args.output)?;
-    println!("Saved to {}", args.output.display());
-    Ok(())
-}
-
-fn run_drizzle(reader: &SerReader, args: &StackArgs, percentage: f32) -> Result<()> {
-    let total = reader.frame_count();
-    println!(
-        "Drizzle stacking {} frames (scale={}, pixfrac={})",
-        total, args.drizzle_scale, args.pixfrac
-    );
-
-    println!("Reading {} frames...", total);
-    let frames: Vec<_> = reader.frames().collect::<std::result::Result<_, _>>()?;
-
-    println!("Scoring frames...");
-    let ranked = rank_frames(&frames);
-
-    let keep = (total as f32 * percentage).ceil() as usize;
-    let keep = keep.max(1).min(total);
-    println!("Selected {} best frames (top {}%)", keep, args.select);
-
-    let selected_indices: Vec<usize> = ranked.iter().take(keep).map(|(i, _)| *i).collect();
-    let selected: Vec<_> = selected_indices
-        .iter()
-        .map(|&i| frames[i].clone())
-        .collect();
-    let quality_scores: Vec<f64> = selected_indices
-        .iter()
-        .map(|&i| {
-            ranked
-                .iter()
-                .find(|(idx, _)| *idx == i)
-                .unwrap()
-                .1
-                .composite
-        })
-        .collect();
-
+    // Compute alignment offsets
     println!("Computing alignment offsets...");
     let pb = ProgressBar::new(keep as u64);
     pb.set_style(
@@ -225,19 +156,53 @@ fn run_drizzle(reader: &SerReader, args: &StackArgs, percentage: f32) -> Result<
         .collect();
     pb.finish();
 
-    println!("Drizzle stacking...");
-    let drizzle_config = DrizzleConfig {
-        scale: args.drizzle_scale,
-        pixfrac: args.pixfrac,
-        quality_weighted: true,
-        ..Default::default()
+    // If drizzle enabled, project each frame onto high-res grid
+    let frames_to_stack = if args.drizzle {
+        let drizzle_config = DrizzleConfig {
+            scale: args.drizzle_scale,
+            pixfrac: args.pixfrac,
+            ..Default::default()
+        };
+        println!(
+            "Drizzle-projecting frames (scale={}, pixfrac={})...",
+            args.drizzle_scale, args.pixfrac
+        );
+        selected
+            .iter()
+            .zip(offsets.iter())
+            .map(|(frame, offset)| drizzle_single_frame(frame, offset, &drizzle_config))
+            .collect::<std::result::Result<Vec<_>, _>>()?
+    } else {
+        // Traditional shift alignment
+        align_frames_with_progress(&selected, 0, |done| {
+            pb.set_position(done as u64);
+        })?
     };
 
-    let result = drizzle_stack(&selected, &offsets, &drizzle_config, Some(&quality_scores))?;
+    let method_name = match args.method {
+        StackMethodArg::Mean => "mean",
+        StackMethodArg::Median => "median",
+        StackMethodArg::SigmaClip => "sigma-clip",
+        _ => unreachable!(),
+    };
+    println!("Stacking ({})...", method_name);
+
+    let result = match args.method {
+        StackMethodArg::Mean => mean_stack(&frames_to_stack)?,
+        StackMethodArg::Median => median_stack(&frames_to_stack)?,
+        StackMethodArg::SigmaClip => {
+            let params = SigmaClipParams {
+                sigma: args.sigma,
+                ..Default::default()
+            };
+            sigma_clip_stack(&frames_to_stack, &params)?
+        }
+        _ => unreachable!(),
+    };
 
     save_image(&result, &args.output)?;
     println!(
-        "Saved {}x{} drizzle result to {}",
+        "Saved {}x{} result to {}",
         result.width(),
         result.height(),
         args.output.display()

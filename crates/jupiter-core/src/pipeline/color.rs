@@ -20,14 +20,13 @@ use crate::quality::laplacian::rank_frames_color_streaming;
 use crate::sharpen::deconvolution::{deconvolve, deconvolve_gpu};
 use crate::sharpen::wavelet;
 use crate::stack::disk_backed::{median_stack_disk, sigma_clip_stack_disk, MmapFrameSlice};
-use crate::stack::drizzle::DrizzleConfig;
+use crate::stack::drizzle::drizzle_single_frame;
 use crate::stack::sigma_clip::SigmaClipParams;
 
-use super::config::{AlignmentConfig, PipelineConfig, QualityMetric, StackMethod};
+use super::config::{PipelineConfig, QualityMetric, StackMethod};
 use super::helpers::{
-    apply_filter_step, compute_offsets_with_progress, drizzle_color_channels_parallel,
-    rank_by_metric, select_frames, shift_color_frames, split_color_channels,
-    stack_color_channels_parallel,
+    apply_filter_step, compute_offsets_with_progress, drizzle_color_frames, rank_by_metric,
+    select_frames, shift_color_frames, split_color_channels, stack_color_channels_parallel,
 };
 use super::orchestrator::should_use_streaming;
 use super::types::{PipelineOutput, PipelineStage, ProgressReporter};
@@ -92,7 +91,7 @@ pub(super) fn run_color_pipeline(
 
     // Selection
     reporter.begin_stage(PipelineStage::FrameSelection, None);
-    let (selected_indices, quality_scores) =
+    let (selected_indices, _) =
         select_frames(&ranked, total, config.frame_selection.select_percentage);
     let selected_color: Vec<ColorFrame> = selected_indices
         .iter()
@@ -115,19 +114,8 @@ pub(super) fn run_color_pipeline(
         (selected_color, selected_lum)
     };
 
-    let stacked_color = if let StackMethod::Drizzle(ref drizzle_config) = config.stacking.method {
-        color_drizzle_flow(
-            &selected_color,
-            &selected_lum,
-            &quality_scores,
-            backend,
-            reporter,
-            drizzle_config,
-            &config.alignment,
-        )?
-    } else {
-        color_standard_flow(&selected_color, &selected_lum, config, backend, reporter)?
-    };
+    let stacked_color =
+        color_standard_flow(&selected_color, &selected_lum, config, backend, reporter)?;
 
     apply_post_stack_color(stacked_color, config, backend, reporter)
 }
@@ -157,7 +145,7 @@ fn run_color_pipeline_streaming(
 
     // Selection
     reporter.begin_stage(PipelineStage::FrameSelection, None);
-    let (selected_indices, quality_scores) =
+    let (selected_indices, _) =
         select_frames(&ranked, total, config.frame_selection.select_percentage);
     info!(
         selected = selected_indices.len(),
@@ -181,17 +169,7 @@ fn run_color_pipeline_streaming(
         (selected_color, selected_lum)
     };
 
-    let stacked_color = if let StackMethod::Drizzle(ref drizzle_config) = config.stacking.method {
-        color_drizzle_flow(
-            &selected_color,
-            &selected_lum,
-            &quality_scores,
-            backend,
-            reporter,
-            drizzle_config,
-            &config.alignment,
-        )?
-    } else if matches!(
+    let stacked_color = if matches!(
         config.stacking.method,
         StackMethod::Median | StackMethod::SigmaClip(_)
     ) {
@@ -214,8 +192,18 @@ fn color_standard_flow(
     let offsets =
         compute_offsets_with_progress(selected_lum, 0, &config.alignment, backend, reporter)?;
 
-    // Apply offsets to each color channel
-    let aligned_color = shift_color_frames(selected_color, &offsets);
+    // If drizzle enabled, project each color channel frame onto high-res grid;
+    // otherwise shift as before.
+    let aligned_color = if let Some(ref drizzle_config) = config.stacking.drizzle {
+        info!(
+            scale = drizzle_config.scale,
+            pixfrac = drizzle_config.pixfrac,
+            "Drizzle-projecting color frames"
+        );
+        drizzle_color_frames(selected_color, &offsets, drizzle_config)?
+    } else {
+        shift_color_frames(selected_color, &offsets)
+    };
 
     // Stack per-channel
     let stack_count = aligned_color.len();
@@ -224,47 +212,6 @@ fn color_standard_flow(
     let method = &config.stacking.method;
     let result = stack_color_channels_parallel(&red, &green, &blue, method, reporter)?;
     info!(method = ?method, "Color stacking complete");
-    reporter.finish_stage();
-
-    Ok(result)
-}
-
-fn color_drizzle_flow(
-    selected_color: &[ColorFrame],
-    selected_lum: &[Frame],
-    quality_scores: &[f64],
-    backend: &Arc<dyn ComputeBackend>,
-    reporter: &Arc<dyn ProgressReporter>,
-    drizzle_config: &DrizzleConfig,
-    alignment_config: &AlignmentConfig,
-) -> Result<ColorFrame> {
-    // Compute offsets on luminance
-    let offsets =
-        compute_offsets_with_progress(selected_lum, 0, alignment_config, backend, reporter)?;
-
-    // Drizzle per channel
-    let drizzle_count = selected_color.len();
-    reporter.begin_stage(PipelineStage::Stacking, Some(drizzle_count));
-    let (red, green, blue) = split_color_channels(selected_color);
-    let scores = if drizzle_config.quality_weighted && !quality_scores.is_empty() {
-        Some(quality_scores)
-    } else {
-        None
-    };
-    let result = drizzle_color_channels_parallel(
-        &red,
-        &green,
-        &blue,
-        &offsets,
-        drizzle_config,
-        scores,
-        reporter,
-    )?;
-    info!(
-        method = "Drizzle",
-        scale = drizzle_config.scale,
-        "Color drizzle stacking complete"
-    );
     reporter.finish_stage();
 
     Ok(result)
@@ -293,16 +240,27 @@ fn color_disk_backed_flow(
 
     let frame_count = selected_color.len();
     let bit_depth = selected_color[0].red.original_bit_depth;
+    let drizzle_config = config.stacking.drizzle.as_ref();
 
-    // Write shifted channels to disk
+    // Write transformed channels to disk
     reporter.begin_stage(PipelineStage::Reading, Some(frame_count));
     let mut disk_red = Vec::with_capacity(frame_count);
     let mut disk_green = Vec::with_capacity(frame_count);
     let mut disk_blue = Vec::with_capacity(frame_count);
     for (i, (cf, offset)) in selected_color.iter().zip(offsets.iter()).enumerate() {
-        let sr = shift_frame(&cf.red, offset);
-        let sg = shift_frame(&cf.green, offset);
-        let sb = shift_frame(&cf.blue, offset);
+        let (sr, sg, sb) = if let Some(dc) = drizzle_config {
+            (
+                drizzle_single_frame(&cf.red, offset, dc)?,
+                drizzle_single_frame(&cf.green, offset, dc)?,
+                drizzle_single_frame(&cf.blue, offset, dc)?,
+            )
+        } else {
+            (
+                shift_frame(&cf.red, offset),
+                shift_frame(&cf.green, offset),
+                shift_frame(&cf.blue, offset),
+            )
+        };
         disk_red.push(store.store_frame(&sr)?);
         disk_green.push(store.store_frame(&sg)?);
         disk_blue.push(store.store_frame(&sb)?);

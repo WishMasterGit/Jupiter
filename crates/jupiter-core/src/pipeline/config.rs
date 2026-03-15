@@ -200,13 +200,29 @@ pub struct AlignmentConfig {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StackingConfig {
     pub method: StackMethod,
+    /// Optional drizzle super-resolution projection applied before stacking.
+    /// When `Some`, each frame is drizzled onto a high-res grid before the
+    /// chosen stacking method combines them.
+    #[serde(default)]
+    pub drizzle: Option<DrizzleConfig>,
 }
 
 impl Default for StackingConfig {
     fn default() -> Self {
         Self {
             method: StackMethod::Mean,
+            drizzle: None,
         }
+    }
+}
+
+impl fmt::Display for StackingConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.method)?;
+        if let Some(ref drizzle) = self.drizzle {
+            write!(f, " + {drizzle}")?;
+        }
+        Ok(())
     }
 }
 
@@ -216,7 +232,6 @@ pub enum StackMethod {
     Median,
     SigmaClip(SigmaClipParams),
     MultiPoint(MultiPointConfig),
-    Drizzle(DrizzleConfig),
     SurfaceWarp(SurfaceWarpConfig),
 }
 
@@ -306,9 +321,6 @@ impl fmt::Display for StackMethod {
             StackMethod::Median => write!(f, "Median"),
             StackMethod::SigmaClip(_) => write!(f, "Sigma Clip"),
             StackMethod::MultiPoint(_) => write!(f, "Multi-Point"),
-            StackMethod::Drizzle(cfg) => {
-                write!(f, "Drizzle ({}x, pixfrac={})", cfg.scale, cfg.pixfrac)
-            }
             StackMethod::SurfaceWarp(_) => write!(f, "Surface Warp"),
         }
     }

@@ -333,6 +333,7 @@ fn test_surface_warp_pipeline_integration() {
                 min_brightness: 0.01,
                 ..Default::default()
             }),
+            drizzle: None,
         },
         sharpening: None,
         filters: vec![],

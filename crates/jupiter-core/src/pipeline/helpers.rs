@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-use tracing::info;
-
 use crate::align::{compute_offset_configured, shift_frame};
 use crate::compute::ComputeBackend;
 use crate::error::Result;
@@ -13,7 +11,7 @@ use crate::frame::{AlignmentOffset, ColorFrame, Frame, QualityScore};
 use crate::io::ser::SerReader;
 use crate::quality::gradient::{rank_frames_gradient, rank_frames_gradient_streaming};
 use crate::quality::laplacian::{rank_frames, rank_frames_streaming};
-use crate::stack::drizzle::{drizzle_stack_with_progress, DrizzleConfig};
+use crate::stack::drizzle::{drizzle_single_frame, DrizzleConfig};
 use crate::stack::mean::mean_stack_with_progress;
 use crate::stack::median::median_stack;
 use crate::stack::sigma_clip::sigma_clip_stack;
@@ -72,8 +70,8 @@ pub(super) fn stack_frames_with_progress(
             on_progress(frames.len());
             result
         }
-        StackMethod::MultiPoint(_) | StackMethod::Drizzle(_) | StackMethod::SurfaceWarp(_) => {
-            unreachable!("multi-point, drizzle, and surface-warp handled separately")
+        StackMethod::MultiPoint(_) | StackMethod::SurfaceWarp(_) => {
+            unreachable!("multi-point and surface-warp handled separately")
         }
     }
 }
@@ -143,37 +141,6 @@ pub(super) fn stack_color_channels_parallel(
     })
 }
 
-/// Drizzle-stack three channel frame lists in parallel, returning a ColorFrame.
-pub(super) fn drizzle_color_channels_parallel(
-    red: &[Frame],
-    green: &[Frame],
-    blue: &[Frame],
-    offsets: &[AlignmentOffset],
-    drizzle_config: &DrizzleConfig,
-    scores: Option<&[f64]>,
-    reporter: &Arc<dyn ProgressReporter>,
-) -> Result<ColorFrame> {
-    let r = reporter.clone();
-    let (dr, (dg, db)) = rayon::join(
-        || {
-            drizzle_stack_with_progress(red, offsets, drizzle_config, scores, move |done| {
-                r.advance(done)
-            })
-        },
-        || {
-            rayon::join(
-                || drizzle_stack_with_progress(green, offsets, drizzle_config, scores, |_| {}),
-                || drizzle_stack_with_progress(blue, offsets, drizzle_config, scores, |_| {}),
-            )
-        },
-    );
-    Ok(ColorFrame {
-        red: dr?,
-        green: dg?,
-        blue: db?,
-    })
-}
-
 /// Apply alignment offsets to color frames (shift each R/G/B channel).
 pub(super) fn shift_color_frames(
     frames: &[ColorFrame],
@@ -190,61 +157,39 @@ pub(super) fn shift_color_frames(
         .collect()
 }
 
-pub(super) fn drizzle_flow(
+/// Drizzle a set of frames onto high-res grids using their alignment offsets.
+pub(super) fn drizzle_frames(
     frames: &[Frame],
-    config: &super::config::PipelineConfig,
-    backend: &Arc<dyn ComputeBackend>,
-    reporter: &Arc<dyn ProgressReporter>,
+    offsets: &[AlignmentOffset],
     drizzle_config: &DrizzleConfig,
-    total: usize,
-) -> Result<Frame> {
-    reporter.begin_stage(PipelineStage::QualityAssessment, Some(total));
-    let ranked = rank_by_metric(frames, &config.frame_selection.metric);
-    reporter.finish_stage();
-
-    reporter.begin_stage(PipelineStage::FrameSelection, None);
-    let (selected_indices, quality_scores) =
-        select_frames(&ranked, total, config.frame_selection.select_percentage);
-    let selected_frames: Vec<Frame> = selected_indices
+) -> Result<Vec<Frame>> {
+    frames
         .iter()
-        .map(|&i| frames[i].clone())
-        .collect();
-    info!(
-        selected = selected_frames.len(),
-        total, "Selected best frames for drizzle"
-    );
-    reporter.finish_stage();
+        .zip(offsets.iter())
+        .map(|(frame, offset)| drizzle_single_frame(frame, offset, drizzle_config))
+        .collect()
+}
 
-    // Compute alignment offsets
-    let offsets =
-        compute_offsets_with_progress(&selected_frames, 0, &config.alignment, backend, reporter)?;
-    info!("Alignment offsets computed for drizzle");
-
-    let drizzle_count = selected_frames.len();
-    reporter.begin_stage(PipelineStage::Stacking, Some(drizzle_count));
-    let scores = if drizzle_config.quality_weighted {
-        Some(quality_scores.as_slice())
-    } else {
-        None
-    };
-    let r = reporter.clone();
-    let result = drizzle_stack_with_progress(
-        &selected_frames,
-        &offsets,
-        drizzle_config,
-        scores,
-        move |done| {
-            r.advance(done);
-        },
-    )?;
-    info!(
-        method = "Drizzle",
-        scale = drizzle_config.scale,
-        pixfrac = drizzle_config.pixfrac,
-        "Drizzle stacking complete"
-    );
-    reporter.finish_stage();
-    Ok(result)
+/// Drizzle color frames (all three channels) using luminance-derived offsets.
+pub(super) fn drizzle_color_frames(
+    color_frames: &[ColorFrame],
+    offsets: &[AlignmentOffset],
+    drizzle_config: &DrizzleConfig,
+) -> Result<Vec<ColorFrame>> {
+    color_frames
+        .iter()
+        .zip(offsets.iter())
+        .map(|(cf, offset)| {
+            let r = drizzle_single_frame(&cf.red, offset, drizzle_config)?;
+            let g = drizzle_single_frame(&cf.green, offset, drizzle_config)?;
+            let b = drizzle_single_frame(&cf.blue, offset, drizzle_config)?;
+            Ok(ColorFrame {
+                red: r,
+                green: g,
+                blue: b,
+            })
+        })
+        .collect()
 }
 
 /// Apply a single filter step to a frame.

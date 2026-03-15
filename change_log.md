@@ -1,77 +1,45 @@
 # Changelog
 
-### Pre-Centering Alignment System (New Feature)
+## Refactor Drizzle: From Stacking Algorithm to Stacking Option
 
-Adds an optional pre-centering step that detects the planet in each frame and shifts it to image center before global alignment. This compensates for large planetary drift across frames (common with alt-azimuth mounts) where raw phase correlation can fail due to FFT wrap-around.
+Drizzle is no longer a standalone `StackMethod::Drizzle(DrizzleConfig)` variant. It is now an **option** on `StackingConfig` that can be enabled for any standard stacking method (Mean+Drizzle, Median+Drizzle, SigmaClip+Drizzle). This better reflects drizzle's nature as a geometric super-resolution projection, not a pixel-combination strategy.
 
-**Core algorithm** (`crates/jupiter-core/src/align/pre_center.rs` — new file):
+When drizzle is enabled, each frame is individually projected onto a high-resolution grid using its alignment offset before the chosen stacking method combines them.
 
-- `detect_centroids()` / `detect_centroids_streaming()` — find planet centroids in frames (in-memory or streaming from SER)
-- `compute_centering_offsets()` — compute per-frame shifts to move planet to image center; falls back to median centroid for frames where detection fails; returns `None` if fewer than 50% of frames have successful detections
-- `compute_common_overlap()` — compute the intersection crop rectangle after centering shifts; returns `None` if overlap is below 25% of original area
-- `pre_center_frames()` / `pre_center_color_frames()` — apply centering shifts and optional crop
-- `crop_frame()` — crop a frame to a `CropRect` subregion
+### Core library (`jupiter-core`)
 
-**New constants** (`consts.rs`):
+1. **`stack/drizzle.rs`** — Rewrote to expose `drizzle_single_frame()` and `drizzle_output_dims()` as the public API. Removed `quality_weighted` from `DrizzleConfig`, removed `drizzle_stack()`, `drizzle_stack_with_progress()`, `drizzle_stack_parallel()`, `drizzle_stack_sequential()`, `drizzle_stack_streaming()`, and `default_true()`. Added `Display` impl for `DrizzleConfig`.
 
-- `PRE_CENTER_MIN_DETECTION_FRACTION` (0.5)
-- `PRE_CENTER_MIN_OVERLAP_FRACTION` (0.25)
+2. **`pipeline/config.rs`** — Removed `Drizzle(DrizzleConfig)` from `StackMethod` enum. Added `drizzle: Option<DrizzleConfig>` to `StackingConfig`. Added `Display` impl for `StackingConfig` that appends " + Drizzle" when enabled.
 
-**Pipeline integration** (`pipeline/config.rs`, `pipeline/mono.rs`, `pipeline/color.rs`, `pipeline/types.rs`):
+3. **`pipeline/helpers.rs`** — Removed `drizzle_flow()` and `drizzle_color_channels_parallel()`. Added `drizzle_frames()` and `drizzle_color_frames()` helpers that drizzle individual frames. Removed `StackMethod::Drizzle` from unreachable arm.
 
-- Added `pre_center: bool` field to `AlignmentConfig` (serde default = false)
-- Added `PreCentering` variant to `PipelineStage` enum
-- Standard mono pipeline: pre-centering runs after frame reading, before alignment; combined offsets used for stacking; crop rect applied when present
-- Streaming mono pipeline: same logic adapted for streaming reads with correct dimension handling
-- Color pipeline: detects on luminance channel, applies centering shifts to all color channels
-- Helper `apply_combined_shift()` chains centering + alignment offsets
+4. **`pipeline/mono.rs`** — Removed `run_mono_drizzle()` and `run_mono_drizzle_streaming()`. Simplified `run_mono_pipeline()` to just streaming vs non-streaming branching. Integrated drizzle as a pre-stack step: if `config.stacking.drizzle` is `Some`, frames are drizzled instead of shifted before stacking. Added `combine_offset()` helper for streaming drizzle with pre-centering.
 
-**Multi-Point & Surface Warp stacking** (`stack/ap_grid.rs`, `stack/multi_point.rs`, `stack/surface_warp.rs`):
+5. **`pipeline/color.rs`** — Removed `color_drizzle_flow()` and all `StackMethod::Drizzle` branches. Integrated drizzle into `color_standard_flow()` and `color_disk_backed_flow()` as a pre-stack projection step.
 
-- Added `pre_center: bool` to both `MultiPointConfig` and `SurfaceWarpConfig`
-- When enabled, Step 0 detects planet centroids and computes centering offsets; reference and target frames are shifted before phase correlation; final offsets combine centering + residual alignment
-- No crop applied (multi-point/surface warp handle edge effects via their AP grid)
-- `to_mp_config()` propagates `pre_center` from `SurfaceWarpConfig`
+6. **`tests/test_drizzle.rs`** — Rewrote all tests to use `drizzle_single_frame()` API. Added `test_drizzle_then_mean_stack`, `test_drizzle_then_median_stack`, `test_drizzle_then_sigma_clip_stack`, `test_drizzle_output_dims_helper`, and `test_drizzle_subpixel_offset`.
 
-**Pipeline orchestrator** (`pipeline/orchestrator.rs`):
+### CLI (`jupiter-cli`)
 
-- Before calling `multi_point_stack*` / `surface_warp_stack*`, clones the stacking config and sets `pre_center = pipeline_config.alignment.pre_center`
+7. **`commands/stack.rs`** — Removed `Drizzle` from `StackMethodArg`. Added `--drizzle` bool flag. Removed `run_drizzle()`. In `run_standard()`, if `--drizzle`, frames are drizzled before stacking.
 
-### CLI Support
+8. **`commands/pipeline.rs`** — Added `--drizzle` flag to `RunArgs`. Build `drizzle: Option<DrizzleConfig>` from the flag and set on `StackingConfig`.
 
-- Added `--pre-center` flag to `RunArgs` in `jupiter-cli/src/commands/pipeline.rs`
-- Updated pattern match in `summary.rs` to handle new config fields with `..` catch-all
+9. **`summary.rs`** — Changed `print_stack_sub_params()` to accept `&StackingConfig`. Removed `StackMethod::Drizzle` arm. Added drizzle info printing when `stacking.drizzle.is_some()`.
 
-### GUI Enhancements
+### GUI (`jupiter-gui`)
 
-**Pre-centering UI** (`panels/controls/alignment.rs`, `states/config.rs`, `workers/align.rs`):
+10. **`states/choices.rs`** — Removed `Drizzle` from `StackMethodChoice`.
 
-- Checkbox toggle for pre-centering with help text
-- `ConfigState` passes `pre_center` when constructing `MultiPointConfig` and `SurfaceWarpConfig`
-- Worker thread performs pre-centering and sends `PreCentering` stage updates; logs detected planet counts and crop status
+11. **`states/config.rs`** — Replaced `drizzle_quality_weighted` with `drizzle_enabled: bool`. Added `drizzle_config()` method. Updated `to_pipeline_config()` and `from_pipeline_config()`.
 
-**Quality score chart improvements** (`panels/controls/score.rs`):
+12. **`panels/controls/stack.rs`** — Removed `StackMethodChoice::Drizzle` match arm. Added drizzle section below method params (checkbox + sliders), visible only for Mean/Median/SigmaClip.
 
-- Bars sorted by score (highest to lowest rank order) instead of frame index
-- Click-to-preview: clicking a bar previews that frame
+13. **`messages.rs`** — Changed `Stack { method }` to `Stack { method, drizzle }`.
 
-**System monitoring** (`states/ui.rs`, `panels/status.rs`, `app.rs`, `Cargo.toml`):
+14. **`workers/stacking/mod.rs`** — Removed `mod drizzle` and `StackMethod::Drizzle` arm. Passes `drizzle` to `handle_standard()`.
 
-- New `SystemStats` struct tracks CPU and memory usage (1-second refresh via `sysinfo` crate)
-- Status bar shows resolved device name (e.g. "Auto (Apple M1 Pro)" instead of just "Auto")
-- Status bar shows live CPU% and memory usage
-- `refresh_device_name()` called when device preference changes
+15. **`workers/stacking/standard.rs`** — Accepts `drizzle: Option<&DrizzleConfig>`. If drizzle is `Some`, calls `drizzle_single_frame` for each frame instead of `shift_frame`.
 
-### Documentation
-
-- `Claude.md`: added architecture section (workspace structure, pipeline flow, key types), common commands, troubleshooting
-
-### Tests
-
-- `tests/test_pre_center.rs` (new) — full coverage for pre-centering core functions
-- `tests/test_pre_center_stacking.rs` (new) — pre_center=true/false for multi-point and surface warp; graceful fallback when detection fails on uniform dark frames
-- `tests/test_alignment_methods.rs` — updated config constructors to use `..Default::default()`
-
-### Dependencies
-
-- Added `sysinfo = "0.38.4"` to `jupiter-gui`
+16. **`workers/stacking/drizzle.rs`** — Deleted.

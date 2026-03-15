@@ -1,5 +1,8 @@
 use jupiter_core::frame::{AlignmentOffset, Frame};
-use jupiter_core::stack::drizzle::{drizzle_stack, DrizzleConfig};
+use jupiter_core::stack::drizzle::{drizzle_output_dims, drizzle_single_frame, DrizzleConfig};
+use jupiter_core::stack::mean::mean_stack;
+use jupiter_core::stack::median::median_stack;
+use jupiter_core::stack::sigma_clip::{sigma_clip_stack, SigmaClipParams};
 use ndarray::Array2;
 
 #[test]
@@ -11,11 +14,10 @@ fn test_drizzle_single_frame_scale2() {
     let config = DrizzleConfig {
         scale: 2.0,
         pixfrac: 1.0,
-        quality_weighted: false,
         ..Default::default()
     };
 
-    let result = drizzle_stack(&[frame], &[offset], &config, None).unwrap();
+    let result = drizzle_single_frame(&frame, &offset, &config).unwrap();
     assert_eq!(result.height(), 4);
     assert_eq!(result.width(), 4);
     // All output pixels should have values in [0, 1] (full coverage with pixfrac=1.0).
@@ -29,17 +31,23 @@ fn test_drizzle_output_dimensions_scale3() {
     let config = DrizzleConfig {
         scale: 3.0,
         pixfrac: 0.7,
-        quality_weighted: false,
         ..Default::default()
     };
 
-    let result = drizzle_stack(&[frame], &[offset], &config, None).unwrap();
+    let result = drizzle_single_frame(&frame, &offset, &config).unwrap();
     assert_eq!(result.height(), 30);
     assert_eq!(result.width(), 45);
 }
 
 #[test]
-fn test_drizzle_two_frames_subpixel() {
+fn test_drizzle_output_dims_helper() {
+    assert_eq!(drizzle_output_dims(10, 15, 2.0), (20, 30));
+    assert_eq!(drizzle_output_dims(10, 15, 3.0), (30, 45));
+    assert_eq!(drizzle_output_dims(3, 3, 1.5), (5, 5)); // ceil(4.5)
+}
+
+#[test]
+fn test_drizzle_then_mean_stack() {
     let data = Array2::from_elem((4, 4), 0.8_f32);
     let f1 = Frame::new(data.clone(), 8);
     let f2 = Frame::new(data, 8);
@@ -50,14 +58,18 @@ fn test_drizzle_two_frames_subpixel() {
     let config = DrizzleConfig {
         scale: 2.0,
         pixfrac: 0.6,
-        quality_weighted: false,
         ..Default::default()
     };
 
-    let result = drizzle_stack(&[f1, f2], &[offset1, offset2], &config, None).unwrap();
+    let d1 = drizzle_single_frame(&f1, &offset1, &config).unwrap();
+    let d2 = drizzle_single_frame(&f2, &offset2, &config).unwrap();
+    assert_eq!(d1.height(), 8);
+    assert_eq!(d1.width(), 8);
+
+    let result = mean_stack(&[d1, d2]).unwrap();
     assert_eq!(result.height(), 8);
     assert_eq!(result.width(), 8);
-    // Interior pixels should be close to 0.8 (both frames contribute).
+    // Interior pixel should be close to 0.8 (both frames contribute).
     let center = result.data[[4, 4]];
     assert!(
         center > 0.5,
@@ -66,49 +78,61 @@ fn test_drizzle_two_frames_subpixel() {
 }
 
 #[test]
-fn test_drizzle_quality_weighting() {
-    let f1 = Frame::new(Array2::from_elem((2, 2), 1.0_f32), 8);
-    let f2 = Frame::new(Array2::from_elem((2, 2), 0.0_f32), 8);
-
-    let offsets = vec![AlignmentOffset::default(), AlignmentOffset::default()];
+fn test_drizzle_then_median_stack() {
+    let data = Array2::from_elem((4, 4), 0.6_f32);
+    let offsets = vec![
+        AlignmentOffset { dx: 0.0, dy: 0.0 },
+        AlignmentOffset { dx: 0.3, dy: 0.1 },
+        AlignmentOffset { dx: -0.2, dy: 0.4 },
+    ];
     let config = DrizzleConfig {
         scale: 2.0,
-        pixfrac: 1.0,
-        quality_weighted: true,
+        pixfrac: 0.8,
         ..Default::default()
     };
 
-    // First frame has much higher quality score.
-    let scores = vec![10.0, 1.0];
-    let result = drizzle_stack(&[f1, f2], &offsets, &config, Some(&scores)).unwrap();
+    let drizzled: Vec<Frame> = (0..3)
+        .map(|i| {
+            let frame = Frame::new(data.clone(), 8);
+            drizzle_single_frame(&frame, &offsets[i], &config).unwrap()
+        })
+        .collect();
 
-    // Expected: (1.0*10.0 + 0.0*1.0) / (10.0 + 1.0) ~ 0.909
-    let pixel = result.data[[0, 0]];
-    assert!(
-        pixel > 0.85,
-        "Quality-weighted pixel should favor f1: {pixel}"
-    );
+    let result = median_stack(&drizzled).unwrap();
+    assert_eq!(result.height(), 8);
+    assert_eq!(result.width(), 8);
 }
 
 #[test]
-fn test_drizzle_empty_input() {
-    let config = DrizzleConfig::default();
-    let result = drizzle_stack(&[], &[], &config, None);
-    assert!(result.is_err());
-}
+fn test_drizzle_then_sigma_clip_stack() {
+    let data = Array2::from_elem((4, 4), 0.5_f32);
+    let offsets = vec![
+        AlignmentOffset { dx: 0.0, dy: 0.0 },
+        AlignmentOffset { dx: 0.2, dy: -0.1 },
+        AlignmentOffset { dx: -0.3, dy: 0.2 },
+        AlignmentOffset { dx: 0.1, dy: 0.3 },
+    ];
+    let config = DrizzleConfig {
+        scale: 2.0,
+        pixfrac: 0.7,
+        ..Default::default()
+    };
+    let params = SigmaClipParams {
+        sigma: 2.5,
+        iterations: 2,
+    };
 
-#[test]
-fn test_drizzle_dimension_mismatch() {
-    let frame = Frame::new(Array2::ones((4, 4)), 8);
-    let config = DrizzleConfig::default();
-    // 1 frame but 2 offsets.
-    let result = drizzle_stack(
-        &[frame],
-        &[AlignmentOffset::default(), AlignmentOffset::default()],
-        &config,
-        None,
-    );
-    assert!(result.is_err());
+    let drizzled: Vec<Frame> = offsets
+        .iter()
+        .map(|offset| {
+            let frame = Frame::new(data.clone(), 8);
+            drizzle_single_frame(&frame, offset, &config).unwrap()
+        })
+        .collect();
+
+    let result = sigma_clip_stack(&drizzled, &params).unwrap();
+    assert_eq!(result.height(), 8);
+    assert_eq!(result.width(), 8);
 }
 
 #[test]
@@ -118,7 +142,18 @@ fn test_drizzle_invalid_pixfrac() {
         pixfrac: 0.0,
         ..Default::default()
     };
-    let result = drizzle_stack(&[frame], &[AlignmentOffset::default()], &config, None);
+    let result = drizzle_single_frame(&frame, &AlignmentOffset::default(), &config);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_drizzle_invalid_scale() {
+    let frame = Frame::new(Array2::ones((4, 4)), 8);
+    let config = DrizzleConfig {
+        scale: 0.0,
+        ..Default::default()
+    };
+    let result = drizzle_single_frame(&frame, &AlignmentOffset::default(), &config);
     assert!(result.is_err());
 }
 
@@ -131,11 +166,10 @@ fn test_drizzle_uniform_image_preserves_value() {
     let config = DrizzleConfig {
         scale: 2.0,
         pixfrac: 1.0,
-        quality_weighted: false,
         ..Default::default()
     };
 
-    let result = drizzle_stack(&[frame], &[offset], &config, None).unwrap();
+    let result = drizzle_single_frame(&frame, &offset, &config).unwrap();
     // Interior pixels (away from edges) should be close to the input value.
     let center = result.data[[8, 8]];
     assert!(
@@ -155,16 +189,22 @@ fn test_drizzle_multiple_frames_converge() {
         AlignmentOffset { dx: 0.5, dy: -0.3 },
         AlignmentOffset { dx: -0.1, dy: -0.2 },
     ];
-    let frames: Vec<Frame> = (0..5).map(|_| Frame::new(data.clone(), 8)).collect();
 
     let config = DrizzleConfig {
         scale: 2.0,
         pixfrac: 0.7,
-        quality_weighted: false,
         ..Default::default()
     };
 
-    let result = drizzle_stack(&frames, &offsets, &config, None).unwrap();
+    let drizzled: Vec<Frame> = offsets
+        .iter()
+        .map(|offset| {
+            let frame = Frame::new(data.clone(), 8);
+            drizzle_single_frame(&frame, offset, &config).unwrap()
+        })
+        .collect();
+
+    let result = mean_stack(&drizzled).unwrap();
     assert_eq!(result.height(), 16);
     assert_eq!(result.width(), 16);
     // Interior pixel should be close to 0.5.
@@ -173,4 +213,22 @@ fn test_drizzle_multiple_frames_converge() {
         (center - 0.5).abs() < 0.05,
         "Multiple frames should converge to input value: {center}"
     );
+}
+
+#[test]
+fn test_drizzle_subpixel_offset() {
+    // Verify drizzle handles sub-pixel offsets correctly
+    let frame = Frame::new(Array2::from_elem((4, 4), 0.7_f32), 8);
+    let offset = AlignmentOffset { dx: 0.5, dy: 0.5 };
+    let config = DrizzleConfig {
+        scale: 2.0,
+        pixfrac: 0.7,
+        ..Default::default()
+    };
+
+    let result = drizzle_single_frame(&frame, &offset, &config).unwrap();
+    assert_eq!(result.height(), 8);
+    assert_eq!(result.width(), 8);
+    // Result should have valid pixel values
+    assert!(result.data.iter().all(|&v| (0.0..=1.0).contains(&v)));
 }

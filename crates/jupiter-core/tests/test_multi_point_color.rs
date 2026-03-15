@@ -218,6 +218,7 @@ fn test_multi_point_stack_color_pipeline_integration() {
                 min_brightness: 0.01,
                 ..Default::default()
             }),
+            drizzle: None,
         },
         sharpening: None,
         filters: vec![],
@@ -269,6 +270,7 @@ fn test_multi_point_stack_color_force_mono() {
                 min_brightness: 0.01,
                 ..Default::default()
             }),
+            drizzle: None,
         },
         sharpening: None,
         filters: vec![],

@@ -1,4 +1,3 @@
-mod drizzle;
 mod multi_point;
 mod standard;
 mod surface_warp;
@@ -6,6 +5,7 @@ mod surface_warp;
 use std::sync::mpsc;
 
 use jupiter_core::pipeline::config::StackMethod;
+use jupiter_core::stack::drizzle::DrizzleConfig;
 
 use crate::messages::WorkerResult;
 
@@ -13,6 +13,7 @@ use super::PipelineCache;
 
 pub(crate) fn handle_stack(
     method: &StackMethod,
+    drizzle: Option<&DrizzleConfig>,
     cache: &mut PipelineCache,
     tx: &mpsc::Sender<WorkerResult>,
     ctx: &egui::Context,
@@ -24,11 +25,8 @@ pub(crate) fn handle_stack(
         StackMethod::SurfaceWarp(ref sw_config) => {
             surface_warp::handle_surface_warp(sw_config, cache, tx, ctx);
         }
-        StackMethod::Drizzle(ref drizzle_config) => {
-            drizzle::handle_drizzle(drizzle_config, cache, tx, ctx);
-        }
         method @ (StackMethod::Mean | StackMethod::Median | StackMethod::SigmaClip(_)) => {
-            standard::handle_standard(method, cache, tx, ctx);
+            standard::handle_standard(method, drizzle, cache, tx, ctx);
         }
     }
 }

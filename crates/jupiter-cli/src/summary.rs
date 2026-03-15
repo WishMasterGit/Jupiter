@@ -1,5 +1,7 @@
 use console::Style;
-use jupiter_core::pipeline::config::{DeconvolutionConfig, PipelineConfig, StackMethod};
+use jupiter_core::pipeline::config::{
+    DeconvolutionConfig, PipelineConfig, StackMethod, StackingConfig,
+};
 use jupiter_core::sharpen::wavelet::WaveletParams;
 use jupiter_core::stack::multi_point::MultiPointConfig;
 use jupiter_core::stack::sigma_clip::SigmaClipParams;
@@ -100,9 +102,9 @@ pub fn print_pipeline_summary(config: &PipelineConfig, device_name: &str) {
     println!(
         "    {:<12}{}",
         styles.label.apply_to("Method"),
-        styles.method.apply_to(&config.stacking.method)
+        styles.method.apply_to(&config.stacking)
     );
-    print_stack_sub_params(&styles, &config.stacking.method);
+    print_stack_sub_params(&styles, &config.stacking);
     println!();
 
     // Sharpening
@@ -203,8 +205,8 @@ fn print_sharpening_section(
     }
 }
 
-fn print_stack_sub_params(s: &Styles, method: &StackMethod) {
-    match method {
+fn print_stack_sub_params(s: &Styles, stacking: &StackingConfig) {
+    match &stacking.method {
         StackMethod::SigmaClip(SigmaClipParams { sigma, iterations }) => {
             println!(
                 "    {:<12}{}",
@@ -258,29 +260,6 @@ fn print_stack_sub_params(s: &Styles, method: &StackMethod) {
                 s.method.apply_to(local_stack_method)
             );
         }
-        StackMethod::Drizzle(cfg) => {
-            println!(
-                "    {:<12}{}",
-                s.label.apply_to("Scale"),
-                s.value.apply_to(format!("{}x", cfg.scale))
-            );
-            println!(
-                "    {:<12}{}",
-                s.label.apply_to("Pixfrac"),
-                s.value.apply_to(cfg.pixfrac)
-            );
-            println!(
-                "    {:<12}{}",
-                s.label.apply_to("Kernel"),
-                s.value.apply_to(&cfg.kernel)
-            );
-            println!(
-                "    {:<12}{}",
-                s.label.apply_to("Weighted"),
-                s.value
-                    .apply_to(if cfg.quality_weighted { "yes" } else { "no" })
-            );
-        }
         StackMethod::SurfaceWarp(cfg) => {
             println!(
                 "    {:<12}{}",
@@ -305,5 +284,20 @@ fn print_stack_sub_params(s: &Styles, method: &StackMethod) {
             );
         }
         _ => {}
+    }
+
+    // Print drizzle info when enabled
+    if let Some(ref cfg) = stacking.drizzle {
+        println!(
+            "    {:<12}{}",
+            s.label.apply_to("Drizzle"),
+            s.method
+                .apply_to(format!("{}x, pixfrac={}", cfg.scale, cfg.pixfrac))
+        );
+        println!(
+            "    {:<12}{}",
+            s.label.apply_to("Kernel"),
+            s.value.apply_to(&cfg.kernel)
+        );
     }
 }

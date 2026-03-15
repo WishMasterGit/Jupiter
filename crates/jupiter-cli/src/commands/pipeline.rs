@@ -157,6 +157,10 @@ pub struct RunArgs {
     #[arg(long, default_value = "0.001")]
     pub noise_ratio: f32,
 
+    /// Enable drizzle super-resolution projection before stacking
+    #[arg(long)]
+    pub drizzle: bool,
+
     /// Drizzle output scale factor (e.g., 2.0 = 2x resolution)
     #[arg(long, default_value = "2.0")]
     pub drizzle_scale: f32,
@@ -352,12 +356,6 @@ fn build_config_from_args(args: &RunArgs) -> PipelineConfig {
             min_brightness: args.min_brightness,
             ..Default::default()
         }),
-        StackMethodArg::Drizzle => StackMethod::Drizzle(DrizzleConfig {
-            scale: args.drizzle_scale,
-            pixfrac: args.pixfrac,
-            quality_weighted: true,
-            ..Default::default()
-        }),
         StackMethodArg::SurfaceWarp => StackMethod::SurfaceWarp(SurfaceWarpConfig {
             ap_size: args.ap_size,
             search_radius: args.search_radius,
@@ -365,6 +363,16 @@ fn build_config_from_args(args: &RunArgs) -> PipelineConfig {
             min_brightness: args.min_brightness,
             ..Default::default()
         }),
+    };
+
+    let drizzle = if args.drizzle {
+        Some(DrizzleConfig {
+            scale: args.drizzle_scale,
+            pixfrac: args.pixfrac,
+            ..Default::default()
+        })
+    } else {
+        None
     };
 
     let mut filters = Vec::new();
@@ -438,6 +446,7 @@ fn build_config_from_args(args: &RunArgs) -> PipelineConfig {
         },
         stacking: StackingConfig {
             method: stacking_method,
+            drizzle,
         },
         sharpening,
         filters,

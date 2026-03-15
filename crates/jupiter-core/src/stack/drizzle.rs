@@ -1,14 +1,9 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
-
 use ndarray::Array2;
-use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
-use crate::consts::PARALLEL_FRAME_THRESHOLD;
 use crate::error::{JupiterError, Result};
 use crate::frame::{AlignmentOffset, Frame};
-use crate::io::ser::SerReader;
 
 /// Drop kernel shape for drizzle projection.
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -18,7 +13,7 @@ pub enum DrizzleKernel {
     Square,
 }
 
-/// Configuration for drizzle super-resolution stacking.
+/// Configuration for drizzle super-resolution projection.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DrizzleConfig {
     /// Output upscale factor (e.g., 2.0 = 2x resolution).
@@ -26,16 +21,9 @@ pub struct DrizzleConfig {
     /// Drop size as fraction of input pixel (0.0-1.0).
     /// Smaller = sharper but noisier; 0.6-0.8 is typical for planetary.
     pub pixfrac: f32,
-    /// Weight each frame by its quality score during accumulation.
-    #[serde(default = "default_true")]
-    pub quality_weighted: bool,
     /// Drop kernel shape.
     #[serde(default)]
     pub kernel: DrizzleKernel,
-}
-
-fn default_true() -> bool {
-    true
 }
 
 impl Default for DrizzleConfig {
@@ -43,7 +31,6 @@ impl Default for DrizzleConfig {
         Self {
             scale: 2.0,
             pixfrac: 0.7,
-            quality_weighted: true,
             kernel: DrizzleKernel::default(),
         }
     }
@@ -55,6 +42,59 @@ impl std::fmt::Display for DrizzleKernel {
             DrizzleKernel::Square => write!(f, "Square"),
         }
     }
+}
+
+impl std::fmt::Display for DrizzleConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Drizzle ({}x, pixfrac={})", self.scale, self.pixfrac)
+    }
+}
+
+/// Compute the output dimensions for a drizzled frame.
+pub fn drizzle_output_dims(h: usize, w: usize, scale: f32) -> (usize, usize) {
+    let out_h = (h as f32 * scale).ceil() as usize;
+    let out_w = (w as f32 * scale).ceil() as usize;
+    (out_h, out_w)
+}
+
+/// Drizzle a single frame onto a high-resolution grid using its alignment offset.
+///
+/// Returns a `Frame` with dimensions `(ceil(h*scale), ceil(w*scale))`.
+///
+/// # Arguments
+///
+/// - `frame`: Input frame
+/// - `offset`: Alignment offset for this frame
+/// - `config`: Drizzle configuration (scale, pixfrac, kernel)
+pub fn drizzle_single_frame(
+    frame: &Frame,
+    offset: &AlignmentOffset,
+    config: &DrizzleConfig,
+) -> Result<Frame> {
+    if config.scale <= 0.0 {
+        return Err(JupiterError::Pipeline(format!(
+            "Invalid drizzle scale: {}",
+            config.scale
+        )));
+    }
+    if config.pixfrac <= 0.0 || config.pixfrac > 1.0 {
+        return Err(JupiterError::Pipeline(format!(
+            "Invalid pixfrac: {} (must be in (0.0, 1.0])",
+            config.pixfrac
+        )));
+    }
+
+    let (h, w) = frame.data.dim();
+    let mut acc = DrizzleAccumulator::new(h, w, config.scale);
+    drizzle_frame_into(
+        &frame.data,
+        offset,
+        config.scale,
+        config.pixfrac,
+        1.0,
+        &mut acc,
+    );
+    Ok(acc.finalize(frame.original_bit_depth))
 }
 
 /// Intermediate accumulation buffer for drizzle stacking.
@@ -70,20 +110,13 @@ struct DrizzleAccumulator {
 
 impl DrizzleAccumulator {
     fn new(in_height: usize, in_width: usize, scale: f32) -> Self {
-        let out_height = (in_height as f32 * scale).ceil() as usize;
-        let out_width = (in_width as f32 * scale).ceil() as usize;
+        let (out_height, out_width) = drizzle_output_dims(in_height, in_width, scale);
         Self {
             data: Array2::zeros((out_height, out_width)),
             weights: Array2::zeros((out_height, out_width)),
             out_height,
             out_width,
         }
-    }
-
-    /// Merge another accumulator into this one (for parallel frame processing).
-    fn merge(&mut self, other: &DrizzleAccumulator) {
-        self.data += &other.data;
-        self.weights += &other.weights;
     }
 
     /// Normalize by weight map, clamp to [0,1], and produce the final frame.
@@ -110,158 +143,6 @@ impl DrizzleAccumulator {
         result.mapv_inplace(|v| v.clamp(0.0, 1.0));
         Frame::new(result, bit_depth)
     }
-}
-
-/// Stack frames using the Drizzle algorithm for super-resolution reconstruction.
-///
-/// Each input pixel is projected onto a higher-resolution output grid using its
-/// alignment offset. The pixel's contribution is "dropped" as a shrunk footprint
-/// (controlled by `pixfrac`) and distributed to overlapping output pixels based
-/// on geometric overlap area.
-///
-/// # Arguments
-///
-/// - `frames`: Input frames (must all have same dimensions)
-/// - `offsets`: Alignment offset for each frame (length must match `frames`)
-/// - `config`: Drizzle configuration (scale, pixfrac, kernel)
-/// - `quality_scores`: Optional per-frame quality weights (length must match `frames`)
-///
-/// # Returns
-///
-/// A `Frame` with dimensions `(ceil(h*scale), ceil(w*scale))`.
-pub fn drizzle_stack(
-    frames: &[Frame],
-    offsets: &[AlignmentOffset],
-    config: &DrizzleConfig,
-    quality_scores: Option<&[f64]>,
-) -> Result<Frame> {
-    drizzle_stack_with_progress(frames, offsets, config, quality_scores, |_| {})
-}
-
-/// Stack frames using Drizzle with per-frame progress reporting.
-///
-/// `on_progress` is called with the cumulative number of frames processed.
-pub fn drizzle_stack_with_progress(
-    frames: &[Frame],
-    offsets: &[AlignmentOffset],
-    config: &DrizzleConfig,
-    quality_scores: Option<&[f64]>,
-    on_progress: impl Fn(usize) + Send + Sync,
-) -> Result<Frame> {
-    if frames.is_empty() {
-        return Err(JupiterError::EmptySequence);
-    }
-    if frames.len() != offsets.len() {
-        return Err(JupiterError::Pipeline(
-            "Frame count must match offset count".into(),
-        ));
-    }
-    if config.scale <= 0.0 {
-        return Err(JupiterError::Pipeline(format!(
-            "Invalid drizzle scale: {}",
-            config.scale
-        )));
-    }
-    if config.pixfrac <= 0.0 || config.pixfrac > 1.0 {
-        return Err(JupiterError::Pipeline(format!(
-            "Invalid pixfrac: {} (must be in (0.0, 1.0])",
-            config.pixfrac
-        )));
-    }
-
-    let (h, w) = frames[0].data.dim();
-    for frame in &frames[1..] {
-        if frame.data.dim() != (h, w) {
-            return Err(JupiterError::Pipeline("Frame size mismatch".into()));
-        }
-    }
-
-    let bit_depth = frames[0].original_bit_depth;
-
-    // Build per-frame weights from quality scores.
-    let frame_weights: Vec<f32> = if config.quality_weighted {
-        if let Some(scores) = quality_scores {
-            scores.iter().map(|&s| s as f32).collect()
-        } else {
-            vec![1.0; frames.len()]
-        }
-    } else {
-        vec![1.0; frames.len()]
-    };
-
-    let accumulator = if frames.len() >= PARALLEL_FRAME_THRESHOLD {
-        drizzle_stack_parallel(frames, offsets, config, &frame_weights, h, w, &on_progress)
-    } else {
-        drizzle_stack_sequential(frames, offsets, config, &frame_weights, h, w, &on_progress)
-    };
-
-    Ok(accumulator.finalize(bit_depth))
-}
-
-fn drizzle_stack_parallel(
-    frames: &[Frame],
-    offsets: &[AlignmentOffset],
-    config: &DrizzleConfig,
-    frame_weights: &[f32],
-    h: usize,
-    w: usize,
-    on_progress: &(impl Fn(usize) + Send + Sync),
-) -> DrizzleAccumulator {
-    let done = AtomicUsize::new(0);
-    let accumulators: Vec<DrizzleAccumulator> = frames
-        .par_iter()
-        .zip(offsets.par_iter())
-        .zip(frame_weights.par_iter())
-        .map(|((frame, offset), &weight)| {
-            let mut acc = DrizzleAccumulator::new(h, w, config.scale);
-            drizzle_frame_into(
-                &frame.data,
-                offset,
-                config.scale,
-                config.pixfrac,
-                weight,
-                &mut acc,
-            );
-            let completed = done.fetch_add(1, Ordering::Relaxed) + 1;
-            on_progress(completed);
-            acc
-        })
-        .collect();
-
-    let mut final_acc = DrizzleAccumulator::new(h, w, config.scale);
-    for acc in &accumulators {
-        final_acc.merge(acc);
-    }
-    final_acc
-}
-
-fn drizzle_stack_sequential(
-    frames: &[Frame],
-    offsets: &[AlignmentOffset],
-    config: &DrizzleConfig,
-    frame_weights: &[f32],
-    h: usize,
-    w: usize,
-    on_progress: &(impl Fn(usize) + Send + Sync),
-) -> DrizzleAccumulator {
-    let mut acc = DrizzleAccumulator::new(h, w, config.scale);
-    for (i, ((frame, offset), &weight)) in frames
-        .iter()
-        .zip(offsets.iter())
-        .zip(frame_weights.iter())
-        .enumerate()
-    {
-        drizzle_frame_into(
-            &frame.data,
-            offset,
-            config.scale,
-            config.pixfrac,
-            weight,
-            &mut acc,
-        );
-        on_progress(i + 1);
-    }
-    acc
 }
 
 /// Project one input frame onto the output grid.
@@ -324,71 +205,6 @@ fn drizzle_frame_into(
             }
         }
     }
-}
-
-/// Stack frames using the Drizzle algorithm by streaming one frame at a time.
-///
-/// Instead of taking a `&[Frame]`, reads each frame on-demand from the SER
-/// reader. Memory usage: one decoded frame + one `DrizzleAccumulator` at output
-/// resolution, regardless of frame count.
-pub fn drizzle_stack_streaming(
-    reader: &SerReader,
-    frame_indices: &[usize],
-    offsets: &[AlignmentOffset],
-    config: &DrizzleConfig,
-    quality_scores: Option<&[f64]>,
-) -> Result<Frame> {
-    if frame_indices.is_empty() {
-        return Err(JupiterError::EmptySequence);
-    }
-    if frame_indices.len() != offsets.len() {
-        return Err(JupiterError::Pipeline(
-            "Frame count must match offset count".into(),
-        ));
-    }
-    if config.scale <= 0.0 {
-        return Err(JupiterError::Pipeline(format!(
-            "Invalid drizzle scale: {}",
-            config.scale
-        )));
-    }
-    if config.pixfrac <= 0.0 || config.pixfrac > 1.0 {
-        return Err(JupiterError::Pipeline(format!(
-            "Invalid pixfrac: {} (must be in (0.0, 1.0])",
-            config.pixfrac
-        )));
-    }
-
-    let h = reader.header.height as usize;
-    let w = reader.header.width as usize;
-    let bit_depth = reader.header.pixel_depth as u8;
-
-    let frame_weights: Vec<f32> = if config.quality_weighted {
-        if let Some(scores) = quality_scores {
-            scores.iter().map(|&s| s as f32).collect()
-        } else {
-            vec![1.0; frame_indices.len()]
-        }
-    } else {
-        vec![1.0; frame_indices.len()]
-    };
-
-    // Sequential single-accumulator: read frame → drizzle → drop
-    let mut acc = DrizzleAccumulator::new(h, w, config.scale);
-    for (i, (&frame_idx, offset)) in frame_indices.iter().zip(offsets.iter()).enumerate() {
-        let frame = reader.read_frame(frame_idx)?;
-        drizzle_frame_into(
-            &frame.data,
-            offset,
-            config.scale,
-            config.pixfrac,
-            frame_weights[i],
-            &mut acc,
-        );
-        // frame dropped here — memory freed
-    }
-
-    Ok(acc.finalize(bit_depth))
 }
 
 /// Compute overlap area between a square drop and a unit output pixel.

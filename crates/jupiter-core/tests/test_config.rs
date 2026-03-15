@@ -1,6 +1,7 @@
 use jupiter_core::pipeline::config::{
     AlignmentMethod, CentroidConfig, DeconvolutionMethod, EnhancedPhaseConfig, FilterStep,
     FrameSelectionConfig, MemoryStrategy, PsfModel, PyramidConfig, QualityMetric, StackMethod,
+    StackingConfig,
 };
 use jupiter_core::pipeline::PipelineStage;
 use jupiter_core::stack::drizzle::DrizzleConfig;
@@ -114,16 +115,30 @@ fn test_stack_method_display_sigma_clip() {
 }
 
 #[test]
-fn test_stack_method_display_drizzle() {
+fn test_drizzle_config_display() {
     let cfg = DrizzleConfig {
         scale: 2.0,
         pixfrac: 0.7,
-        quality_weighted: false,
         kernel: jupiter_core::stack::drizzle::DrizzleKernel::Square,
     };
-    let s = format!("{}", StackMethod::Drizzle(cfg));
+    let s = format!("{cfg}");
     assert!(s.contains("Drizzle"), "got: {s}");
     assert!(s.contains("2"), "got: {s}");
+}
+
+#[test]
+fn test_stacking_config_display_with_drizzle() {
+    let cfg = StackingConfig {
+        method: StackMethod::Mean,
+        drizzle: Some(DrizzleConfig {
+            scale: 2.0,
+            pixfrac: 0.7,
+            ..Default::default()
+        }),
+    };
+    let s = format!("{cfg}");
+    assert!(s.contains("Mean"), "got: {s}");
+    assert!(s.contains("Drizzle"), "got: {s}");
 }
 
 // ---------------------------------------------------------------------------

@@ -40,10 +40,10 @@ pub struct ConfigState {
     pub mp_ap_size: usize,
     pub mp_search_radius: usize,
     pub mp_min_brightness: f32,
-    // Drizzle params
+    // Drizzle params (option on any stacking method)
+    pub drizzle_enabled: bool,
     pub drizzle_scale: f32,
     pub drizzle_pixfrac: f32,
-    pub drizzle_quality_weighted: bool,
 
     // Sharpening
     pub sharpen_enabled: bool,
@@ -89,9 +89,9 @@ impl Default for ConfigState {
             mp_ap_size: 64,
             mp_search_radius: 16,
             mp_min_brightness: 0.05,
+            drizzle_enabled: false,
             drizzle_scale: 2.0,
             drizzle_pixfrac: 0.7,
-            drizzle_quality_weighted: true,
 
             sharpen_enabled: true,
             wavelet_num_layers: 6,
@@ -152,12 +152,6 @@ impl ConfigState {
                 local_stack_method: Default::default(),
                 pre_center: self.pre_center,
             }),
-            StackMethodChoice::Drizzle => StackMethod::Drizzle(DrizzleConfig {
-                scale: self.drizzle_scale,
-                pixfrac: self.drizzle_pixfrac,
-                quality_weighted: self.drizzle_quality_weighted,
-                kernel: Default::default(),
-            }),
             StackMethodChoice::SurfaceWarp => StackMethod::SurfaceWarp(SurfaceWarpConfig {
                 ap_size: self.mp_ap_size,
                 search_radius: self.mp_search_radius,
@@ -166,6 +160,18 @@ impl ConfigState {
                 quality_metric: self.quality_metric,
                 pre_center: self.pre_center,
             }),
+        }
+    }
+
+    pub fn drizzle_config(&self) -> Option<DrizzleConfig> {
+        if self.drizzle_enabled {
+            Some(DrizzleConfig {
+                scale: self.drizzle_scale,
+                pixfrac: self.drizzle_pixfrac,
+                ..Default::default()
+            })
+        } else {
+            None
         }
     }
 
@@ -240,6 +246,7 @@ impl ConfigState {
             alignment: self.alignment_config(),
             stacking: StackingConfig {
                 method: self.stack_method(),
+                drizzle: self.drizzle_config(),
             },
             sharpening: self.sharpening_config(),
             filters: self.filters.clone(),
@@ -300,18 +307,19 @@ impl ConfigState {
                 state.mp_search_radius = p.search_radius;
                 state.mp_min_brightness = p.min_brightness;
             }
-            StackMethod::Drizzle(p) => {
-                state.stack_method_choice = StackMethodChoice::Drizzle;
-                state.drizzle_scale = p.scale;
-                state.drizzle_pixfrac = p.pixfrac;
-                state.drizzle_quality_weighted = p.quality_weighted;
-            }
             StackMethod::SurfaceWarp(p) => {
                 state.stack_method_choice = StackMethodChoice::SurfaceWarp;
                 state.mp_ap_size = p.ap_size;
                 state.mp_search_radius = p.search_radius;
                 state.mp_min_brightness = p.min_brightness;
             }
+        }
+
+        // Drizzle (now an option on StackingConfig, not a StackMethod)
+        if let Some(ref drizzle) = config.stacking.drizzle {
+            state.drizzle_enabled = true;
+            state.drizzle_scale = drizzle.scale;
+            state.drizzle_pixfrac = drizzle.pixfrac;
         }
 
         // Device

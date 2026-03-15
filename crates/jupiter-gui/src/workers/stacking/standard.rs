@@ -5,6 +5,7 @@ use jupiter_core::align::shift_frame;
 use jupiter_core::frame::{ColorFrame, Frame};
 use jupiter_core::pipeline::config::StackMethod;
 use jupiter_core::pipeline::{PipelineOutput, PipelineStage};
+use jupiter_core::stack::drizzle::{drizzle_single_frame, DrizzleConfig};
 use jupiter_core::stack::mean::mean_stack_with_progress;
 use jupiter_core::stack::median::median_stack;
 use jupiter_core::stack::sigma_clip::sigma_clip_stack;
@@ -15,6 +16,7 @@ use super::super::{make_progress_callback, send, send_error, send_log, PipelineC
 
 pub(crate) fn handle_standard(
     method: &StackMethod,
+    drizzle: Option<&DrizzleConfig>,
     cache: &mut PipelineCache,
     tx: &mpsc::Sender<WorkerResult>,
     ctx: &egui::Context,
@@ -37,19 +39,42 @@ pub(crate) fn handle_standard(
     let start = Instant::now();
 
     if let Some(ref color_frames) = cache.selected_color_frames {
-        // Color: shift per-channel, stack per-channel
-        let aligned_color: Vec<ColorFrame> = color_frames
-            .iter()
-            .zip(offsets.iter())
-            .map(|(cf, offset)| ColorFrame {
-                red: shift_frame(&cf.red, offset),
-                green: shift_frame(&cf.green, offset),
-                blue: shift_frame(&cf.blue, offset),
-            })
-            .collect();
+        // Color: transform per-channel (drizzle or shift), stack per-channel
+        let transformed_color: Vec<ColorFrame> = match drizzle {
+            Some(dc) => {
+                send_log(tx, ctx, "Drizzle-projecting color frames...");
+                match color_frames
+                    .iter()
+                    .zip(offsets.iter())
+                    .map(|(cf, offset)| {
+                        Ok(ColorFrame {
+                            red: drizzle_single_frame(&cf.red, offset, dc)?,
+                            green: drizzle_single_frame(&cf.green, offset, dc)?,
+                            blue: drizzle_single_frame(&cf.blue, offset, dc)?,
+                        })
+                    })
+                    .collect::<jupiter_core::error::Result<Vec<_>>>()
+                {
+                    Ok(frames) => frames,
+                    Err(e) => {
+                        send_error(tx, ctx, format!("Drizzle projection failed: {e}"));
+                        return;
+                    }
+                }
+            }
+            None => color_frames
+                .iter()
+                .zip(offsets.iter())
+                .map(|(cf, offset)| ColorFrame {
+                    red: shift_frame(&cf.red, offset),
+                    green: shift_frame(&cf.green, offset),
+                    blue: shift_frame(&cf.blue, offset),
+                })
+                .collect(),
+        };
 
         send_log(tx, ctx, "Stacking color channels...");
-        let color_frame_count = aligned_color.len();
+        let color_frame_count = transformed_color.len();
         send(
             tx,
             ctx,
@@ -60,9 +85,12 @@ pub(crate) fn handle_standard(
             },
         );
 
-        let red_frames: Vec<Frame> = aligned_color.iter().map(|cf| cf.red.clone()).collect();
-        let green_frames: Vec<Frame> = aligned_color.iter().map(|cf| cf.green.clone()).collect();
-        let blue_frames: Vec<Frame> = aligned_color.iter().map(|cf| cf.blue.clone()).collect();
+        let red_frames: Vec<Frame> = transformed_color.iter().map(|cf| cf.red.clone()).collect();
+        let green_frames: Vec<Frame> = transformed_color
+            .iter()
+            .map(|cf| cf.green.clone())
+            .collect();
+        let blue_frames: Vec<Frame> = transformed_color.iter().map(|cf| cf.blue.clone()).collect();
 
         let color_stack_progress =
             make_progress_callback(tx, ctx, PipelineStage::Stacking, color_frame_count);
@@ -129,15 +157,32 @@ pub(crate) fn handle_standard(
             _ => send_error(tx, ctx, "Color stacking failed"),
         }
     } else {
-        // Mono: shift then stack
-        let aligned: Vec<Frame> = selected_frames
-            .iter()
-            .zip(offsets.iter())
-            .map(|(frame, offset)| shift_frame(frame, offset))
-            .collect();
+        // Mono: transform (drizzle or shift) then stack
+        let transformed: Vec<Frame> = match drizzle {
+            Some(dc) => {
+                send_log(tx, ctx, "Drizzle-projecting frames...");
+                match selected_frames
+                    .iter()
+                    .zip(offsets.iter())
+                    .map(|(frame, offset)| drizzle_single_frame(frame, offset, dc))
+                    .collect::<jupiter_core::error::Result<Vec<_>>>()
+                {
+                    Ok(frames) => frames,
+                    Err(e) => {
+                        send_error(tx, ctx, format!("Drizzle projection failed: {e}"));
+                        return;
+                    }
+                }
+            }
+            None => selected_frames
+                .iter()
+                .zip(offsets.iter())
+                .map(|(frame, offset)| shift_frame(frame, offset))
+                .collect(),
+        };
 
         send_log(tx, ctx, "Stacking...");
-        let frame_count = aligned.len();
+        let frame_count = transformed.len();
         send(
             tx,
             ctx,
@@ -152,14 +197,14 @@ pub(crate) fn handle_standard(
             make_progress_callback(tx, ctx, PipelineStage::Stacking, frame_count);
 
         let result = match method {
-            StackMethod::Mean => mean_stack_with_progress(&aligned, stacking_progress),
+            StackMethod::Mean => mean_stack_with_progress(&transformed, stacking_progress),
             StackMethod::Median => {
-                let r = median_stack(&aligned);
+                let r = median_stack(&transformed);
                 stacking_progress(frame_count);
                 r
             }
             StackMethod::SigmaClip(params) => {
-                let r = sigma_clip_stack(&aligned, params);
+                let r = sigma_clip_stack(&transformed, params);
                 stacking_progress(frame_count);
                 r
             }

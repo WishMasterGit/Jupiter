@@ -43,7 +43,6 @@ pub enum StackMethodChoice {
     Median,
     SigmaClip,
     MultiPoint,
-    Drizzle,
     SurfaceWarp,
 }
 
@@ -53,7 +52,6 @@ impl StackMethodChoice {
         Self::Median,
         Self::SigmaClip,
         Self::MultiPoint,
-        Self::Drizzle,
         Self::SurfaceWarp,
     ];
 }
@@ -65,7 +63,6 @@ impl fmt::Display for StackMethodChoice {
             Self::Median => write!(f, "Median"),
             Self::SigmaClip => write!(f, "Sigma Clip"),
             Self::MultiPoint => write!(f, "Multi-Point"),
-            Self::Drizzle => write!(f, "Drizzle"),
             Self::SurfaceWarp => write!(f, "Surface Warp"),
         }
     }

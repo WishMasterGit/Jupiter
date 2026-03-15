@@ -9,6 +9,7 @@ use jupiter_core::pipeline::config::{
     StackMethod,
 };
 use jupiter_core::pipeline::{PipelineOutput, PipelineStage};
+use jupiter_core::stack::drizzle::DrizzleConfig;
 
 /// Commands sent from UI thread to worker thread.
 pub enum WorkerCommand {
@@ -33,7 +34,10 @@ pub enum WorkerCommand {
     },
 
     /// Stage 3: Stack using cached aligned frames.
-    Stack { method: StackMethod },
+    Stack {
+        method: StackMethod,
+        drizzle: Option<DrizzleConfig>,
+    },
 
     /// Stage 4: Apply deconvolution + wavelet sharpening to cached stacked frame.
     Sharpen {
