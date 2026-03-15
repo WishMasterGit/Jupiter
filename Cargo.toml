@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/jupiter-core", "crates/jupiter-cli", "crates/jupiter-gui"]
 
 [workspace.package]
-version = "0.2.4"
+version = "0.3.0"
 edition = "2021"
 license = "MIT"
 description = "Planet image and video processing tool for crisp results from earth-based telescopes"
