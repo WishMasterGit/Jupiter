@@ -16,7 +16,7 @@ default = []
 gpu = ["jupiter-core/gpu"]
 
 [dependencies]
-jupiter-core = { path = "../jupiter-core" }
+jupiter-core = { path = "../jupiter-core", version = "0.2.4" }
 eframe = { workspace = true }
 egui = { workspace = true }
 egui_plot = { workspace = true }
