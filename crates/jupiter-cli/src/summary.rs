@@ -224,6 +224,7 @@ fn print_stack_sub_params(s: &Styles, method: &StackMethod) {
             min_brightness,
             quality_metric,
             local_stack_method,
+            ..
         }) => {
             println!(
                 "    {:<12}{}",

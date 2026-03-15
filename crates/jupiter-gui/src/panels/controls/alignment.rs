@@ -30,6 +30,18 @@ pub(super) fn alignment_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
                 .mark_dirty_from(PipelineStage::Alignment);
         }
 
+        // Pre-centering toggle
+        if ui
+            .checkbox(&mut app.config.pre_center, "Pre-center on planet")
+            .changed()
+        {
+            app.ui_state
+                .stages
+                .mark_dirty_from(PipelineStage::Alignment);
+        }
+        ui.label("Enable when planet drifts across frames")
+            .on_hover_text("Detects the planet in each frame and shifts it to center before alignment. Compensates for large drift from alt-az mounts.");
+
         // Method combo
         if crate::panels::enum_combo(
             ui,

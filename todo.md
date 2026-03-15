@@ -18,3 +18,6 @@
 - for log preview it should prerender 4 lines to avoid screen jumping when new log appears, user should also be able to scroll through the log [Done]
 - multipoint alignment is not producing good image, lets make a through research including scientific articles on best way to implement it, and write and article that we will save in the docs [Done]
 - change frame selection score graph so the y-axis not starts at 0 but instead at the minimum score, so it easier to see distribution [Done]
+- sort scored frames by score so the chart goes from top score to lowest, when clicking on the scored frame we should see it in preview [Done]
+- in the status it should show exactly what is use for Device, for example if it is Auto it should show GPU or CPU depending on what Auto selected [Done]
+- status line should show CPU load and amount of memory app use [Done]

@@ -1,10 +1,66 @@
 use std::path::PathBuf;
+use std::time::Instant;
 
 use jupiter_core::frame::SourceInfo;
 use jupiter_core::pipeline::PipelineStage;
+use sysinfo::{Pid, ProcessesToUpdate, System};
 
 use super::crop::CropState;
 use super::stage_status::Stages;
+
+/// Refresh interval for system stats.
+const STATS_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Tracks CPU and memory usage of this process.
+pub struct SystemStats {
+    sys: System,
+    pid: Pid,
+    pub cpu_usage: f32,
+    pub memory_mb: f64,
+    last_refresh: Instant,
+}
+
+impl Default for SystemStats {
+    fn default() -> Self {
+        let pid = Pid::from_u32(std::process::id());
+        let mut sys = System::new();
+        sys.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
+        let (cpu_usage, memory_mb) = Self::read_process(&sys, pid);
+        Self {
+            sys,
+            pid,
+            cpu_usage,
+            memory_mb,
+            last_refresh: Instant::now(),
+        }
+    }
+}
+
+impl SystemStats {
+    fn read_process(sys: &System, pid: Pid) -> (f32, f64) {
+        if let Some(proc) = sys.process(pid) {
+            let cpu = proc.cpu_usage();
+            let mem = proc.memory() as f64 / (1024.0 * 1024.0);
+            (cpu, mem)
+        } else {
+            (0.0, 0.0)
+        }
+    }
+
+    /// Refresh stats if enough time has elapsed. Returns true if refreshed.
+    pub fn maybe_refresh(&mut self) -> bool {
+        if self.last_refresh.elapsed() < STATS_REFRESH_INTERVAL {
+            return false;
+        }
+        self.sys
+            .refresh_processes(ProcessesToUpdate::Some(&[self.pid]), true);
+        let (cpu, mem) = Self::read_process(&self.sys, self.pid);
+        self.cpu_usage = cpu;
+        self.memory_mb = mem;
+        self.last_refresh = Instant::now();
+        true
+    }
+}
 
 /// Overall UI state.
 pub struct UIState {
@@ -43,6 +99,12 @@ pub struct UIState {
 
     /// Whether the viewport is showing a raw frame (true) or processed result (false).
     pub viewing_raw: bool,
+
+    /// Resolved device name (e.g. "CPU/Rayon" or "Apple M1 Pro").
+    pub resolved_device_name: Option<String>,
+
+    /// System stats (CPU load, memory).
+    pub system_stats: SystemStats,
 }
 
 impl Default for UIState {
@@ -63,6 +125,8 @@ impl Default for UIState {
             detected_planet_diameter: None,
             sharpen_requested: false,
             viewing_raw: true,
+            resolved_device_name: None,
+            system_stats: SystemStats::default(),
         }
     }
 }

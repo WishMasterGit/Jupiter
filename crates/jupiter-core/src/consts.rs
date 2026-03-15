@@ -127,3 +127,13 @@ pub const MEAN_REFERENCE_KEEP_FRACTION: f32 = 0.2;
 /// accept a local alignment result.  Below this threshold the frame/AP pair
 /// is skipped as unreliable.
 pub const MIN_CORRELATION_CONFIDENCE: f64 = 2.0;
+
+// --- Pre-centering ---
+
+/// Minimum fraction of frames needing successful planet detection for
+/// pre-centering to proceed. Below this, pre-centering is skipped.
+pub const PRE_CENTER_MIN_DETECTION_FRACTION: f32 = 0.5;
+
+/// Minimum fraction of original area the common overlap must cover after
+/// pre-centering shifts. Below this, cropping is skipped.
+pub const PRE_CENTER_MIN_OVERLAP_FRACTION: f32 = 0.25;

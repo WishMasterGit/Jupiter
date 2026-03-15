@@ -1,9 +1,13 @@
 use std::sync::mpsc;
 use std::time::Instant;
 
-use jupiter_core::align::compute_offset_configured;
+use jupiter_core::align::{
+    compute_centering_offsets, compute_common_overlap, compute_offset_configured, detect_centroids,
+    pre_center_color_frames, pre_center_frames,
+};
 use jupiter_core::color::debayer::luminance;
 use jupiter_core::compute::create_backend;
+use jupiter_core::detection::config::DetectionConfig;
 use jupiter_core::frame::{AlignmentOffset, ColorFrame, Frame};
 use jupiter_core::io::ser::SerReader;
 use jupiter_core::pipeline::config::AlignmentConfig;
@@ -136,6 +140,61 @@ pub(super) fn handle_align(
         ctx,
         format!("Selected {frame_count}/{total} frames, aligning..."),
     );
+
+    // Pre-centering (optional)
+    let (selected_frames, selected_color) = if alignment_config.pre_center {
+        send_log(tx, ctx, "Pre-centering frames on planet...".to_string());
+        send(
+            tx,
+            ctx,
+            WorkerResult::Progress {
+                stage: PipelineStage::PreCentering,
+                items_done: Some(0),
+                items_total: Some(frame_count),
+            },
+        );
+        let detection_config = DetectionConfig::default();
+        let centroids = detect_centroids(&selected_frames, &detection_config);
+        let (h, w) = (selected_frames[0].height(), selected_frames[0].width());
+
+        if let Some(offsets) = compute_centering_offsets(&centroids, h, w) {
+            let crop = compute_common_overlap(&offsets, h, w);
+            let detected = centroids.iter().filter(|c| c.is_some()).count();
+            send_log(
+                tx,
+                ctx,
+                format!(
+                    "Pre-centering: detected planet in {detected}/{frame_count} frames{}",
+                    if crop.is_some() {
+                        ", cropping to overlap"
+                    } else {
+                        ""
+                    }
+                ),
+            );
+            let centered = pre_center_frames(&selected_frames, &offsets, crop.as_ref());
+            let centered_color = selected_color.map(|color_frames| {
+                pre_center_color_frames(&color_frames, &offsets, crop.as_ref())
+            });
+            // Update luminance from centered color if color mode
+            let lum = if let Some(ref cfs) = centered_color {
+                cfs.iter().map(luminance).collect()
+            } else {
+                centered
+            };
+            (lum, centered_color)
+        } else {
+            send_log(
+                tx,
+                ctx,
+                "Pre-centering skipped: planet not detected in enough frames".to_string(),
+            );
+            (selected_frames, selected_color)
+        }
+    } else {
+        (selected_frames, selected_color)
+    };
+
     send(
         tx,
         ctx,
@@ -146,6 +205,7 @@ pub(super) fn handle_align(
         },
     );
 
+    let frame_count = selected_frames.len();
     let backend = create_backend(device);
     let reference = &selected_frames[0];
 

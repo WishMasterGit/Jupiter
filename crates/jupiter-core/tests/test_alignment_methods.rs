@@ -328,6 +328,7 @@ fn test_dispatcher_routes_phase_correlation() {
     let img = make_bright_square(64, 64, 32, 32, 16);
     let config = AlignmentConfig {
         method: AlignmentMethod::PhaseCorrelation,
+        ..Default::default()
     };
     let backend = cpu();
 
@@ -343,6 +344,7 @@ fn test_dispatcher_routes_enhanced_phase() {
         method: AlignmentMethod::EnhancedPhaseCorrelation(EnhancedPhaseConfig {
             upsample_factor: 10,
         }),
+        ..Default::default()
     };
     let backend = cpu();
 
@@ -356,6 +358,7 @@ fn test_dispatcher_routes_centroid() {
     let img = make_bright_disk(64, 64, 32.0, 32.0, 15.0);
     let config = AlignmentConfig {
         method: AlignmentMethod::Centroid(CentroidConfig { threshold: 0.1 }),
+        ..Default::default()
     };
     let backend = cpu();
 
@@ -369,6 +372,7 @@ fn test_dispatcher_routes_gradient() {
     let img = make_bright_square(64, 64, 32, 32, 16);
     let config = AlignmentConfig {
         method: AlignmentMethod::GradientCorrelation,
+        ..Default::default()
     };
     let backend = cpu();
 
@@ -382,6 +386,7 @@ fn test_dispatcher_routes_pyramid() {
     let img = make_bright_square(64, 64, 32, 32, 16);
     let config = AlignmentConfig {
         method: AlignmentMethod::Pyramid(PyramidConfig { levels: 2 }),
+        ..Default::default()
     };
     let backend = cpu();
 

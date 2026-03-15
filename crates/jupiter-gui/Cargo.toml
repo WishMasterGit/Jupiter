@@ -34,3 +34,4 @@ serde = { workspace = true }
 toml = { workspace = true }
 rayon = { workspace = true }
 image = {workspace = true}
+sysinfo = "0.38.4"

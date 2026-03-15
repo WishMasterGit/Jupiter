@@ -93,6 +93,10 @@ pub struct RunArgs {
     #[arg(long, default_value = "3")]
     pub pyramid_levels: usize,
 
+    /// Pre-center planet in each frame before alignment (compensates for drift)
+    #[arg(long)]
+    pub pre_center: bool,
+
     /// Percentage of best frames to keep (1-100)
     #[arg(long, default_value = "25")]
     pub select: u32,
@@ -415,6 +419,7 @@ fn build_config_from_args(args: &RunArgs) -> PipelineConfig {
             ..Default::default()
         },
         alignment: AlignmentConfig {
+            pre_center: args.pre_center,
             method: match args.align_method {
                 AlignMethodArg::Phase => AlignmentMethod::PhaseCorrelation,
                 AlignMethodArg::EnhancedPhase => {

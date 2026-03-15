@@ -50,16 +50,31 @@ pub(super) fn score_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
     // Quality score chart
     if !app.ui_state.ranked_preview.is_empty() {
         ui.add_space(4.0);
-        quality_chart(
+        let clicked_frame = quality_chart(
             ui,
             &app.ui_state.ranked_preview,
             app.config.select_percentage,
         );
+        if let Some(frame_index) = clicked_frame {
+            app.ui_state.preview_frame_index = frame_index;
+            app.ui_state.viewing_raw = true;
+            if let Some(ref path) = app.ui_state.file_path {
+                app.send_command(WorkerCommand::PreviewFrame {
+                    path: path.clone(),
+                    frame_index,
+                });
+            }
+        }
     }
 }
 
-/// Render a bar chart of per-frame quality scores with a keep% cutoff line.
-fn quality_chart(ui: &mut egui::Ui, ranked: &[(usize, f64)], keep_percentage: f32) {
+/// Render a bar chart of per-frame quality scores sorted by score (high to low)
+/// with a keep% cutoff line. Returns the frame index if a bar was clicked.
+fn quality_chart(
+    ui: &mut egui::Ui,
+    ranked: &[(usize, f64)],
+    keep_percentage: f32,
+) -> Option<usize> {
     // ranked is sorted by score descending (rank order).
     // Compute the cutoff score from the keep percentage.
     let keep_count = (ranked.len() as f32 * keep_percentage).ceil() as usize;
@@ -70,14 +85,6 @@ fn quality_chart(ui: &mut egui::Ui, ranked: &[(usize, f64)], keep_percentage: f3
     } else {
         ranked.last().unwrap().1
     };
-
-    // Build a set of kept frame indices for coloring.
-    let kept_indices: std::collections::HashSet<usize> =
-        ranked.iter().take(keep_count).map(|(i, _)| *i).collect();
-
-    // Build bars sorted by frame index (original video order).
-    let mut by_index: Vec<(usize, f64)> = ranked.to_vec();
-    by_index.sort_by_key(|(i, _)| *i);
 
     // Compute y-axis minimum so bars start near the lowest score, not 0.
     let min_score = ranked.iter().map(|(_, s)| *s).fold(f64::INFINITY, f64::min);
@@ -91,18 +98,21 @@ fn quality_chart(ui: &mut egui::Ui, ranked: &[(usize, f64)], keep_percentage: f3
     let kept_color = egui::Color32::from_rgb(80, 180, 80);
     let rejected_color = egui::Color32::from_rgb(128, 128, 128);
 
-    let bars: Vec<Bar> = by_index
+    // Bars sorted by score descending (rank order). X-axis = rank position.
+    let bars: Vec<Bar> = ranked
         .iter()
-        .map(|(frame_idx, score)| {
-            let color = if kept_indices.contains(frame_idx) {
+        .enumerate()
+        .map(|(rank, (frame_idx, score))| {
+            let color = if rank < keep_count {
                 kept_color
             } else {
                 rejected_color
             };
-            Bar::new(*frame_idx as f64, score - y_min)
+            Bar::new(rank as f64, score - y_min)
                 .fill(color)
                 .width(0.8)
                 .base_offset(y_min)
+                .name(format!("Frame #{frame_idx}"))
         })
         .collect();
 
@@ -112,7 +122,9 @@ fn quality_chart(ui: &mut egui::Ui, ranked: &[(usize, f64)], keep_percentage: f3
         .color(egui::Color32::from_rgb(255, 160, 40))
         .width(1.5);
 
-    Plot::new("quality_score_chart")
+    let mut clicked_frame = None;
+
+    let response = Plot::new("quality_score_chart")
         .height(CHART_HEIGHT)
         .include_y(y_min)
         .allow_drag(false)
@@ -120,9 +132,27 @@ fn quality_chart(ui: &mut egui::Ui, ranked: &[(usize, f64)], keep_percentage: f3
         .allow_scroll(false)
         .allow_boxed_zoom(false)
         .show_grid(false)
+        .x_axis_label("rank")
         .y_axis_label("score")
         .show(ui, |plot_ui| {
             plot_ui.bar_chart(chart);
             plot_ui.hline(cutoff_line);
+
+            // Detect click on a bar
+            if plot_ui.response().clicked() {
+                if let Some(pos) = plot_ui.pointer_coordinate() {
+                    let rank = pos.x.round() as usize;
+                    if rank < ranked.len() {
+                        return Some(ranked[rank].0);
+                    }
+                }
+            }
+            None
         });
+
+    if let Some(frame_idx) = response.inner {
+        clicked_frame = Some(frame_idx);
+    }
+
+    clicked_frame
 }

@@ -61,11 +61,13 @@ pub fn run_pipeline_reported(
 
     // Multi-point: dedicated flow (color or mono)
     if let StackMethod::MultiPoint(ref mp_config) = config.stacking.method {
+        let mut mp = mp_config.clone();
+        mp.pre_center = config.alignment.pre_center;
         reporter.begin_stage(PipelineStage::Stacking, None);
         if use_color {
             let result = multi_point_stack_color(
                 &reader,
-                mp_config,
+                &mp,
                 &color_mode,
                 &debayer_method.unwrap(),
                 |_progress| {},
@@ -74,7 +76,7 @@ pub fn run_pipeline_reported(
             reporter.finish_stage();
             return apply_post_stack_color(result, config, &backend, &reporter);
         } else {
-            let result = multi_point_stack(&reader, mp_config, |_progress| {})?;
+            let result = multi_point_stack(&reader, &mp, |_progress| {})?;
             info!("Multi-point stacking complete");
             reporter.finish_stage();
             return apply_post_stack_mono(result, config, &backend, &reporter);
@@ -83,11 +85,13 @@ pub fn run_pipeline_reported(
 
     // Surface warp: dedicated flow (color or mono)
     if let StackMethod::SurfaceWarp(ref sw_config) = config.stacking.method {
+        let mut sw = sw_config.clone();
+        sw.pre_center = config.alignment.pre_center;
         reporter.begin_stage(PipelineStage::Stacking, None);
         if use_color {
             let result = surface_warp_stack_color(
                 &reader,
-                sw_config,
+                &sw,
                 &color_mode,
                 &debayer_method.unwrap(),
                 |_progress| {},
@@ -96,7 +100,7 @@ pub fn run_pipeline_reported(
             reporter.finish_stage();
             return apply_post_stack_color(result, config, &backend, &reporter);
         } else {
-            let result = surface_warp_stack(&reader, sw_config, |_progress| {})?;
+            let result = surface_warp_stack(&reader, &sw, |_progress| {})?;
             info!("Surface warp stacking complete");
             reporter.finish_stage();
             return apply_post_stack_mono(result, config, &backend, &reporter);

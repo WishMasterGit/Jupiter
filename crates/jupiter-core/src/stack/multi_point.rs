@@ -4,9 +4,12 @@ use ndarray::Array2;
 use rayon::prelude::*;
 use tracing::info;
 
+use crate::align::phase_correlation::shift_frame;
+use crate::align::pre_center::{compute_centering_offsets, detect_centroids_streaming};
 use crate::color::debayer::{luminance, DebayerMethod};
 use crate::color::process::{read_color_frame, read_luminance_frame};
 use crate::consts::MEAN_REFERENCE_KEEP_FRACTION;
+use crate::detection::config::DetectionConfig;
 use crate::error::{JupiterError, Result};
 use crate::frame::{AlignmentOffset, ColorFrame, ColorMode, Frame};
 use crate::io::ser::SerReader;
@@ -93,16 +96,34 @@ where
     let reference = reader.read_frame(0)?;
     let (h, w) = reference.data.dim();
 
-    // Step 1: Global alignment — compute offsets in parallel
+    // Step 0 (optional): Pre-centering — detect planet centroids and compute centering offsets
+    let center_offsets = if config.pre_center {
+        info!("Multi-point: pre-centering {} frames", total_frames);
+        let indices: Vec<usize> = (0..total_frames).collect();
+        let centroids = detect_centroids_streaming(reader, &indices, &DetectionConfig::default())?;
+        compute_centering_offsets(&centroids, h, w)
+    } else {
+        None
+    };
+
+    // Step 1: Global alignment — compute offsets in parallel (with pre-centering if available)
     info!(
         "Computing global alignment offsets for {} frames",
         total_frames
     );
+    let centered_ref = match &center_offsets {
+        Some(offsets) => shift_frame(&reference, &offsets[0]),
+        None => reference.clone(),
+    };
     let rest_offsets: Vec<Result<AlignmentOffset>> = (1..total_frames)
         .into_par_iter()
         .map(|i| {
             let frame = reader.read_frame(i)?;
-            crate::align::phase_correlation::compute_offset(&reference, &frame)
+            let centered = match &center_offsets {
+                Some(offsets) => shift_frame(&frame, &offsets[i]),
+                None => frame,
+            };
+            crate::align::phase_correlation::compute_offset(&centered_ref, &centered)
         })
         .collect();
 
@@ -110,6 +131,14 @@ where
     global_offsets.push(AlignmentOffset::default());
     for offset_result in rest_offsets {
         global_offsets.push(offset_result?);
+    }
+
+    // Combine: global_offsets[i] = center_offset[i] + residual[i]
+    if let Some(ref center) = center_offsets {
+        for (i, offset) in global_offsets.iter_mut().enumerate() {
+            offset.dx += center[i].dx;
+            offset.dy += center[i].dy;
+        }
     }
     on_progress(0.1);
 
@@ -264,16 +293,45 @@ where
     let ref_lum = luminance(&ref_color);
     let (h, w) = ref_lum.data.dim();
 
-    // Step 2: Global alignment — compute offsets on luminance
+    // Step 1.5 (optional): Pre-centering on luminance
+    let center_offsets = if config.pre_center {
+        info!("Multi-point color: pre-centering {} frames", total_frames);
+        let indices: Vec<usize> = (0..total_frames).collect();
+        let centroids: Vec<Option<(f64, f64)>> = indices
+            .iter()
+            .map(|&idx| {
+                let lum = read_luminance_frame(reader, idx, color_mode, debayer_method).ok()?;
+                crate::detection::planet::detect_planet_in_frame(
+                    &lum.data,
+                    idx,
+                    &DetectionConfig::default(),
+                )
+                .map(|det| (det.cy, det.cx))
+            })
+            .collect();
+        compute_centering_offsets(&centroids, h, w)
+    } else {
+        None
+    };
+
+    // Step 2: Global alignment — compute offsets on luminance (with pre-centering if available)
     info!(
         "Computing global alignment offsets for {} color frames",
         total_frames
     );
+    let centered_ref_lum = match &center_offsets {
+        Some(offsets) => shift_frame(&ref_lum, &offsets[0]),
+        None => ref_lum.clone(),
+    };
     let rest_offsets: Vec<Result<AlignmentOffset>> = (1..total_frames)
         .into_par_iter()
         .map(|i| {
             let lum = read_luminance_frame(reader, i, color_mode, debayer_method)?;
-            crate::align::phase_correlation::compute_offset(&ref_lum, &lum)
+            let centered = match &center_offsets {
+                Some(offsets) => shift_frame(&lum, &offsets[i]),
+                None => lum,
+            };
+            crate::align::phase_correlation::compute_offset(&centered_ref_lum, &centered)
         })
         .collect();
 
@@ -281,6 +339,14 @@ where
     global_offsets.push(AlignmentOffset::default());
     for offset_result in rest_offsets {
         global_offsets.push(offset_result?);
+    }
+
+    // Combine: global_offsets[i] = center_offset[i] + residual[i]
+    if let Some(ref center) = center_offsets {
+        for (i, offset) in global_offsets.iter_mut().enumerate() {
+            offset.dx += center[i].dx;
+            offset.dy += center[i].dy;
+        }
     }
     on_progress(0.1);
 

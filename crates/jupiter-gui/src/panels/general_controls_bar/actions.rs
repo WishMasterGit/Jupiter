@@ -7,6 +7,7 @@ pub(super) fn device_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
     crate::panels::section_header(ui, "Compute Device", None, None);
     ui.add_space(4.0);
 
+    let prev = app.config.device;
     egui::ComboBox::from_label("Device")
         .selected_text(app.config.device.to_string())
         .show_ui(ui, |ui| {
@@ -19,6 +20,10 @@ pub(super) fn device_section(ui: &mut egui::Ui, app: &mut JupiterApp) {
                 ui.selectable_value(&mut app.config.device, pref, pref.to_string());
             }
         });
+
+    if app.config.device != prev {
+        app.refresh_device_name();
+    }
 }
 
 pub(super) fn actions_section(ui: &mut egui::Ui, app: &mut JupiterApp) {

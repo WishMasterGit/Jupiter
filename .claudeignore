@@ -1,0 +1,7 @@
+target/
+assets/data/*.ser
+assets/data/*.avi
+assets/data/*.tiff
+result.tiff
+packaging/
+Cargo.lock

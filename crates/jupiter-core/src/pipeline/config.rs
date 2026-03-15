@@ -191,6 +191,10 @@ pub struct AlignmentConfig {
     /// The alignment algorithm to use.
     #[serde(default)]
     pub method: AlignmentMethod,
+    /// When true, detect the planet in each frame and shift it to image center
+    /// before alignment. Compensates for large drift across frames.
+    #[serde(default)]
+    pub pre_center: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

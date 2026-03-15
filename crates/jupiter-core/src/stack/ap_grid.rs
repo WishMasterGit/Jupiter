@@ -34,6 +34,9 @@ pub struct MultiPointConfig {
     /// Local stacking method for each AP.
     #[serde(default)]
     pub local_stack_method: LocalStackMethod,
+    /// Apply pre-centering (planet detection + shift to center) before global alignment.
+    #[serde(default)]
+    pub pre_center: bool,
 }
 
 impl Default for MultiPointConfig {
@@ -45,6 +48,7 @@ impl Default for MultiPointConfig {
             min_brightness: 0.05,
             quality_metric: QualityMetric::Laplacian,
             local_stack_method: LocalStackMethod::Mean,
+            pre_center: false,
         }
     }
 }

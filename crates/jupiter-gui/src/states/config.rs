@@ -24,6 +24,7 @@ pub struct ConfigState {
     pub select_percentage: f32,
 
     // Alignment
+    pub pre_center: bool,
     pub align_method: AlignMethodChoice,
     pub enhanced_phase_upsample: usize,
     pub centroid_threshold: f32,
@@ -75,6 +76,7 @@ impl Default for ConfigState {
             quality_metric: QualityMetric::default(),
             select_percentage: 0.25,
 
+            pre_center: false,
             align_method: AlignMethodChoice::default(),
             enhanced_phase_upsample: 20,
             centroid_threshold: 0.1,
@@ -114,6 +116,7 @@ impl Default for ConfigState {
 impl ConfigState {
     pub fn alignment_config(&self) -> AlignmentConfig {
         AlignmentConfig {
+            pre_center: self.pre_center,
             method: match self.align_method {
                 AlignMethodChoice::EnhancedPhase => {
                     AlignmentMethod::EnhancedPhaseCorrelation(EnhancedPhaseConfig {
@@ -147,6 +150,7 @@ impl ConfigState {
                 min_brightness: self.mp_min_brightness,
                 quality_metric: self.quality_metric,
                 local_stack_method: Default::default(),
+                pre_center: self.pre_center,
             }),
             StackMethodChoice::Drizzle => StackMethod::Drizzle(DrizzleConfig {
                 scale: self.drizzle_scale,
@@ -160,6 +164,7 @@ impl ConfigState {
                 select_percentage: self.select_percentage,
                 min_brightness: self.mp_min_brightness,
                 quality_metric: self.quality_metric,
+                pre_center: self.pre_center,
             }),
         }
     }
@@ -258,6 +263,7 @@ impl ConfigState {
         state.select_percentage = config.frame_selection.select_percentage;
 
         // Alignment
+        state.pre_center = config.alignment.pre_center;
         match &config.alignment.method {
             AlignmentMethod::PhaseCorrelation => {
                 state.align_method = AlignMethodChoice::PhaseCorrelation;

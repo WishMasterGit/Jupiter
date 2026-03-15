@@ -29,7 +29,34 @@
       "Bash(cargo llvm-cov:*)",
       "Bash(cargo fmt:*)",
       "Bash(gh release:*)",
-      "Bash(cargo release:*)"
+      "Bash(cargo release:*)",
+      "Bash(cargo add:*)",
+      "Bash(find:*)",
+      "Bash(wc:*)",
+      "Bash(chmod:*)",
+      "Bash(git:*)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if echo \"$CLAUDE_TOOL_PARAM_file_path\" | grep -q '\\.rs$'; then cd /Users/wmts/repo/astro/jupiter && cargo fmt --all --quiet 2>/dev/null; fi"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if echo \"$CLAUDE_TOOL_PARAM_command\" | grep -q '^cargo test'; then echo '💡 Reminder: run cargo llvm-cov to check coverage after test changes'; fi"
+          }
+        ]
+      }
     ]
   }
 }

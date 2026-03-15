@@ -1,5 +1,6 @@
 use std::sync::mpsc;
 
+use jupiter_core::compute::{self, DevicePreference};
 use jupiter_core::pipeline::{PipelineOutput, PipelineStage};
 
 use crate::convert::output_to_display_image;
@@ -23,13 +24,19 @@ impl JupiterApp {
         let (result_tx, result_rx) = mpsc::channel();
         let cmd_tx = workers::spawn_worker(result_tx.clone(), ctx.clone());
 
+        let config = ConfigState::default();
+        let resolved_device_name = resolve_device_name(&config.device);
+
         Self {
             cmd_tx,
             result_tx,
             result_rx,
-            ui_state: UIState::default(),
+            ui_state: UIState {
+                resolved_device_name: Some(resolved_device_name),
+                ..Default::default()
+            },
             viewport: ViewportState::default(),
-            config: ConfigState::default(),
+            config,
             show_about: false,
         }
     }
@@ -292,6 +299,11 @@ impl JupiterApp {
         let _ = self.cmd_tx.send(cmd);
     }
 
+    /// Re-resolve the compute device name (call when device preference changes).
+    pub fn refresh_device_name(&mut self) {
+        self.ui_state.resolved_device_name = Some(resolve_device_name(&self.config.device));
+    }
+
     /// Auto-trigger sharpening when requested (on mouse-up or discrete control change).
     fn check_auto_sharpen(&mut self) {
         if !self.ui_state.sharpen_requested {
@@ -349,6 +361,16 @@ impl eframe::App for JupiterApp {
                     });
                 });
         }
+    }
+}
+
+/// Probe the compute backend to get the resolved device name.
+fn resolve_device_name(pref: &DevicePreference) -> String {
+    let backend = compute::create_backend(pref);
+    let name = backend.name().to_string();
+    match pref {
+        DevicePreference::Auto => format!("Auto ({name})"),
+        _ => name,
     }
 }
 

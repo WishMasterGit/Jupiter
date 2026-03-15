@@ -3,11 +3,15 @@ use std::sync::Arc;
 use tracing::info;
 
 use crate::align::{
-    align_frames_configured_with_progress, compute_offsets_streaming_configured, shift_frame,
+    align_frames_configured_with_progress, compute_centering_offsets, compute_common_overlap,
+    compute_offsets_streaming_configured, detect_centroids, detect_centroids_streaming,
+    pre_center_frames, shift_frame,
 };
 use crate::compute::ComputeBackend;
+use crate::detection::config::DetectionConfig;
 use crate::error::Result;
-use crate::frame::Frame;
+use crate::frame::{AlignmentOffset, Frame};
+use crate::io::crop::CropRect;
 use crate::io::disk_cache::DiskFrameStore;
 use crate::io::image_io::save_image;
 use crate::io::ser::SerReader;
@@ -86,6 +90,32 @@ fn run_mono_standard(
     );
     reporter.finish_stage();
 
+    // Pre-centering (optional)
+    let selected_frames = if config.alignment.pre_center {
+        let frame_count = selected_frames.len();
+        reporter.begin_stage(PipelineStage::PreCentering, Some(frame_count));
+        let detection_config = DetectionConfig::default();
+        let centroids = detect_centroids(&selected_frames, &detection_config);
+        let (h, w) = (selected_frames[0].height(), selected_frames[0].width());
+        let result = if let Some(offsets) = compute_centering_offsets(&centroids, h, w) {
+            let crop = compute_common_overlap(&offsets, h, w);
+            info!(
+                detected = centroids.iter().filter(|c| c.is_some()).count(),
+                total = centroids.len(),
+                crop = crop.is_some(),
+                "Pre-centering frames"
+            );
+            pre_center_frames(&selected_frames, &offsets, crop.as_ref())
+        } else {
+            info!("Pre-centering skipped: too few planet detections");
+            selected_frames
+        };
+        reporter.finish_stage();
+        result
+    } else {
+        selected_frames
+    };
+
     // Alignment
     let frame_count = selected_frames.len();
     reporter.begin_stage(PipelineStage::Alignment, Some(frame_count));
@@ -146,6 +176,32 @@ fn run_mono_standard_streaming(
     reporter.finish_stage();
 
     let frame_count = selected_indices.len();
+    let h = reader.header.height as usize;
+    let w = reader.header.width as usize;
+
+    // Pre-centering (streaming): detect centroids and compute centering offsets
+    let pre_center_data = if config.alignment.pre_center {
+        reporter.begin_stage(PipelineStage::PreCentering, Some(frame_count));
+        let detection_config = DetectionConfig::default();
+        let centroids = detect_centroids_streaming(reader, &selected_indices, &detection_config)?;
+        let result = if let Some(center_offsets) = compute_centering_offsets(&centroids, h, w) {
+            let crop = compute_common_overlap(&center_offsets, h, w);
+            info!(
+                detected = centroids.iter().filter(|c| c.is_some()).count(),
+                total = centroids.len(),
+                crop = crop.is_some(),
+                "Pre-centering frames (streaming)"
+            );
+            Some((center_offsets, crop))
+        } else {
+            info!("Pre-centering skipped: too few planet detections (streaming)");
+            None
+        };
+        reporter.finish_stage();
+        result
+    } else {
+        None
+    };
 
     match &config.stacking.method {
         StackMethod::Mean => {
@@ -165,18 +221,17 @@ fn run_mono_standard_streaming(
             reporter.finish_stage();
 
             reporter.begin_stage(PipelineStage::Stacking, Some(frame_count));
-            let h = reader.header.height as usize;
-            let w = reader.header.width as usize;
+            let (stack_h, stack_w) = if let Some((_, Some(ref crop))) = pre_center_data {
+                (crop.height as usize, crop.width as usize)
+            } else {
+                (h, w)
+            };
             let bit_depth = reader.header.pixel_depth as u8;
-            let mut stacker = StreamingMeanStacker::new(h, w, bit_depth);
+            let mut stacker = StreamingMeanStacker::new(stack_h, stack_w, bit_depth);
             for (i, (&frame_idx, offset)) in selected_indices.iter().zip(offsets.iter()).enumerate()
             {
                 let frame = reader.read_frame(frame_idx)?;
-                let shifted = if i == 0 {
-                    frame
-                } else {
-                    shift_frame(&frame, offset)
-                };
+                let shifted = apply_combined_shift(&frame, i, offset, &pre_center_data);
                 stacker.add(&shifted);
                 reporter.advance(i + 1);
                 // frame + shifted dropped here
@@ -210,11 +265,7 @@ fn run_mono_standard_streaming(
             for (i, (&frame_idx, offset)) in selected_indices.iter().zip(offsets.iter()).enumerate()
             {
                 let frame = reader.read_frame(frame_idx)?;
-                let shifted = if i == 0 {
-                    frame
-                } else {
-                    shift_frame(&frame, offset)
-                };
+                let shifted = apply_combined_shift(&frame, i, offset, &pre_center_data);
                 disk_frames.push(store.store_frame(&shifted)?);
                 // shifted + frame dropped here — only disk handle kept
                 reporter.advance(i + 1);
@@ -375,5 +426,40 @@ fn create_disk_store(config: &PipelineConfig) -> Result<DiskFrameStore> {
         DiskFrameStore::with_parent(dir)
     } else {
         DiskFrameStore::new()
+    }
+}
+
+/// Apply combined centering + alignment shift to a single frame.
+///
+/// If pre-centering data is available, the centering offset is added to the
+/// alignment offset, producing a single combined shift. The frame is then
+/// optionally cropped to the common overlap region.
+fn apply_combined_shift(
+    frame: &Frame,
+    frame_index: usize,
+    alignment_offset: &AlignmentOffset,
+    pre_center_data: &Option<(Vec<AlignmentOffset>, Option<CropRect>)>,
+) -> Frame {
+    use crate::align::pre_center::crop_frame;
+
+    match pre_center_data {
+        Some((center_offsets, crop)) => {
+            let combined = AlignmentOffset {
+                dx: center_offsets[frame_index].dx + alignment_offset.dx,
+                dy: center_offsets[frame_index].dy + alignment_offset.dy,
+            };
+            let shifted = shift_frame(frame, &combined);
+            match crop {
+                Some(rect) => crop_frame(&shifted, rect),
+                None => shifted,
+            }
+        }
+        None => {
+            if frame_index == 0 {
+                frame.clone()
+            } else {
+                shift_frame(frame, alignment_offset)
+            }
+        }
     }
 }

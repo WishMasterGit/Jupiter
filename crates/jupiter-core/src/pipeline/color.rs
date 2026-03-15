@@ -2,10 +2,14 @@ use std::sync::Arc;
 
 use tracing::info;
 
-use crate::align::shift_frame;
+use crate::align::{
+    compute_centering_offsets, compute_common_overlap, detect_centroids, pre_center_color_frames,
+    pre_center_frames, shift_frame,
+};
 use crate::color::debayer::{debayer, luminance, DebayerMethod};
 use crate::color::process::process_color_parallel;
 use crate::compute::ComputeBackend;
+use crate::detection::config::DetectionConfig;
 use crate::error::Result;
 use crate::frame::{ColorFrame, ColorMode, Frame};
 use crate::io::disk_cache::DiskFrameStore;
@@ -104,6 +108,13 @@ pub(super) fn run_color_pipeline(
     );
     reporter.finish_stage();
 
+    // Pre-centering (optional, on luminance)
+    let (selected_color, selected_lum) = if config.alignment.pre_center {
+        apply_pre_centering_color(selected_color, selected_lum, reporter)?
+    } else {
+        (selected_color, selected_lum)
+    };
+
     let stacked_color = if let StackMethod::Drizzle(ref drizzle_config) = config.stacking.method {
         color_drizzle_flow(
             &selected_color,
@@ -162,6 +173,13 @@ fn run_color_pipeline_streaming(
         .collect::<Result<_>>()?;
     let selected_lum: Vec<Frame> = selected_color.iter().map(luminance).collect();
     reporter.finish_stage();
+
+    // Pre-centering (optional, on luminance)
+    let (selected_color, selected_lum) = if config.alignment.pre_center {
+        apply_pre_centering_color(selected_color, selected_lum, reporter)?
+    } else {
+        (selected_color, selected_lum)
+    };
 
     let stacked_color = if let StackMethod::Drizzle(ref drizzle_config) = config.stacking.method {
         color_drizzle_flow(
@@ -380,4 +398,37 @@ pub(super) fn apply_post_stack_color(
     reporter.finish_stage();
 
     Ok(PipelineOutput::Color(result))
+}
+
+/// Apply pre-centering to color frames using luminance-based planet detection.
+///
+/// Returns updated color frames and luminance frames (both centered + cropped).
+fn apply_pre_centering_color(
+    selected_color: Vec<ColorFrame>,
+    selected_lum: Vec<Frame>,
+    reporter: &Arc<dyn ProgressReporter>,
+) -> Result<(Vec<ColorFrame>, Vec<Frame>)> {
+    let frame_count = selected_lum.len();
+    reporter.begin_stage(PipelineStage::PreCentering, Some(frame_count));
+    let detection_config = DetectionConfig::default();
+    let centroids = detect_centroids(&selected_lum, &detection_config);
+    let (h, w) = (selected_lum[0].height(), selected_lum[0].width());
+
+    let (color_out, lum_out) = if let Some(offsets) = compute_centering_offsets(&centroids, h, w) {
+        let crop = compute_common_overlap(&offsets, h, w);
+        info!(
+            detected = centroids.iter().filter(|c| c.is_some()).count(),
+            total = centroids.len(),
+            crop = crop.is_some(),
+            "Pre-centering color frames"
+        );
+        let centered_color = pre_center_color_frames(&selected_color, &offsets, crop.as_ref());
+        let centered_lum = pre_center_frames(&selected_lum, &offsets, crop.as_ref());
+        (centered_color, centered_lum)
+    } else {
+        info!("Pre-centering skipped: too few planet detections (color)");
+        (selected_color, selected_lum)
+    };
+    reporter.finish_stage();
+    Ok((color_out, lum_out))
 }

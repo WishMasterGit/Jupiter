@@ -35,3 +35,73 @@ this is planet image/video processing tool to achieve crisp results from the ear
 ## Project management
 
 - Claude should read tasks from todo.md, from top to bottom, skip ones that marked [Done], after completing the todo Claud should mark it [Done]
+
+## Architecture
+
+### Workspace structure
+```
+jupiter/
+├── crates/
+│   ├── jupiter-core/       # Library — all algorithms and pipeline logic
+│   │   ├── src/
+│   │   │   ├── align/       # Alignment methods (phase correlation, triangle, feature-based, surface warp)
+│   │   │   ├── color/       # Debayering and color processing
+│   │   │   ├── compute/     # GPU compute shaders and CPU fallbacks
+│   │   │   ├── detection/   # Planet/feature detection
+│   │   │   ├── filters/     # Post-processing filters
+│   │   │   ├── io/          # SER/AVI/TIFF/PNG I/O, disk cache
+│   │   │   ├── pipeline/    # Pipeline orchestration (mono, color, config, types)
+│   │   │   ├── quality/     # Frame quality scoring
+│   │   │   ├── sharpen/     # Wavelet sharpening
+│   │   │   ├── stack/       # Stacking algorithms (mean, median, sigma-clip, disk-backed)
+│   │   │   ├── consts.rs    # Project-wide constants and thresholds
+│   │   │   ├── error.rs     # JupiterError type
+│   │   │   ├── frame.rs     # Frame types
+│   │   │   └── lib.rs       # Public API re-exports
+│   │   └── tests/           # Integration tests (one file per module)
+│   ├── jupiter-cli/         # CLI binary
+│   └── jupiter-gui/         # egui desktop GUI
+```
+
+### Processing pipeline flow
+```
+SER/AVI → Read Frames → Score Quality → Select Best N%
+  → Align (phase correlation / triangle / feature / surface warp)
+  → Stack (mean / median / sigma-clip)
+  → Sharpen (wavelet layers)
+  → Filter (post-processing)
+  → Output (TIFF / PNG)
+```
+
+### Key types
+- `ndarray::Array2<f32>` — pixel data in [0.0, 1.0]
+- `JupiterError` — unified error type (`crates/jupiter-core/src/error.rs`)
+- `PipelineConfig` — full pipeline configuration (`crates/jupiter-core/src/pipeline/config.rs`)
+- `AlignmentMethod` — enum of alignment algorithms
+- `StackMethod` — enum of stacking algorithms
+
+## Common Commands
+
+```bash
+# Full quality check
+cargo fmt --all -- --check
+cargo clippy --workspace -- -D warnings
+cargo clippy --workspace --features gpu -- -D warnings
+cargo test --workspace
+cargo test --workspace --features gpu
+
+# Coverage (jupiter-core only)
+cargo llvm-cov --package jupiter-core
+
+# Run GUI
+cargo run --package jupiter-gui
+
+# Run CLI
+cargo run --package jupiter-cli -- --help
+```
+
+## Troubleshooting
+
+- **Linux build deps**: `apt install libgtk-3-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev`
+- **GPU features fail**: The `gpu` feature requires wgpu support. Falls back to CPU automatically at runtime if GPU is unavailable. Build without `--features gpu` to skip GPU compilation entirely.
+- **Coverage tool not found**: Install with `cargo install cargo-llvm-cov`

@@ -50,6 +50,9 @@ pub fn show(ctx: &egui::Context, app: &mut JupiterApp) {
                 }
             });
 
+        // Refresh system stats periodically
+        app.ui_state.system_stats.maybe_refresh();
+
         // Status line
         ui.horizontal(|ui| {
             if let Some(ref size) = app.viewport.image_size {
@@ -58,7 +61,16 @@ pub fn show(ctx: &egui::Context, app: &mut JupiterApp) {
             }
             ui.label(format!("Zoom: {:.0}%", app.viewport.zoom * 100.0));
             ui.separator();
-            ui.label(format!("Device: {}", app.config.device));
+            if let Some(ref name) = app.ui_state.resolved_device_name {
+                ui.label(format!("Device: {name}"));
+            } else {
+                ui.label(format!("Device: {}", app.config.device));
+            }
+            ui.separator();
+            ui.label(format!(
+                "CPU: {:.0}%  Mem: {:.0} MB",
+                app.ui_state.system_stats.cpu_usage, app.ui_state.system_stats.memory_mb
+            ));
         });
 
         ui.add_space(2.0);
