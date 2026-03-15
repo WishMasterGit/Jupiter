@@ -28,7 +28,8 @@
       "Bash(tee:*)",
       "Bash(cargo llvm-cov:*)",
       "Bash(cargo fmt:*)",
-      "Bash(gh release:*)"
+      "Bash(gh release:*)",
+      "Bash(cargo release:*)"
     ]
   }
 }
