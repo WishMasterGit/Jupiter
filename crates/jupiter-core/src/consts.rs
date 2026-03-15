@@ -97,6 +97,14 @@ pub const AUTOCROP_BORDER_STRIP_WIDTH: usize = 10;
 /// Number of center frames to median-combine for fallback detection.
 pub const AUTOCROP_FALLBACK_FRAME_COUNT: usize = 5;
 
+// --- Disk cache ---
+
+/// Size of the binary header for serialized disk-cached frames (bytes).
+pub const DISK_FRAME_HEADER_SIZE: usize = 16;
+
+/// Magic bytes identifying a serialized disk-cached frame file.
+pub const DISK_FRAME_MAGIC: &[u8; 4] = b"JFRM";
+
 // --- Multi-point / Surface-warp ---
 
 /// Divisor to derive AP size from planet diameter: `ap_size = diameter / divisor`.

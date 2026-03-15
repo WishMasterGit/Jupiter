@@ -32,6 +32,7 @@ pub fn run(args: &ConfigArgs) -> Result<()> {
             deconvolution: None,
         }),
         filters: vec![],
+        temp_dir: None,
     };
     let toml_str = toml::to_string_pretty(&config)?;
 

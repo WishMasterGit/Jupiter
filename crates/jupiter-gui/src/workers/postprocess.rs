@@ -45,8 +45,10 @@ pub(super) fn handle_sharpen(
         wavelet::sharpen(&result, &config.wavelet)
     };
 
-    let stacked = match &cache.stacked {
-        Some(s) => s.clone(),
+    // Load stacked from disk if only disk-backed version available
+    let stacked = cache.get_stacked().or_else(|| cache.stacked.clone());
+    let stacked = match stacked {
+        Some(s) => s,
         None => {
             send_error(tx, ctx, "No stacked frame. Run Stack first.");
             return;
@@ -61,8 +63,19 @@ pub(super) fn handle_sharpen(
     };
 
     let elapsed = start.elapsed();
-    cache.sharpened = Some(output.clone());
+    // In streaming mode, persist sharpened to disk
+    if cache.is_streaming {
+        if let Some(disk_result) = cache.store_output_to_disk(&output) {
+            cache.sharpened = None;
+            cache.sharpened_disk = Some(disk_result);
+        } else {
+            cache.sharpened = Some(output.clone());
+        }
+    } else {
+        cache.sharpened = Some(output.clone());
+    }
     cache.filtered = None;
+    cache.filtered_disk = None;
     let label = if cache.is_color {
         "Color sharpening"
     } else {
@@ -101,9 +114,14 @@ pub(super) fn handle_apply_filters(
         },
     );
 
-    let base = cache.sharpened.as_ref().or(cache.stacked.as_ref());
+    // Load from disk if needed (prefer sharpened, fall back to stacked)
+    let base = cache
+        .get_sharpened()
+        .or_else(|| cache.get_stacked())
+        .or_else(|| cache.sharpened.as_ref().cloned())
+        .or_else(|| cache.stacked.as_ref().cloned());
     let base = match base {
-        Some(b) => b.clone(),
+        Some(b) => b,
         None => {
             send_error(tx, ctx, "No frame to filter. Run Stack or Sharpen first.");
             return;
@@ -132,7 +150,17 @@ pub(super) fn handle_apply_filters(
     }
 
     let elapsed = start.elapsed();
-    cache.filtered = Some(output.clone());
+    // In streaming mode, persist filtered to disk
+    if cache.is_streaming {
+        if let Some(disk_result) = cache.store_output_to_disk(&output) {
+            cache.filtered = None;
+            cache.filtered_disk = Some(disk_result);
+        } else {
+            cache.filtered = Some(output.clone());
+        }
+    } else {
+        cache.filtered = Some(output.clone());
+    }
     send_log(
         tx,
         ctx,

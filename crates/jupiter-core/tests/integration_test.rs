@@ -89,6 +89,7 @@ fn test_full_pipeline_end_to_end() {
         stacking: StackingConfig::default(),
         sharpening: Some(SharpeningConfig::default()),
         filters: vec![],
+        temp_dir: None,
     };
 
     let backend = Arc::new(CpuBackend);
@@ -130,6 +131,7 @@ fn test_pipeline_without_sharpening() {
         stacking: StackingConfig::default(),
         sharpening: None,
         filters: vec![],
+        temp_dir: None,
     };
 
     let backend = Arc::new(CpuBackend);

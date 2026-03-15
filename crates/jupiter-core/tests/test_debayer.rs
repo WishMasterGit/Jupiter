@@ -436,6 +436,7 @@ fn test_color_pipeline_end_to_end() {
         stacking: StackingConfig::default(),
         sharpening: None,
         filters: vec![],
+        temp_dir: None,
     };
 
     let backend = Arc::new(CpuBackend);
@@ -479,6 +480,7 @@ fn test_force_mono_ignores_bayer() {
         stacking: StackingConfig::default(),
         sharpening: None,
         filters: vec![],
+        temp_dir: None,
     };
 
     let backend = Arc::new(CpuBackend);

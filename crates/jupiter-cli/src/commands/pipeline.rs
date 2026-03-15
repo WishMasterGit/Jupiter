@@ -177,6 +177,10 @@ pub struct RunArgs {
     #[arg(short, long)]
     pub output: Option<PathBuf>,
 
+    /// Directory for temporary disk-cached frames (defaults to system temp)
+    #[arg(long)]
+    pub temp_dir: Option<PathBuf>,
+
     /// Save effective config as TOML and exit without processing
     #[arg(long)]
     pub save_config: Option<PathBuf>,
@@ -432,6 +436,7 @@ fn build_config_from_args(args: &RunArgs) -> PipelineConfig {
         },
         sharpening,
         filters,
+        temp_dir: args.temp_dir.clone(),
     }
 }
 

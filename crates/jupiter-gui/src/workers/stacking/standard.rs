@@ -102,7 +102,16 @@ pub(crate) fn handle_standard(
                     green: g,
                     blue: b,
                 });
-                cache.set_stacked(output.clone());
+                // In streaming mode, persist to disk and free RAM
+                if cache.is_streaming {
+                    if let Some(disk_result) = cache.store_output_to_disk(&output) {
+                        cache.set_stacked_disk(disk_result);
+                    } else {
+                        cache.set_stacked(output.clone());
+                    }
+                } else {
+                    cache.set_stacked(output.clone());
+                }
                 send_log(
                     tx,
                     ctx,
@@ -161,7 +170,16 @@ pub(crate) fn handle_standard(
             Ok(result) => {
                 let elapsed = start.elapsed();
                 let output = PipelineOutput::Mono(result);
-                cache.set_stacked(output.clone());
+                // In streaming mode, persist to disk and free RAM
+                if cache.is_streaming {
+                    if let Some(disk_result) = cache.store_output_to_disk(&output) {
+                        cache.set_stacked_disk(disk_result);
+                    } else {
+                        cache.set_stacked(output.clone());
+                    }
+                } else {
+                    cache.set_stacked(output.clone());
+                }
                 send_log(
                     tx,
                     ctx,

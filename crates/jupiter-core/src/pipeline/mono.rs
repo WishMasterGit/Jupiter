@@ -8,12 +8,15 @@ use crate::align::{
 use crate::compute::ComputeBackend;
 use crate::error::Result;
 use crate::frame::Frame;
+use crate::io::disk_cache::DiskFrameStore;
 use crate::io::image_io::save_image;
 use crate::io::ser::SerReader;
 use crate::sharpen::deconvolution::{deconvolve, deconvolve_gpu};
 use crate::sharpen::wavelet;
+use crate::stack::disk_backed::{median_stack_disk, sigma_clip_stack_disk, MmapFrameSlice};
 use crate::stack::drizzle::{drizzle_stack_streaming, DrizzleConfig};
 use crate::stack::mean::StreamingMeanStacker;
+use crate::stack::sigma_clip::SigmaClipParams;
 
 use super::config::PipelineConfig;
 use super::config::StackMethod;
@@ -184,7 +187,8 @@ fn run_mono_standard_streaming(
             Ok(result)
         }
         _ => {
-            // Median/SigmaClip: compute offsets streaming, then load M selected + shift
+            // Median/SigmaClip: disk-backed streaming — write shifted frames to
+            // temp files, then mmap them for per-pixel stacking.
             reporter.begin_stage(PipelineStage::Alignment, Some(frame_count));
             let r = reporter.clone();
             let offsets = compute_offsets_streaming_configured(
@@ -199,9 +203,10 @@ fn run_mono_standard_streaming(
             )?;
             reporter.finish_stage();
 
-            // Load and shift selected frames
+            // Write shifted frames to disk one at a time
+            let store = create_disk_store(config)?;
             reporter.begin_stage(PipelineStage::Reading, Some(frame_count));
-            let mut aligned = Vec::with_capacity(frame_count);
+            let mut disk_frames = Vec::with_capacity(frame_count);
             for (i, (&frame_idx, offset)) in selected_indices.iter().zip(offsets.iter()).enumerate()
             {
                 let frame = reader.read_frame(frame_idx)?;
@@ -210,21 +215,30 @@ fn run_mono_standard_streaming(
                 } else {
                     shift_frame(&frame, offset)
                 };
-                aligned.push(shifted);
+                disk_frames.push(store.store_frame(&shifted)?);
+                // shifted + frame dropped here — only disk handle kept
                 reporter.advance(i + 1);
             }
             reporter.finish_stage();
 
-            // Stack
-            let stack_count = aligned.len();
-            reporter.begin_stage(PipelineStage::Stacking, Some(stack_count));
-            let r = reporter.clone();
-            let result =
-                stack_frames_with_progress(&aligned, &config.stacking.method, move |done| {
-                    r.advance(done);
-                })?;
-            info!(method = ?config.stacking.method, "Streaming stacking complete");
+            // Mmap all stored files and stack from disk
+            let slices: Vec<MmapFrameSlice> = disk_frames
+                .iter()
+                .map(MmapFrameSlice::from_disk_frame)
+                .collect::<Result<_>>()?;
+
+            let bit_depth = reader.header.pixel_depth as u8;
+            reporter.begin_stage(PipelineStage::Stacking, Some(frame_count));
+            let result = match &config.stacking.method {
+                StackMethod::Median => median_stack_disk(&slices, bit_depth)?,
+                StackMethod::SigmaClip(SigmaClipParams { sigma, iterations }) => {
+                    sigma_clip_stack_disk(&slices, *sigma, *iterations, bit_depth)?
+                }
+                _ => unreachable!(),
+            };
+            info!(method = ?config.stacking.method, "Disk-backed streaming stacking complete");
             reporter.finish_stage();
+            // disk_frames + store dropped here → temp files cleaned up
             Ok(result)
         }
     }
@@ -353,4 +367,13 @@ pub(super) fn apply_post_stack_mono(
     reporter.finish_stage();
 
     Ok(PipelineOutput::Mono(result))
+}
+
+/// Create a [`DiskFrameStore`], optionally under a user-specified temp directory.
+fn create_disk_store(config: &PipelineConfig) -> Result<DiskFrameStore> {
+    if let Some(ref dir) = config.temp_dir {
+        DiskFrameStore::with_parent(dir)
+    } else {
+        DiskFrameStore::new()
+    }
 }

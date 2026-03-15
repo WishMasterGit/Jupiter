@@ -1,5 +1,6 @@
 pub mod ap_grid;
 pub mod ap_local;
+pub mod disk_backed;
 pub mod drizzle;
 pub mod mean;
 pub mod median;

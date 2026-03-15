@@ -221,6 +221,7 @@ fn test_multi_point_stack_color_pipeline_integration() {
         },
         sharpening: None,
         filters: vec![],
+        temp_dir: None,
     };
 
     let backend = Arc::new(CpuBackend);
@@ -271,6 +272,7 @@ fn test_multi_point_stack_color_force_mono() {
         },
         sharpening: None,
         filters: vec![],
+        temp_dir: None,
     };
 
     let backend = Arc::new(CpuBackend);

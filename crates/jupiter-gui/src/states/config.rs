@@ -239,6 +239,7 @@ impl ConfigState {
             sharpening: self.sharpening_config(),
             filters: self.filters.clone(),
             memory: Default::default(),
+            temp_dir: None,
         }
     }
 

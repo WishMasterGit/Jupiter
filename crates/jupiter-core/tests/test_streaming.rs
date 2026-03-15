@@ -290,6 +290,7 @@ fn test_streaming_pipeline_mean_matches_eager() {
         stacking: StackingConfig::default(), // Mean
         sharpening: None,
         filters: vec![],
+        temp_dir: None,
     };
 
     let eager_result = run_pipeline(&config_eager, backend.clone(), |_, _| {}).unwrap();
@@ -310,6 +311,7 @@ fn test_streaming_pipeline_mean_matches_eager() {
         stacking: StackingConfig::default(),
         sharpening: None,
         filters: vec![],
+        temp_dir: None,
     };
 
     let streaming_result = run_pipeline(&config_streaming, backend, |_, _| {}).unwrap();

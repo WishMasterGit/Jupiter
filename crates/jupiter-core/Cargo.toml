@@ -24,6 +24,8 @@ wgpu = { workspace = true, optional = true }
 pollster = { version = "0.4", optional = true }
 bytemuck = { version = "1", features = ["derive"], optional = true }
 
+[dependencies.tempfile]
+version = "3"
+
 [dev-dependencies]
 serde_json = "1"
-tempfile = "3"

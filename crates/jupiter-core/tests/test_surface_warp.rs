@@ -336,6 +336,7 @@ fn test_surface_warp_pipeline_integration() {
         },
         sharpening: None,
         filters: vec![],
+        temp_dir: None,
     };
 
     let backend = Arc::new(CpuBackend);

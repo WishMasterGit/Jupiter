@@ -64,6 +64,10 @@ pub struct PipelineConfig {
     pub sharpening: Option<SharpeningConfig>,
     #[serde(default)]
     pub filters: Vec<FilterStep>,
+    /// Optional directory for temporary disk-cached frames.
+    /// When `None`, uses the system default temp directory.
+    #[serde(default)]
+    pub temp_dir: Option<PathBuf>,
 }
 
 /// Configuration for debayering (demosaicing) raw Bayer data.

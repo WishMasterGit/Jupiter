@@ -2,18 +2,22 @@ use std::sync::Arc;
 
 use tracing::info;
 
+use crate::align::shift_frame;
 use crate::color::debayer::{debayer, luminance, DebayerMethod};
 use crate::color::process::process_color_parallel;
 use crate::compute::ComputeBackend;
 use crate::error::Result;
 use crate::frame::{ColorFrame, ColorMode, Frame};
+use crate::io::disk_cache::DiskFrameStore;
 use crate::io::image_io::save_color_image;
 use crate::io::ser::SerReader;
 use crate::quality::gradient::rank_frames_gradient_color_streaming;
 use crate::quality::laplacian::rank_frames_color_streaming;
 use crate::sharpen::deconvolution::{deconvolve, deconvolve_gpu};
 use crate::sharpen::wavelet;
+use crate::stack::disk_backed::{median_stack_disk, sigma_clip_stack_disk, MmapFrameSlice};
 use crate::stack::drizzle::DrizzleConfig;
+use crate::stack::sigma_clip::SigmaClipParams;
 
 use super::config::{AlignmentConfig, PipelineConfig, QualityMetric, StackMethod};
 use super::helpers::{
@@ -169,6 +173,11 @@ fn run_color_pipeline_streaming(
             drizzle_config,
             &config.alignment,
         )?
+    } else if matches!(
+        config.stacking.method,
+        StackMethod::Median | StackMethod::SigmaClip(_)
+    ) {
+        color_disk_backed_flow(&selected_color, &selected_lum, config, backend, reporter)?
     } else {
         color_standard_flow(&selected_color, &selected_lum, config, backend, reporter)?
     };
@@ -241,6 +250,87 @@ fn color_drizzle_flow(
     reporter.finish_stage();
 
     Ok(result)
+}
+
+/// Disk-backed color stacking for median/sigma-clip in streaming mode.
+///
+/// Computes alignment on luminance, writes shifted per-channel frames to disk,
+/// then mmaps them for per-pixel stacking. Peak RAM: one frame at a time during
+/// write phase, then OS page-cache paging during stack phase.
+fn color_disk_backed_flow(
+    selected_color: &[ColorFrame],
+    selected_lum: &[Frame],
+    config: &PipelineConfig,
+    backend: &Arc<dyn ComputeBackend>,
+    reporter: &Arc<dyn ProgressReporter>,
+) -> Result<ColorFrame> {
+    let offsets =
+        compute_offsets_with_progress(selected_lum, 0, &config.alignment, backend, reporter)?;
+
+    let store = if let Some(ref dir) = config.temp_dir {
+        DiskFrameStore::with_parent(dir)?
+    } else {
+        DiskFrameStore::new()?
+    };
+
+    let frame_count = selected_color.len();
+    let bit_depth = selected_color[0].red.original_bit_depth;
+
+    // Write shifted channels to disk
+    reporter.begin_stage(PipelineStage::Reading, Some(frame_count));
+    let mut disk_red = Vec::with_capacity(frame_count);
+    let mut disk_green = Vec::with_capacity(frame_count);
+    let mut disk_blue = Vec::with_capacity(frame_count);
+    for (i, (cf, offset)) in selected_color.iter().zip(offsets.iter()).enumerate() {
+        let sr = shift_frame(&cf.red, offset);
+        let sg = shift_frame(&cf.green, offset);
+        let sb = shift_frame(&cf.blue, offset);
+        disk_red.push(store.store_frame(&sr)?);
+        disk_green.push(store.store_frame(&sg)?);
+        disk_blue.push(store.store_frame(&sb)?);
+        reporter.advance(i + 1);
+    }
+    reporter.finish_stage();
+
+    // Mmap and stack each channel
+    let slices_r: Vec<MmapFrameSlice> = disk_red
+        .iter()
+        .map(MmapFrameSlice::from_disk_frame)
+        .collect::<Result<_>>()?;
+    let slices_g: Vec<MmapFrameSlice> = disk_green
+        .iter()
+        .map(MmapFrameSlice::from_disk_frame)
+        .collect::<Result<_>>()?;
+    let slices_b: Vec<MmapFrameSlice> = disk_blue
+        .iter()
+        .map(MmapFrameSlice::from_disk_frame)
+        .collect::<Result<_>>()?;
+
+    reporter.begin_stage(PipelineStage::Stacking, Some(frame_count));
+    let (r, g, b) = match &config.stacking.method {
+        StackMethod::Median => (
+            median_stack_disk(&slices_r, bit_depth)?,
+            median_stack_disk(&slices_g, bit_depth)?,
+            median_stack_disk(&slices_b, bit_depth)?,
+        ),
+        StackMethod::SigmaClip(SigmaClipParams { sigma, iterations }) => (
+            sigma_clip_stack_disk(&slices_r, *sigma, *iterations, bit_depth)?,
+            sigma_clip_stack_disk(&slices_g, *sigma, *iterations, bit_depth)?,
+            sigma_clip_stack_disk(&slices_b, *sigma, *iterations, bit_depth)?,
+        ),
+        _ => unreachable!(),
+    };
+    info!(
+        method = ?config.stacking.method,
+        "Disk-backed color stacking complete"
+    );
+    reporter.finish_stage();
+
+    Ok(ColorFrame {
+        red: r,
+        green: g,
+        blue: b,
+    })
 }
 
 /// Post-stacking processing for color path: sharpen -> filter -> write -> return.
