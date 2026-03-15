@@ -6,7 +6,7 @@
 [![Latest Release](https://img.shields.io/github/v/release/WishMasterGit/Jupiter)](https://github.com/WishMasterGit/Jupiter/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
----
+[Site](https://wishmastergit.github.io/Jupiter/)
 
 ## Overview
 
@@ -42,23 +42,25 @@ Jupiter turns raw planetary video captures (SER files) into sharp, detail-rich i
 
 Download the latest release from the [GitHub Releases page](https://github.com/WishMasterGit/Jupiter/releases/latest).
 
-| Platform | CPU | GPU |
-|----------|-----|-----|
-| macOS (Universal) | `jupiter-0.2.1-macos-universal.dmg` | `jupiter-0.2.1-macos-universal-gpu.dmg` |
-| Windows x86_64 | `jupiter-0.2.1-windows-x86_64.msi` | `jupiter-0.2.1-windows-x86_64-gpu.msi` |
-| Linux x86_64 (.deb) | `jupiter_0.2.1_amd64.deb` | `jupiter-gpu_0.2.1_amd64.deb` |
-| Linux x86_64 (AppImage) | `jupiter-0.2.1-x86_64.AppImage` | `jupiter-gpu-0.2.1-x86_64.AppImage` |
+| Platform                | CPU                                 | GPU                                     |
+| ----------------------- | ----------------------------------- | --------------------------------------- |
+| macOS (Universal)       | `jupiter-0.2.1-macos-universal.dmg` | `jupiter-0.2.1-macos-universal-gpu.dmg` |
+| Windows x86_64          | `jupiter-0.2.1-windows-x86_64.msi`  | `jupiter-0.2.1-windows-x86_64-gpu.msi`  |
+| Linux x86_64 (.deb)     | `jupiter_0.2.1_amd64.deb`           | `jupiter-gpu_0.2.1_amd64.deb`           |
+| Linux x86_64 (AppImage) | `jupiter-0.2.1-x86_64.AppImage`     | `jupiter-gpu-0.2.1-x86_64.AppImage`     |
 
 **macOS:** Open the `.dmg` and drag Jupiter to your Applications folder.
 
 **Windows:** Run the `.msi` installer and follow the prompts.
 
 **Linux (.deb):**
+
 ```bash
 sudo dpkg -i jupiter_0.2.1_amd64.deb
 ```
 
 **Linux (AppImage):**
+
 ```bash
 chmod +x jupiter-0.2.1-x86_64.AppImage
 ./jupiter-0.2.1-x86_64.AppImage
