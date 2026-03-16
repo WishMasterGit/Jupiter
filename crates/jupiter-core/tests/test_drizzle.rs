@@ -80,7 +80,7 @@ fn test_drizzle_then_mean_stack() {
 #[test]
 fn test_drizzle_then_median_stack() {
     let data = Array2::from_elem((4, 4), 0.6_f32);
-    let offsets = vec![
+    let offsets = [
         AlignmentOffset { dx: 0.0, dy: 0.0 },
         AlignmentOffset { dx: 0.3, dy: 0.1 },
         AlignmentOffset { dx: -0.2, dy: 0.4 },
@@ -106,7 +106,7 @@ fn test_drizzle_then_median_stack() {
 #[test]
 fn test_drizzle_then_sigma_clip_stack() {
     let data = Array2::from_elem((4, 4), 0.5_f32);
-    let offsets = vec![
+    let offsets = [
         AlignmentOffset { dx: 0.0, dy: 0.0 },
         AlignmentOffset { dx: 0.2, dy: -0.1 },
         AlignmentOffset { dx: -0.3, dy: 0.2 },
@@ -182,7 +182,7 @@ fn test_drizzle_uniform_image_preserves_value() {
 fn test_drizzle_multiple_frames_converge() {
     // More frames with varied offsets should produce a cleaner result.
     let data = Array2::from_elem((8, 8), 0.5_f32);
-    let offsets = vec![
+    let offsets = [
         AlignmentOffset { dx: 0.0, dy: 0.0 },
         AlignmentOffset { dx: 0.3, dy: 0.1 },
         AlignmentOffset { dx: -0.2, dy: 0.4 },
