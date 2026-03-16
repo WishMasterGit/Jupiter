@@ -12,7 +12,7 @@ use jupiter_core::stack::sigma_clip::sigma_clip_stack;
 
 use crate::messages::WorkerResult;
 
-use super::super::{make_progress_callback, send, send_error, send_log, PipelineCache};
+use super::super::{make_progress_callback_with_detail, send, send_error, send_log, PipelineCache};
 
 pub(crate) fn handle_standard(
     method: &StackMethod,
@@ -40,18 +40,39 @@ pub(crate) fn handle_standard(
 
     if let Some(ref color_frames) = cache.selected_color_frames {
         // Color: transform per-channel (drizzle or shift), stack per-channel
+        let color_frame_count = color_frames.len();
+        let transform_detail = if drizzle.is_some() {
+            "Drizzle-projecting frames"
+        } else {
+            "Shifting frames"
+        };
+
+        // Report transform progress
+        let transform_progress = make_progress_callback_with_detail(
+            tx,
+            ctx,
+            PipelineStage::Stacking,
+            color_frame_count,
+            Some(transform_detail.into()),
+        );
+
         let transformed_color: Vec<ColorFrame> = match drizzle {
             Some(dc) => {
                 send_log(tx, ctx, "Drizzle-projecting color frames...");
                 match color_frames
                     .iter()
                     .zip(offsets.iter())
-                    .map(|(cf, offset)| {
-                        Ok(ColorFrame {
-                            red: drizzle_single_frame(&cf.red, offset, dc)?,
-                            green: drizzle_single_frame(&cf.green, offset, dc)?,
-                            blue: drizzle_single_frame(&cf.blue, offset, dc)?,
-                        })
+                    .enumerate()
+                    .map(|(i, (cf, offset))| {
+                        let result = (|| {
+                            Ok(ColorFrame {
+                                red: drizzle_single_frame(&cf.red, offset, dc)?,
+                                green: drizzle_single_frame(&cf.green, offset, dc)?,
+                                blue: drizzle_single_frame(&cf.blue, offset, dc)?,
+                            })
+                        })();
+                        transform_progress(i + 1);
+                        result
                     })
                     .collect::<jupiter_core::error::Result<Vec<_>>>()
                 {
@@ -62,28 +83,26 @@ pub(crate) fn handle_standard(
                     }
                 }
             }
-            None => color_frames
-                .iter()
-                .zip(offsets.iter())
-                .map(|(cf, offset)| ColorFrame {
-                    red: shift_frame(&cf.red, offset),
-                    green: shift_frame(&cf.green, offset),
-                    blue: shift_frame(&cf.blue, offset),
-                })
-                .collect(),
+            None => {
+                send_log(tx, ctx, "Shifting color frames...");
+                color_frames
+                    .iter()
+                    .zip(offsets.iter())
+                    .enumerate()
+                    .map(|(i, (cf, offset))| {
+                        let result = ColorFrame {
+                            red: shift_frame(&cf.red, offset),
+                            green: shift_frame(&cf.green, offset),
+                            blue: shift_frame(&cf.blue, offset),
+                        };
+                        transform_progress(i + 1);
+                        result
+                    })
+                    .collect()
+            }
         };
 
         send_log(tx, ctx, "Stacking color channels...");
-        let color_frame_count = transformed_color.len();
-        send(
-            tx,
-            ctx,
-            WorkerResult::Progress {
-                stage: PipelineStage::Stacking,
-                items_done: Some(0),
-                items_total: Some(color_frame_count),
-            },
-        );
 
         let red_frames: Vec<Frame> = transformed_color.iter().map(|cf| cf.red.clone()).collect();
         let green_frames: Vec<Frame> = transformed_color
@@ -92,8 +111,20 @@ pub(crate) fn handle_standard(
             .collect();
         let blue_frames: Vec<Frame> = transformed_color.iter().map(|cf| cf.blue.clone()).collect();
 
-        let color_stack_progress =
-            make_progress_callback(tx, ctx, PipelineStage::Stacking, color_frame_count);
+        let stacking_detail = match method {
+            StackMethod::Mean => "Mean stacking",
+            StackMethod::Median => "Combining pixels (median)",
+            StackMethod::SigmaClip(_) => "Combining pixels (sigma clip)",
+            _ => "Stacking",
+        };
+
+        let color_stack_progress = make_progress_callback_with_detail(
+            tx,
+            ctx,
+            PipelineStage::Stacking,
+            color_frame_count,
+            Some(stacking_detail.into()),
+        );
 
         let stack_fn =
             |frames: &[Frame], on_progress: &dyn Fn(usize)| -> jupiter_core::error::Result<Frame> {
@@ -158,13 +189,33 @@ pub(crate) fn handle_standard(
         }
     } else {
         // Mono: transform (drizzle or shift) then stack
+        let frame_count = selected_frames.len();
+        let transform_detail = if drizzle.is_some() {
+            "Drizzle-projecting frames"
+        } else {
+            "Shifting frames"
+        };
+
+        let transform_progress = make_progress_callback_with_detail(
+            tx,
+            ctx,
+            PipelineStage::Stacking,
+            frame_count,
+            Some(transform_detail.into()),
+        );
+
         let transformed: Vec<Frame> = match drizzle {
             Some(dc) => {
                 send_log(tx, ctx, "Drizzle-projecting frames...");
                 match selected_frames
                     .iter()
                     .zip(offsets.iter())
-                    .map(|(frame, offset)| drizzle_single_frame(frame, offset, dc))
+                    .enumerate()
+                    .map(|(i, (frame, offset))| {
+                        let result = drizzle_single_frame(frame, offset, dc);
+                        transform_progress(i + 1);
+                        result
+                    })
                     .collect::<jupiter_core::error::Result<Vec<_>>>()
                 {
                     Ok(frames) => frames,
@@ -174,27 +225,37 @@ pub(crate) fn handle_standard(
                     }
                 }
             }
-            None => selected_frames
-                .iter()
-                .zip(offsets.iter())
-                .map(|(frame, offset)| shift_frame(frame, offset))
-                .collect(),
+            None => {
+                send_log(tx, ctx, "Shifting frames...");
+                selected_frames
+                    .iter()
+                    .zip(offsets.iter())
+                    .enumerate()
+                    .map(|(i, (frame, offset))| {
+                        let result = shift_frame(frame, offset);
+                        transform_progress(i + 1);
+                        result
+                    })
+                    .collect()
+            }
+        };
+
+        let stacking_detail = match method {
+            StackMethod::Mean => "Mean stacking",
+            StackMethod::Median => "Combining pixels (median)",
+            StackMethod::SigmaClip(_) => "Combining pixels (sigma clip)",
+            _ => "Stacking",
         };
 
         send_log(tx, ctx, "Stacking...");
-        let frame_count = transformed.len();
-        send(
+
+        let stacking_progress = make_progress_callback_with_detail(
             tx,
             ctx,
-            WorkerResult::Progress {
-                stage: PipelineStage::Stacking,
-                items_done: Some(0),
-                items_total: Some(frame_count),
-            },
+            PipelineStage::Stacking,
+            frame_count,
+            Some(stacking_detail.into()),
         );
-
-        let stacking_progress =
-            make_progress_callback(tx, ctx, PipelineStage::Stacking, frame_count);
 
         let result = match method {
             StackMethod::Mean => mean_stack_with_progress(&transformed, stacking_progress),

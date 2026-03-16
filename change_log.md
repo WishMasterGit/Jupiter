@@ -1,5 +1,39 @@
 # Changelog
 
+## Codebase Simplification: Deduplicate Parallel/Sequential Patterns
+
+Extracted shared utilities and eliminated ~500 lines of duplicated code across the codebase. Identical patterns (row collection into Array2, parallel vs sequential branching, median computation, masked mean/stddev, mirror boundary indexing) were consolidated into a single `utils` module.
+
+### New file
+
+- **`src/utils.rs`** — Shared utilities: `rows_to_array2`, `par_or_seq_rows`, `compute_median`, `masked_mean_stddev`, `mirror_index`.
+
+### Core library (`jupiter-core`)
+
+1. **`src/lib.rs`** — Added `pub mod utils`.
+
+2. **`stack/median.rs`** (83 -> 32 lines) — Collapsed `median_stack_parallel` and `median_stack_sequential` into a single function using `par_or_seq_rows`. Removed local `compute_median`, now uses shared version from `utils`.
+
+3. **`stack/sigma_clip.rs`** (185 -> 100 lines) — Collapsed `sigma_clip_stack_parallel` and `sigma_clip_stack_sequential` into a single function using `par_or_seq_rows`. Removed local `mean_stddev`, now uses `masked_mean_stddev` from `utils`.
+
+4. **`stack/disk_backed.rs`** (293 -> 157 lines) — Collapsed 4 parallel/sequential function pairs into 2 using `par_or_seq_rows`. Removed local `compute_median` and `mean_stddev`, now uses shared versions from `utils`.
+
+5. **`filters/gaussian_blur.rs`** (149 -> 77 lines) — Collapsed `convolve_rows_parallel`/`convolve_rows_sequential` and `convolve_cols_parallel`/`convolve_cols_sequential` (4 functions) into 2 using `par_or_seq_rows`.
+
+6. **`sharpen/wavelet.rs`** (251 -> 131 lines) — Collapsed 4 convolve functions into 2 using `par_or_seq_rows`. Moved `mirror_index` to `utils`.
+
+7. **`align/phase_correlation.rs`** (681 -> 537 lines) — Collapsed `shift_frame_parallel`/`shift_frame_sequential` and `shift_array_parallel`/`shift_array_sequential` into single functions using `par_or_seq_rows`.
+
+8. **`compute/cpu.rs`** — Removed local `mirror_index` implementation (simpler but less correct for extreme indices), now uses the mathematically robust version from `utils`.
+
+### GUI (`jupiter-gui`)
+
+9. **`src/app.rs`** — Extracted 14 `poll_results` match arms into 8 named handler methods: `handle_file_info`, `handle_score_complete`, `handle_align_complete`, `handle_stack_complete`, `handle_sharpen_complete`, `handle_filter_complete`, `handle_pipeline_complete`, `handle_image_loaded`, `handle_crop_complete`.
+
+### Tests
+
+10. **`tests/test_wavelet.rs`** — Updated `mirror_index` import from `sharpen::wavelet` to `utils`.
+
 ## Refactor Drizzle: From Stacking Algorithm to Stacking Option
 
 Drizzle is no longer a standalone `StackMethod::Drizzle(DrizzleConfig)` variant. It is now an **option** on `StackingConfig` that can be enabled for any standard stacking method (Mean+Drizzle, Median+Drizzle, SigmaClip+Drizzle). This better reflects drizzle's nature as a geometric super-resolution projection, not a pixel-combination strategy.

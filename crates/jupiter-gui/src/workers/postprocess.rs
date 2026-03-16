@@ -28,6 +28,7 @@ pub(super) fn handle_sharpen(
             stage: PipelineStage::Sharpening,
             items_done: None,
             items_total: None,
+            detail: None,
         },
     );
 
@@ -111,6 +112,7 @@ pub(super) fn handle_apply_filters(
             stage: PipelineStage::Filtering,
             items_done: Some(0),
             items_total: Some(filters.len()),
+            detail: None,
         },
     );
 
@@ -145,6 +147,7 @@ pub(super) fn handle_apply_filters(
                 stage: PipelineStage::Filtering,
                 items_done: Some(i + 1),
                 items_total: Some(filters.len()),
+                detail: None,
             },
         );
     }

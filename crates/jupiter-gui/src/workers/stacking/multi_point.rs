@@ -10,7 +10,17 @@ use jupiter_core::stack::multi_point::{
 
 use crate::messages::WorkerResult;
 
-use super::super::{send, send_error, send_log, PipelineCache};
+use super::super::{make_normalized_progress_callback, send, send_error, send_log, PipelineCache};
+
+fn multi_point_detail(frac: f32) -> &'static str {
+    match frac {
+        f if f <= 0.1 => "Aligning frames",
+        f if f <= 0.2 => "Building mean reference",
+        f if f <= 0.4 => "Scoring alignment points",
+        f if f <= 0.9 => "Stacking alignment points",
+        _ => "Blending",
+    }
+}
 
 pub(crate) fn handle_multi_point(
     mp_config: &MultiPointConfig,
@@ -33,6 +43,7 @@ pub(crate) fn handle_multi_point(
             stage: PipelineStage::Stacking,
             items_done: None,
             items_total: None,
+            detail: Some("Starting".into()),
         },
     );
     let start = Instant::now();
@@ -53,7 +64,15 @@ pub(crate) fn handle_multi_point(
             mode => mode,
         };
         let debayer_method = cache.debayer_method.unwrap_or_default();
-        match multi_point_stack_color(&reader, mp_config, &color_mode, &debayer_method, |_| {}) {
+        let mut on_progress =
+            make_normalized_progress_callback(tx, ctx, PipelineStage::Stacking, multi_point_detail);
+        match multi_point_stack_color(
+            &reader,
+            mp_config,
+            &color_mode,
+            &debayer_method,
+            &mut on_progress,
+        ) {
             Ok(result) => {
                 let elapsed = start.elapsed();
                 let output = PipelineOutput::Color(result);
@@ -78,7 +97,9 @@ pub(crate) fn handle_multi_point(
             Err(e) => send_error(tx, ctx, format!("Multi-point color stacking failed: {e}")),
         }
     } else {
-        match multi_point_stack(&reader, mp_config, |_| {}) {
+        let mut on_progress =
+            make_normalized_progress_callback(tx, ctx, PipelineStage::Stacking, multi_point_detail);
+        match multi_point_stack(&reader, mp_config, &mut on_progress) {
             Ok(result) => {
                 let elapsed = start.elapsed();
                 let output = PipelineOutput::Mono(result);

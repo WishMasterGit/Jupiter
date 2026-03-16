@@ -39,6 +39,7 @@ this is planet image/video processing tool to achieve crisp results from the ear
 ## Architecture
 
 ### Workspace structure
+
 ```
 jupiter/
 ├── crates/
@@ -64,6 +65,7 @@ jupiter/
 ```
 
 ### Processing pipeline flow
+
 ```
 SER/AVI → Read Frames → Score Quality → Select Best N%
   → Align (phase correlation / triangle / feature / surface warp)
@@ -72,13 +74,6 @@ SER/AVI → Read Frames → Score Quality → Select Best N%
   → Filter (post-processing)
   → Output (TIFF / PNG)
 ```
-
-### Key types
-- `ndarray::Array2<f32>` — pixel data in [0.0, 1.0]
-- `JupiterError` — unified error type (`crates/jupiter-core/src/error.rs`)
-- `PipelineConfig` — full pipeline configuration (`crates/jupiter-core/src/pipeline/config.rs`)
-- `AlignmentMethod` — enum of alignment algorithms
-- `StackMethod` — enum of stacking algorithms
 
 ## Common Commands
 

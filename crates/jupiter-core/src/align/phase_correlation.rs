@@ -9,8 +9,9 @@ use crate::compute::ComputeBackend;
 use crate::error::{JupiterError, Result};
 use crate::frame::{AlignmentOffset, Frame};
 use crate::io::ser::SerReader;
+use crate::utils::par_or_seq_rows;
 
-use crate::consts::{PARALLEL_FRAME_THRESHOLD, PARALLEL_PIXEL_THRESHOLD};
+use crate::consts::PARALLEL_FRAME_THRESHOLD;
 
 use super::subpixel::refine_peak_paraboloid;
 
@@ -193,102 +194,30 @@ pub fn compute_offset(reference: &Frame, target: &Frame) -> Result<AlignmentOffs
 /// Shift a frame by the given offset using bilinear interpolation.
 pub fn shift_frame(frame: &Frame, offset: &AlignmentOffset) -> Frame {
     let (h, w) = frame.data.dim();
-    if h * w >= PARALLEL_PIXEL_THRESHOLD {
-        shift_frame_parallel(frame, offset, h, w)
-    } else {
-        shift_frame_sequential(frame, offset, h, w)
-    }
-}
-
-fn shift_frame_parallel(frame: &Frame, offset: &AlignmentOffset, h: usize, w: usize) -> Frame {
-    // Row-parallel: each row's interpolation is independent
-    let rows: Vec<Vec<f32>> = (0..h)
-        .into_par_iter()
-        .map(|row| {
-            (0..w)
-                .map(|col| {
-                    let src_y = row as f64 - offset.dy;
-                    let src_x = col as f64 - offset.dx;
-                    bilinear_sample(&frame.data, src_y, src_x)
-                })
-                .collect()
-        })
-        .collect();
-
-    let mut result = Array2::<f32>::zeros((h, w));
-    for (row, row_data) in rows.into_iter().enumerate() {
-        for (col, val) in row_data.into_iter().enumerate() {
-            result[[row, col]] = val;
-        }
-    }
-    Frame::new(result, frame.original_bit_depth)
-}
-
-fn shift_frame_sequential(frame: &Frame, offset: &AlignmentOffset, h: usize, w: usize) -> Frame {
-    let mut result = Array2::<f32>::zeros((h, w));
-    for row in 0..h {
-        for col in 0..w {
-            let src_y = row as f64 - offset.dy;
-            let src_x = col as f64 - offset.dx;
-            result[[row, col]] = bilinear_sample(&frame.data, src_y, src_x);
-        }
-    }
+    let result = par_or_seq_rows(h, w, |row| {
+        (0..w)
+            .map(|col| {
+                let src_y = row as f64 - offset.dy;
+                let src_x = col as f64 - offset.dx;
+                bilinear_sample(&frame.data, src_y, src_x)
+            })
+            .collect()
+    });
     Frame::new(result, frame.original_bit_depth)
 }
 
 /// Shift a raw array by the given offset using bilinear interpolation.
 pub(crate) fn shift_array(data: &Array2<f32>, offset: &AlignmentOffset) -> Array2<f32> {
     let (h, w) = data.dim();
-    if h * w >= PARALLEL_PIXEL_THRESHOLD {
-        shift_array_parallel(data, offset, h, w)
-    } else {
-        shift_array_sequential(data, offset, h, w)
-    }
-}
-
-fn shift_array_parallel(
-    data: &Array2<f32>,
-    offset: &AlignmentOffset,
-    h: usize,
-    w: usize,
-) -> Array2<f32> {
-    let rows: Vec<Vec<f32>> = (0..h)
-        .into_par_iter()
-        .map(|row| {
-            (0..w)
-                .map(|col| {
-                    let src_y = row as f64 - offset.dy;
-                    let src_x = col as f64 - offset.dx;
-                    bilinear_sample(data, src_y, src_x)
-                })
-                .collect()
-        })
-        .collect();
-
-    let mut result = Array2::<f32>::zeros((h, w));
-    for (row, row_data) in rows.into_iter().enumerate() {
-        for (col, val) in row_data.into_iter().enumerate() {
-            result[[row, col]] = val;
-        }
-    }
-    result
-}
-
-fn shift_array_sequential(
-    data: &Array2<f32>,
-    offset: &AlignmentOffset,
-    h: usize,
-    w: usize,
-) -> Array2<f32> {
-    let mut result = Array2::<f32>::zeros((h, w));
-    for row in 0..h {
-        for col in 0..w {
-            let src_y = row as f64 - offset.dy;
-            let src_x = col as f64 - offset.dx;
-            result[[row, col]] = bilinear_sample(data, src_y, src_x);
-        }
-    }
-    result
+    par_or_seq_rows(h, w, |row| {
+        (0..w)
+            .map(|col| {
+                let src_y = row as f64 - offset.dy;
+                let src_x = col as f64 - offset.dx;
+                bilinear_sample(data, src_y, src_x)
+            })
+            .collect()
+    })
 }
 
 /// Align a sequence of frames to a reference frame.

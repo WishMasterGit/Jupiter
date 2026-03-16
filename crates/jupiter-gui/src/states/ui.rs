@@ -87,6 +87,7 @@ pub struct UIState {
     /// Progress.
     pub progress_items_done: Option<usize>,
     pub progress_items_total: Option<usize>,
+    pub progress_detail: Option<String>,
 
     /// Crop state.
     pub crop_state: CropState,
@@ -121,6 +122,7 @@ impl Default for UIState {
             log_messages: Vec::new(),
             progress_items_done: None,
             progress_items_total: None,
+            progress_detail: None,
             crop_state: CropState::default(),
             detected_planet_diameter: None,
             sharpen_requested: false,
@@ -170,5 +172,6 @@ impl UIState {
     pub fn clear_progress(&mut self) {
         self.progress_items_done = None;
         self.progress_items_total = None;
+        self.progress_detail = None;
     }
 }

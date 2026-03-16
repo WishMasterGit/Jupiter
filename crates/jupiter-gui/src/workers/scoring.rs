@@ -36,6 +36,7 @@ pub(super) fn handle_load_and_score(
             stage: PipelineStage::Reading,
             items_done: None,
             items_total: None,
+            detail: None,
         },
     );
     send_log(tx, ctx, "Reading frames...");
@@ -82,6 +83,7 @@ pub(super) fn handle_load_and_score(
                 stage: PipelineStage::QualityAssessment,
                 items_done: Some(0),
                 items_total: Some(total),
+                detail: None,
             },
         );
 
@@ -206,6 +208,7 @@ pub(super) fn handle_load_and_score(
                 stage: PipelineStage::Debayering,
                 items_done: None,
                 items_total: Some(total),
+                detail: None,
             },
         );
 
@@ -254,6 +257,7 @@ pub(super) fn handle_load_and_score(
             stage: PipelineStage::QualityAssessment,
             items_done: Some(0),
             items_total: Some(total),
+            detail: None,
         },
     );
 

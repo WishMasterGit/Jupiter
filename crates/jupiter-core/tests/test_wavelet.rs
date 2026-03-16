@@ -1,7 +1,8 @@
 use ndarray::Array2;
 
 use jupiter_core::frame::Frame;
-use jupiter_core::sharpen::wavelet::{self, decompose, mirror_index, reconstruct, WaveletParams};
+use jupiter_core::sharpen::wavelet::{self, decompose, reconstruct, WaveletParams};
+use jupiter_core::utils::mirror_index;
 
 #[test]
 fn test_decompose_reconstruct_identity() {

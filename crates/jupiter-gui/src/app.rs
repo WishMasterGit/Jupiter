@@ -45,30 +45,7 @@ impl JupiterApp {
     fn poll_results(&mut self, ctx: &egui::Context) {
         while let Ok(result) = self.result_rx.try_recv() {
             match result {
-                WorkerResult::FileInfo { path, info } => {
-                    self.ui_state.is_video = true;
-                    self.ui_state.add_log(format!(
-                        "Opened: {} ({}x{}, {} frames, {:?})",
-                        path.display(),
-                        info.width,
-                        info.height,
-                        info.total_frames,
-                        info.color_mode
-                    ));
-                    self.ui_state.source_info = Some(info);
-                    self.ui_state.preview_frame_index = 0;
-                    self.ui_state.reset_pipeline();
-                    self.viewport.zoom = 1.0;
-                    self.viewport.pan_offset = egui::Vec2::ZERO;
-                    self.viewport.clear_processed();
-
-                    // Auto-preview frame 0
-                    self.send_command(WorkerCommand::PreviewFrame {
-                        path: path.clone(),
-                        frame_index: 0,
-                    });
-                    self.ui_state.file_path = Some(path);
-                }
+                WorkerResult::FileInfo { path, info } => self.handle_file_info(path, info),
                 WorkerResult::FramePreview { output, index } => {
                     self.update_viewport_from_output(ctx, &output, &format!("Raw Frame #{index}"));
                 }
@@ -76,143 +53,48 @@ impl JupiterApp {
                     frame_count,
                     ranked_preview,
                     detected_planet_diameter,
-                } => {
-                    self.ui_state
-                        .stages
-                        .score
-                        .set_complete(format!("{frame_count} scored"));
-                    self.ui_state.ranked_preview = ranked_preview;
-                    self.ui_state.detected_planet_diameter = detected_planet_diameter;
-                    self.ui_state.running_stage = None;
-                    self.ui_state
-                        .add_log(format!("{frame_count} frames scored"));
-                }
+                } => self.handle_score_complete(
+                    frame_count,
+                    ranked_preview,
+                    detected_planet_diameter,
+                ),
                 WorkerResult::AlignComplete {
                     frame_count,
                     elapsed,
-                } => {
-                    self.ui_state.stages.align.set_complete(format!(
-                        "{frame_count} aligned ({})",
-                        format_duration(elapsed)
-                    ));
-                    self.ui_state.stages.stack.mark_dirty();
-                    self.ui_state.running_stage = None;
-                    self.ui_state.clear_progress();
-                    self.ui_state.add_log(format!(
-                        "Aligned {frame_count} frames in {}",
-                        format_duration(elapsed)
-                    ));
-                }
+                } => self.handle_align_complete(frame_count, elapsed),
                 WorkerResult::StackComplete { result, elapsed } => {
-                    self.ui_state
-                        .stages
-                        .stack
-                        .set_complete(format!("Stacked ({})", format_duration(elapsed)));
-                    self.ui_state.running_stage = None;
-                    self.ui_state.clear_progress();
-                    self.ui_state.viewing_raw = false;
-                    self.update_processed_output(ctx, &result, "Stacked");
+                    self.handle_stack_complete(ctx, &result, elapsed);
                 }
                 WorkerResult::SharpenComplete { result, elapsed } => {
-                    self.ui_state.stages.sharpen.set_complete("Done".into());
-                    self.ui_state.running_stage = None;
-                    self.ui_state.clear_progress();
-                    self.ui_state
-                        .add_log(format!("Sharpened in {}", format_duration(elapsed)));
-                    self.update_processed_output(ctx, &result, "Sharpened");
+                    self.handle_sharpen_complete(ctx, &result, elapsed);
                 }
                 WorkerResult::FilterComplete { result, elapsed } => {
-                    self.ui_state
-                        .stages
-                        .filter
-                        .set_complete(format!("{} applied", self.config.filters.len()));
-                    self.ui_state.running_stage = None;
-                    self.ui_state.clear_progress();
-                    self.ui_state
-                        .add_log(format!("Filters applied in {}", format_duration(elapsed)));
-                    self.update_processed_output(ctx, &result, "Filtered");
+                    self.handle_filter_complete(ctx, &result, elapsed);
                 }
                 WorkerResult::PipelineComplete { result, elapsed } => {
-                    self.ui_state.running_stage = None;
-                    self.ui_state.clear_progress();
-                    self.ui_state
-                        .add_log(format!("Pipeline complete in {}", format_duration(elapsed)));
-                    self.ui_state.viewing_raw = false;
-                    self.update_processed_output(ctx, &result, "Pipeline Result");
+                    self.handle_pipeline_complete(ctx, &result, elapsed);
                 }
                 WorkerResult::Progress {
                     stage,
                     items_done,
                     items_total,
+                    detail,
                 } => {
                     self.ui_state.running_stage = Some(stage);
                     self.ui_state.progress_items_done = items_done;
                     self.ui_state.progress_items_total = items_total;
+                    self.ui_state.progress_detail = detail;
                 }
                 WorkerResult::ImageLoaded {
                     path,
                     output,
                     width,
                     height,
-                } => {
-                    self.ui_state.is_video = false;
-                    self.ui_state.file_path = Some(path.clone());
-                    self.ui_state.source_info = Some(jupiter_core::frame::SourceInfo {
-                        filename: path.clone(),
-                        total_frames: 1,
-                        width,
-                        height,
-                        bit_depth: 16,
-                        color_mode: if matches!(output, PipelineOutput::Color(_)) {
-                            jupiter_core::frame::ColorMode::RGB
-                        } else {
-                            jupiter_core::frame::ColorMode::Mono
-                        },
-                        observer: None,
-                        telescope: None,
-                        instrument: None,
-                    });
-                    self.ui_state.reset_pipeline();
-                    self.ui_state
-                        .stages
-                        .stack
-                        .set_complete("Image loaded".into());
-                    self.viewport.zoom = 1.0;
-                    self.viewport.pan_offset = egui::Vec2::ZERO;
-                    self.ui_state.add_log(format!(
-                        "Opened image: {} ({}x{})",
-                        path.display(),
-                        width,
-                        height,
-                    ));
-                    self.update_viewport_from_output(ctx, &output, "Loaded Image");
-                }
+                } => self.handle_image_loaded(ctx, path, &output, width, height),
                 WorkerResult::CropComplete {
                     output_path,
                     elapsed,
-                } => {
-                    self.ui_state.running_stage = None;
-                    self.ui_state.crop_state.is_saving = false;
-                    self.ui_state.crop_state.active = false;
-                    self.ui_state.crop_state.rect = None;
-                    self.ui_state.add_log(format!(
-                        "Crop saved: {} ({})",
-                        output_path.display(),
-                        format_duration(elapsed)
-                    ));
-
-                    // Reopen the cropped file
-                    let cmd = match output_path
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .map(|e| e.to_ascii_lowercase())
-                        .as_deref()
-                    {
-                        Some("ser") => WorkerCommand::LoadFileInfo { path: output_path },
-                        _ => WorkerCommand::LoadImageFile { path: output_path },
-                    };
-                    self.send_command(cmd);
-                }
+                } => self.handle_crop_complete(output_path, elapsed),
                 WorkerResult::ImageSaved { path } => {
                     self.ui_state.running_stage = None;
                     self.ui_state.add_log(format!("Saved: {}", path.display()));
@@ -233,6 +115,194 @@ impl JupiterApp {
                 }
             }
         }
+    }
+
+    fn handle_file_info(
+        &mut self,
+        path: std::path::PathBuf,
+        info: jupiter_core::frame::SourceInfo,
+    ) {
+        self.ui_state.is_video = true;
+        self.ui_state.add_log(format!(
+            "Opened: {} ({}x{}, {} frames, {:?})",
+            path.display(),
+            info.width,
+            info.height,
+            info.total_frames,
+            info.color_mode
+        ));
+        self.ui_state.source_info = Some(info);
+        self.ui_state.preview_frame_index = 0;
+        self.ui_state.reset_pipeline();
+        self.viewport.zoom = 1.0;
+        self.viewport.pan_offset = egui::Vec2::ZERO;
+        self.viewport.clear_processed();
+
+        self.send_command(WorkerCommand::PreviewFrame {
+            path: path.clone(),
+            frame_index: 0,
+        });
+        self.ui_state.file_path = Some(path);
+    }
+
+    fn handle_score_complete(
+        &mut self,
+        frame_count: usize,
+        ranked_preview: Vec<(usize, f64)>,
+        detected_planet_diameter: Option<usize>,
+    ) {
+        self.ui_state
+            .stages
+            .score
+            .set_complete(format!("{frame_count} scored"));
+        self.ui_state.ranked_preview = ranked_preview;
+        self.ui_state.detected_planet_diameter = detected_planet_diameter;
+        self.ui_state.running_stage = None;
+        self.ui_state
+            .add_log(format!("{frame_count} frames scored"));
+    }
+
+    fn handle_align_complete(&mut self, frame_count: usize, elapsed: std::time::Duration) {
+        self.ui_state.stages.align.set_complete(format!(
+            "{frame_count} aligned ({})",
+            format_duration(elapsed)
+        ));
+        self.ui_state.stages.stack.mark_dirty();
+        self.ui_state.running_stage = None;
+        self.ui_state.clear_progress();
+        self.ui_state.add_log(format!(
+            "Aligned {frame_count} frames in {}",
+            format_duration(elapsed)
+        ));
+    }
+
+    fn handle_stack_complete(
+        &mut self,
+        ctx: &egui::Context,
+        result: &PipelineOutput,
+        elapsed: std::time::Duration,
+    ) {
+        self.ui_state
+            .stages
+            .stack
+            .set_complete(format!("Stacked ({})", format_duration(elapsed)));
+        self.ui_state.running_stage = None;
+        self.ui_state.clear_progress();
+        self.ui_state.viewing_raw = false;
+        self.update_processed_output(ctx, result, "Stacked");
+    }
+
+    fn handle_sharpen_complete(
+        &mut self,
+        ctx: &egui::Context,
+        result: &PipelineOutput,
+        elapsed: std::time::Duration,
+    ) {
+        self.ui_state.stages.sharpen.set_complete("Done".into());
+        self.ui_state.running_stage = None;
+        self.ui_state.clear_progress();
+        self.ui_state
+            .add_log(format!("Sharpened in {}", format_duration(elapsed)));
+        self.update_processed_output(ctx, result, "Sharpened");
+    }
+
+    fn handle_filter_complete(
+        &mut self,
+        ctx: &egui::Context,
+        result: &PipelineOutput,
+        elapsed: std::time::Duration,
+    ) {
+        self.ui_state
+            .stages
+            .filter
+            .set_complete(format!("{} applied", self.config.filters.len()));
+        self.ui_state.running_stage = None;
+        self.ui_state.clear_progress();
+        self.ui_state
+            .add_log(format!("Filters applied in {}", format_duration(elapsed)));
+        self.update_processed_output(ctx, result, "Filtered");
+    }
+
+    fn handle_pipeline_complete(
+        &mut self,
+        ctx: &egui::Context,
+        result: &PipelineOutput,
+        elapsed: std::time::Duration,
+    ) {
+        self.ui_state.running_stage = None;
+        self.ui_state.clear_progress();
+        self.ui_state
+            .add_log(format!("Pipeline complete in {}", format_duration(elapsed)));
+        self.ui_state.viewing_raw = false;
+        self.update_processed_output(ctx, result, "Pipeline Result");
+    }
+
+    fn handle_image_loaded(
+        &mut self,
+        ctx: &egui::Context,
+        path: std::path::PathBuf,
+        output: &PipelineOutput,
+        width: u32,
+        height: u32,
+    ) {
+        self.ui_state.is_video = false;
+        self.ui_state.file_path = Some(path.clone());
+        self.ui_state.source_info = Some(jupiter_core::frame::SourceInfo {
+            filename: path.clone(),
+            total_frames: 1,
+            width,
+            height,
+            bit_depth: 16,
+            color_mode: if matches!(output, PipelineOutput::Color(_)) {
+                jupiter_core::frame::ColorMode::RGB
+            } else {
+                jupiter_core::frame::ColorMode::Mono
+            },
+            observer: None,
+            telescope: None,
+            instrument: None,
+        });
+        self.ui_state.reset_pipeline();
+        self.ui_state
+            .stages
+            .stack
+            .set_complete("Image loaded".into());
+        self.viewport.zoom = 1.0;
+        self.viewport.pan_offset = egui::Vec2::ZERO;
+        self.ui_state.add_log(format!(
+            "Opened image: {} ({}x{})",
+            path.display(),
+            width,
+            height,
+        ));
+        self.update_viewport_from_output(ctx, output, "Loaded Image");
+    }
+
+    fn handle_crop_complete(
+        &mut self,
+        output_path: std::path::PathBuf,
+        elapsed: std::time::Duration,
+    ) {
+        self.ui_state.running_stage = None;
+        self.ui_state.crop_state.is_saving = false;
+        self.ui_state.crop_state.active = false;
+        self.ui_state.crop_state.rect = None;
+        self.ui_state.add_log(format!(
+            "Crop saved: {} ({})",
+            output_path.display(),
+            format_duration(elapsed)
+        ));
+
+        let cmd = match output_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase())
+            .as_deref()
+        {
+            Some("ser") => WorkerCommand::LoadFileInfo { path: output_path },
+            _ => WorkerCommand::LoadImageFile { path: output_path },
+        };
+        self.send_command(cmd);
     }
 
     fn update_viewport_from_output(

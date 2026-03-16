@@ -34,6 +34,7 @@ impl ProgressReporter for ChannelProgressReporter {
             stage,
             items_done: Some(0),
             items_total: total_items,
+            detail: None,
         });
         self.ctx.request_repaint();
     }
@@ -45,6 +46,7 @@ impl ProgressReporter for ChannelProgressReporter {
             stage,
             items_done: Some(items_done),
             items_total: if total > 0 { Some(total) } else { None },
+            detail: None,
         });
         self.ctx.request_repaint();
     }

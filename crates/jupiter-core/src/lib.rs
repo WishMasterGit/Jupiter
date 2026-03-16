@@ -11,3 +11,4 @@ pub mod pipeline;
 pub mod quality;
 pub mod sharpen;
 pub mod stack;
+pub mod utils;

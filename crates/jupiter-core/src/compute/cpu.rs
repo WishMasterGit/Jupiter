@@ -4,6 +4,7 @@ use rayon::prelude::*;
 use rustfft::FftPlanner;
 
 use crate::consts::{B3_KERNEL, PARALLEL_PIXEL_THRESHOLD};
+use crate::utils::mirror_index;
 
 use super::{BufferInner, ComputeBackend, GpuBuffer};
 
@@ -618,26 +619,6 @@ fn convolve_cols_clamped_sequential(
 // ---------------------------------------------------------------------------
 // A-trous convolution (mirror boundary, for wavelet decomposition)
 // ---------------------------------------------------------------------------
-
-fn mirror_index(idx: isize, size: usize) -> usize {
-    if idx < 0 {
-        let pos = (-idx) as usize;
-        if pos < size {
-            pos
-        } else {
-            0
-        }
-    } else if idx >= size as isize {
-        let overshoot = idx as usize - size;
-        if overshoot < size {
-            size - 1 - overshoot
-        } else {
-            size - 1
-        }
-    } else {
-        idx as usize
-    }
-}
 
 fn convolve_rows_atrous(data: &Array2<f32>, kernel: &[f32; 5], step: usize) -> Array2<f32> {
     let (h, w) = data.dim();

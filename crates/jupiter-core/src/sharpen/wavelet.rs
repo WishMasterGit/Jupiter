@@ -1,9 +1,9 @@
 use ndarray::Array2;
-use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::consts::{B3_KERNEL, PARALLEL_PIXEL_THRESHOLD};
+use crate::consts::B3_KERNEL;
 use crate::frame::Frame;
+use crate::utils::{mirror_index, par_or_seq_rows};
 
 /// Parameters for wavelet sharpening.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -102,149 +102,36 @@ fn atrous_convolve(data: &Array2<f32>, scale: usize) -> Array2<f32> {
 
 fn convolve_rows(data: &Array2<f32>, kernel: &[f32; 5], step: usize) -> Array2<f32> {
     let (h, w) = data.dim();
-    if h * w >= PARALLEL_PIXEL_THRESHOLD {
-        convolve_rows_parallel(data, kernel, step, h, w)
-    } else {
-        convolve_rows_sequential(data, kernel, step, h, w)
-    }
-}
-
-fn convolve_rows_parallel(
-    data: &Array2<f32>,
-    kernel: &[f32; 5],
-    step: usize,
-    h: usize,
-    w: usize,
-) -> Array2<f32> {
     let half = 2; // kernel radius = 2 for 5-tap kernel
-    let rows: Vec<Vec<f32>> = (0..h)
-        .into_par_iter()
-        .map(|row| {
-            (0..w)
-                .map(|col| {
-                    let mut sum = 0.0f32;
-                    for (ki, &kv) in kernel.iter().enumerate() {
-                        let offset = (ki as isize - half as isize) * step as isize;
-                        let src_col = mirror_index(col as isize + offset, w);
-                        sum += data[[row, src_col]] * kv;
-                    }
-                    sum
-                })
-                .collect()
-        })
-        .collect();
-
-    let mut result = Array2::<f32>::zeros((h, w));
-    for (row, row_data) in rows.into_iter().enumerate() {
-        for (col, val) in row_data.into_iter().enumerate() {
-            result[[row, col]] = val;
-        }
-    }
-    result
-}
-
-fn convolve_rows_sequential(
-    data: &Array2<f32>,
-    kernel: &[f32; 5],
-    step: usize,
-    h: usize,
-    w: usize,
-) -> Array2<f32> {
-    let half = 2;
-    let mut result = Array2::<f32>::zeros((h, w));
-    for row in 0..h {
-        for col in 0..w {
-            let mut sum = 0.0f32;
-            for (ki, &kv) in kernel.iter().enumerate() {
-                let offset = (ki as isize - half as isize) * step as isize;
-                let src_col = mirror_index(col as isize + offset, w);
-                sum += data[[row, src_col]] * kv;
-            }
-            result[[row, col]] = sum;
-        }
-    }
-    result
+    par_or_seq_rows(h, w, |row| {
+        (0..w)
+            .map(|col| {
+                let mut sum = 0.0f32;
+                for (ki, &kv) in kernel.iter().enumerate() {
+                    let offset = (ki as isize - half as isize) * step as isize;
+                    let src_col = mirror_index(col as isize + offset, w);
+                    sum += data[[row, src_col]] * kv;
+                }
+                sum
+            })
+            .collect()
+    })
 }
 
 fn convolve_cols(data: &Array2<f32>, kernel: &[f32; 5], step: usize) -> Array2<f32> {
     let (h, w) = data.dim();
-    if h * w >= PARALLEL_PIXEL_THRESHOLD {
-        convolve_cols_parallel(data, kernel, step, h, w)
-    } else {
-        convolve_cols_sequential(data, kernel, step, h, w)
-    }
-}
-
-fn convolve_cols_parallel(
-    data: &Array2<f32>,
-    kernel: &[f32; 5],
-    step: usize,
-    h: usize,
-    w: usize,
-) -> Array2<f32> {
     let half = 2;
-    let rows: Vec<Vec<f32>> = (0..h)
-        .into_par_iter()
-        .map(|row| {
-            (0..w)
-                .map(|col| {
-                    let mut sum = 0.0f32;
-                    for (ki, &kv) in kernel.iter().enumerate() {
-                        let offset = (ki as isize - half as isize) * step as isize;
-                        let src_row = mirror_index(row as isize + offset, h);
-                        sum += data[[src_row, col]] * kv;
-                    }
-                    sum
-                })
-                .collect()
-        })
-        .collect();
-
-    let mut result = Array2::<f32>::zeros((h, w));
-    for (row, row_data) in rows.into_iter().enumerate() {
-        for (col, val) in row_data.into_iter().enumerate() {
-            result[[row, col]] = val;
-        }
-    }
-    result
-}
-
-fn convolve_cols_sequential(
-    data: &Array2<f32>,
-    kernel: &[f32; 5],
-    step: usize,
-    h: usize,
-    w: usize,
-) -> Array2<f32> {
-    let half = 2;
-    let mut result = Array2::<f32>::zeros((h, w));
-    for row in 0..h {
-        for col in 0..w {
-            let mut sum = 0.0f32;
-            for (ki, &kv) in kernel.iter().enumerate() {
-                let offset = (ki as isize - half as isize) * step as isize;
-                let src_row = mirror_index(row as isize + offset, h);
-                sum += data[[src_row, col]] * kv;
-            }
-            result[[row, col]] = sum;
-        }
-    }
-    result
-}
-
-/// Mirror boundary handling: reflect index into [0, size).
-/// Even function (f(-k) = f(k)) with period 2*size, ping-ponging within [0, size).
-pub fn mirror_index(idx: isize, size: usize) -> usize {
-    if size <= 1 {
-        return 0;
-    }
-    let period = 2 * size;
-    let abs_idx = idx.unsigned_abs();
-    let m = abs_idx % period;
-
-    if m < size {
-        m
-    } else {
-        2 * size - 1 - m
-    }
+    par_or_seq_rows(h, w, |row| {
+        (0..w)
+            .map(|col| {
+                let mut sum = 0.0f32;
+                for (ki, &kv) in kernel.iter().enumerate() {
+                    let offset = (ki as isize - half as isize) * step as isize;
+                    let src_row = mirror_index(row as isize + offset, h);
+                    sum += data[[src_row, col]] * kv;
+                }
+                sum
+            })
+            .collect()
+    })
 }

@@ -264,6 +264,7 @@ pub(super) fn handle_crop_and_save(
             stage: PipelineStage::Cropping,
             items_done: Some(done),
             items_total: Some(total),
+            detail: None,
         });
         ctx_progress.request_repaint();
     }) {
@@ -335,6 +336,7 @@ pub(super) fn handle_auto_crop_and_save(
             stage: PipelineStage::Cropping,
             items_done: Some(done),
             items_total: Some(total),
+            detail: None,
         });
         ctx_progress.request_repaint();
     }) {

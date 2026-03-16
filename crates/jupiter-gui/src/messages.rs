@@ -128,6 +128,7 @@ pub enum WorkerResult {
         stage: PipelineStage,
         items_done: Option<usize>,
         items_total: Option<usize>,
+        detail: Option<String>,
     },
 
     CropComplete {

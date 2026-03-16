@@ -64,6 +64,17 @@ pub(crate) fn make_progress_callback(
     stage: PipelineStage,
     total: usize,
 ) -> impl Fn(usize) {
+    make_progress_callback_with_detail(tx, ctx, stage, total, None)
+}
+
+/// Create a progress callback with a fixed detail string.
+pub(crate) fn make_progress_callback_with_detail(
+    tx: &mpsc::Sender<WorkerResult>,
+    ctx: &egui::Context,
+    stage: PipelineStage,
+    total: usize,
+    detail: Option<String>,
+) -> impl Fn(usize) {
     let tx = tx.clone();
     let ctx = ctx.clone();
     move |done: usize| {
@@ -71,6 +82,33 @@ pub(crate) fn make_progress_callback(
             stage,
             items_done: Some(done),
             items_total: Some(total),
+            detail: detail.clone(),
+        });
+        ctx.request_repaint();
+    }
+}
+
+/// Create a progress callback for normalized (0.0–1.0) progress from core functions.
+///
+/// Maps the f32 fraction to 100 discrete steps and uses `detail_fn` to determine
+/// the current sub-stage description.
+pub(crate) fn make_normalized_progress_callback<D>(
+    tx: &mpsc::Sender<WorkerResult>,
+    ctx: &egui::Context,
+    stage: PipelineStage,
+    detail_fn: D,
+) -> impl FnMut(f32)
+where
+    D: Fn(f32) -> &'static str,
+{
+    let tx = tx.clone();
+    let ctx = ctx.clone();
+    move |frac: f32| {
+        let _ = tx.send(WorkerResult::Progress {
+            stage,
+            items_done: Some((frac * 100.0) as usize),
+            items_total: Some(100),
+            detail: Some(detail_fn(frac).into()),
         });
         ctx.request_repaint();
     }

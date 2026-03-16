@@ -17,8 +17,13 @@ pub fn show(ctx: &egui::Context, app: &mut JupiterApp) {
             let detail = match (
                 app.ui_state.progress_items_done,
                 app.ui_state.progress_items_total,
+                &app.ui_state.progress_detail,
             ) {
-                (Some(done), Some(total)) => format!("{stage} ({done}/{total})"),
+                (Some(done), Some(total), Some(desc)) => {
+                    format!("{stage}: {desc} ({done}/{total})")
+                }
+                (Some(done), Some(total), None) => format!("{stage} ({done}/{total})"),
+                (_, _, Some(desc)) => format!("{stage}: {desc}..."),
                 _ => format!("{stage}..."),
             };
 

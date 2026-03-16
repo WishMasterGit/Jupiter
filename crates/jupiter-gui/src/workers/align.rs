@@ -151,6 +151,7 @@ pub(super) fn handle_align(
                 stage: PipelineStage::PreCentering,
                 items_done: Some(0),
                 items_total: Some(frame_count),
+                detail: None,
             },
         );
         let detection_config = DetectionConfig::default();
@@ -202,6 +203,7 @@ pub(super) fn handle_align(
             stage: PipelineStage::Alignment,
             items_done: Some(0),
             items_total: Some(frame_count),
+            detail: None,
         },
     );
 
@@ -228,6 +230,7 @@ pub(super) fn handle_align(
                 stage: PipelineStage::Alignment,
                 items_done: Some(i + 1),
                 items_total: Some(frame_count),
+                detail: None,
             },
         );
     }

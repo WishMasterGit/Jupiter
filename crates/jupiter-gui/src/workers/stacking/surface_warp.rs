@@ -10,7 +10,17 @@ use jupiter_core::stack::surface_warp::{
 
 use crate::messages::WorkerResult;
 
-use super::super::{send, send_error, send_log, PipelineCache};
+use super::super::{make_normalized_progress_callback, send, send_error, send_log, PipelineCache};
+
+fn surface_warp_detail(frac: f32) -> &'static str {
+    match frac {
+        f if f <= 0.1 => "Aligning frames",
+        f if f <= 0.2 => "Building mean reference",
+        f if f <= 0.3 => "Selecting frames",
+        f if f < 0.95 => "Warping & accumulating",
+        _ => "Finalizing",
+    }
+}
 
 pub(crate) fn handle_surface_warp(
     sw_config: &SurfaceWarpConfig,
@@ -33,6 +43,7 @@ pub(crate) fn handle_surface_warp(
             stage: PipelineStage::Stacking,
             items_done: None,
             items_total: None,
+            detail: Some("Starting".into()),
         },
     );
     let start = Instant::now();
@@ -53,7 +64,19 @@ pub(crate) fn handle_surface_warp(
             mode => mode,
         };
         let debayer_method = cache.debayer_method.unwrap_or_default();
-        match surface_warp_stack_color(&reader, sw_config, &color_mode, &debayer_method, |_| {}) {
+        let mut on_progress = make_normalized_progress_callback(
+            tx,
+            ctx,
+            PipelineStage::Stacking,
+            surface_warp_detail,
+        );
+        match surface_warp_stack_color(
+            &reader,
+            sw_config,
+            &color_mode,
+            &debayer_method,
+            &mut on_progress,
+        ) {
             Ok(result) => {
                 let elapsed = start.elapsed();
                 let output = PipelineOutput::Color(result);
@@ -78,7 +101,13 @@ pub(crate) fn handle_surface_warp(
             Err(e) => send_error(tx, ctx, format!("Surface warp color stacking failed: {e}")),
         }
     } else {
-        match surface_warp_stack(&reader, sw_config, |_| {}) {
+        let mut on_progress = make_normalized_progress_callback(
+            tx,
+            ctx,
+            PipelineStage::Stacking,
+            surface_warp_detail,
+        );
+        match surface_warp_stack(&reader, sw_config, &mut on_progress) {
             Ok(result) => {
                 let elapsed = start.elapsed();
                 let output = PipelineOutput::Mono(result);
